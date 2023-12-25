@@ -5,18 +5,22 @@ Created on Mon Apr 10 11:34:35 2023
 
 @author: songliyang
 """
-
-import pandas as pd
-import numpy as np
-import pyranges as pr
+import logging
 import sys
-import argparse
-import pandas as pd
-import os
+from pathlib import Path
+
+import pyranges as pr
 from progress.bar import IncrementalBar
+
 sys.path.append('/storage/yangjianLab/songliyang/SpatialData/spatial_ldsc_v1')
 from Build_LD_Score_old import *
-from math import floor
+from GPS.generate_r2_matrix import PlinkBEDFileWithR2Cache
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+handler = logging.StreamHandler()
+handler.setFormatter(logging.Formatter(
+	'[{asctime}] {levelname:8s} {filename} {message}', style='{'))
+logger.addHandler(handler)
 
 class Snp_Annotator:
     """
@@ -236,7 +240,9 @@ class Snp_Annotator:
     
 class LDscore_Generator:
     def __init__(self, bfile_root, annot_root, const_max_size,annot_name,
-                 chr=None,ld_wind_snps=None, ld_wind_kb=None, ld_wind_cm=1, keep_snp=None):
+                 chr=None,ld_wind_snps=None, ld_wind_kb=None, ld_wind_cm=1, keep_snp=None,
+                 r2_cache_dir=None,
+                 ):
         self.bfile_root = bfile_root
         self.annot_root = annot_root
         self.ld_wind_snps = ld_wind_snps
@@ -247,8 +253,23 @@ class LDscore_Generator:
         
         self.data_name = annot_name
         self.const_max_size = const_max_size
-        
-    #    
+        self.generate_r2_cache = False
+
+        # Set the r2 cache
+        if r2_cache_dir is None:
+            logger.info('No r2 cache directory specified, will not use r2 cache')
+            self.chr_r2_cache_dir = None
+        else:
+            assert chr is not None, 'Must specify chr when using r2 cache'
+            chr_r2_cache_dir = os.path.join(r2_cache_dir, f'chr{chr}')
+            self.chr_r2_cache_dir = chr_r2_cache_dir
+            if not os.path.exists(chr_r2_cache_dir) or len(glob.glob(os.path.join(chr_r2_cache_dir, '*.npz'))) == 0:
+                logger.warning(f'No r2 cache found for chr{chr}, will generate r2 cache for this chromosome, first time may take a while')
+                os.makedirs(chr_r2_cache_dir, exist_ok=True, mode=0o777, )
+                self.generate_r2_cache= True
+            else:
+                logger.info(f'Found r2 cache for chr{chr}, will use r2 cache for this chromosome')
+
     def compute_ldscore(self):
         """
         Compute LD scores.
@@ -260,7 +281,7 @@ class LDscore_Generator:
             self.compute_ldscore_chr(chr=self.chr) 
             
             
-    def compute_ldscore_chunk(self,annot_file,ld_score_file,M_file,M_5_file,geno_array, block_left, snp):
+    def compute_ldscore_chunk(self,annot_file,ld_score_file,M_file,M_5_file,geno_array:PlinkBEDFileWithR2Cache, block_left, snp):
         """
         Compute and save LD scores for each chunk
         :param annot_file: Path to the annotation file
@@ -283,7 +304,11 @@ class LDscore_Generator:
         geno_array.__restart__()
 
         # Compute annotated LD score
-        lN_df = pd.DataFrame(geno_array.ldScoreVarBlocks(block_left, 50, annot=annot_matrix))
+        if self.chr_r2_cache_dir is None:
+            lN_df = pd.DataFrame(geno_array.ldScoreVarBlocks(block_left, 50, annot=annot_matrix))
+        else:
+            lN_df = pd.DataFrame(self.get_ldscore_use_cache(annot_matrix))
+
         ldscore = pd.concat([annot_df.iloc[:, 0:6], lN_df], axis=1)
         ldscore.columns = annot_df.columns
         
@@ -294,7 +319,7 @@ class LDscore_Generator:
         # Save the LD score annotations
         ldscore = ldscore.reset_index()
         ldscore.drop(columns=['index'], inplace=True)
-        ldscore.to_feather(ld_score_file)
+        # ldscore.to_feather(ld_score_file)
         
         # Compute the .M (.M_5_50) file
         M = np.atleast_1d(np.squeeze(np.asarray(np.sum(annot_matrix, axis=0))))
@@ -305,7 +330,9 @@ class LDscore_Generator:
         np.savetxt(M_file, M, delimiter='\t')
         np.savetxt(M_5_file, M_5_50, delimiter='\t')
 
-    
+    def get_ldscore_use_cache(self, annot_matrix,):
+        return self.r2_matrix.dot(annot_matrix)
+
     def compute_ldscore_chr(self, chr):
         bfile = f"{self.bfile_root}.{chr}"
         #
@@ -322,7 +349,7 @@ class LDscore_Generator:
         print(f'Read list of {n} individuals from {ind_file}')
         #
         # Load genotype array
-        array_file, array_obj = bfile + '.bed', PlinkBEDFile
+        array_file, array_obj = bfile + '.bed', PlinkBEDFileWithR2Cache
         geno_array = array_obj(array_file, n, array_snps, keep_snps=None, keep_indivs=None, mafMin=None)
         
         # Load the snp to be print
@@ -349,6 +376,13 @@ class LDscore_Generator:
             max_dist = self.ld_wind_cm
             coords = np.array(array_snps.df['CM'])[geno_array.kept_snps]
         block_left = getBlockLefts(coords, max_dist)
+        if self.generate_r2_cache:
+            logger.info(f'Generating r2 cache for chr{chr}, this may take a while')
+            geno_array.compute_r2_cache(block_left,
+                                        Path(self.chr_r2_cache_dir))
+            logger.info(f'Finished generating r2 cache for chr{chr}')
+        if self.chr_r2_cache_dir is not None:
+            self.r2_matrix = geno_array.load_combined_r2_matrix(cached_r2_matrix_dir=self.chr_r2_cache_dir)
         
         # Set the baseline root   
         annot_file = f'{self.annot_root}/baseline/baseline.{chr}.feather'
@@ -394,6 +428,7 @@ parser.add_argument('--const_max_size', default=100, type=int)
 parser.add_argument('--ld_wind_snps', default=None, type=float)
 parser.add_argument('--ld_wind_kb', default=None, type=float)
 parser.add_argument('--ld_wind_cm', default=None, type=float)
+parser.add_argument('--r2_cache_dir', default=None, type=str)
 
 
 # Defin the Container for plink files   
@@ -408,7 +443,7 @@ if __name__ == '__main__':
     TEST = True
     if TEST:
         name='Cortex_151507'
-        TASK_ID = 21
+        TASK_ID = 15
         args = parser.parse_args([
             '--mk_score_file',
             f'/storage/yangjianLab/songliyang/SpatialData/Data/Brain/Human/Nature_Neuroscience_2021/annotation/{name}/gene_markers/{name}_rank.feather',
@@ -420,7 +455,8 @@ if __name__ == '__main__':
             '--annot_name', f'{name}',
             '--const_max_size', '500',
             '--chr', f'{TASK_ID}',
-            '--ld_wind_cm', '1'
+            '--ld_wind_cm', '1',
+            '--r2_cache_dir', '/storage/yangjianLab/chenwenhao/projects/202312_GPS/data/GPS_test/r2_matrix',
         ])
     else:
         args = parser.parse_args()
@@ -436,6 +472,7 @@ if __name__ == '__main__':
     # Generate LD scores annotations
     ldscore_generate = LDscore_Generator(bfile_root=args.bfile_root, annot_root=args.annot_root, const_max_size=const_max_size,
                                          annot_name=args.annot_name, chr=args.chr, ld_wind_snps=args.ld_wind_snps, ld_wind_kb=args.ld_wind_kb, 
-                                         ld_wind_cm=args.ld_wind_cm, keep_snp = args.keep_snp)
+                                         ld_wind_cm=args.ld_wind_cm, keep_snp = args.keep_snp,
+                                         r2_cache_dir=args.r2_cache_dir)
     ldscore_generate.compute_ldscore()
 

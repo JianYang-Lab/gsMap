@@ -678,7 +678,18 @@ class PlinkBEDFileWithR2Cache(PlinkBEDFile):
         # to float16
         r2_matrix = r2_matrix.astype('float16')
         return r2_matrix
-
+    def load_combined_r2_matrix(self, cached_r2_matrix_dir):
+        """
+        Load the combined r2 matrix
+        """
+        combined_r2_matrix_file = Path(cached_r2_matrix_dir) / 'combined_r2_matrix.npz'
+        assert combined_r2_matrix_file.exists(), (f'No combined r2 matrix file in {cached_r2_matrix_dir}'
+                                                  f'Should delete the cache files and run the function compute_r2_cache first!')
+        # load the r2 matrix
+        r2_matrix = load_npz(combined_r2_matrix_file)
+        # to float16
+        r2_matrix = r2_matrix.astype('float16')
+        return r2_matrix
 
 def load_bfile(bfile_chr_prefix):
     PlinkBIMFile = ID_List_Factory(['CHR', 'SNP', 'CM', 'BP', 'A1', 'A2'], 1, '.bim', usecols=[0, 1, 2, 3, 4, 5])
