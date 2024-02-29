@@ -1,0 +1,83 @@
+.sphinx-charts {
+  text-align: center;
+  background-color: #ffffff;
+  margin-bottom: 1.75em;
+  padding-top: 1rem;
+  border: 1px solid #343131;
+}
+
+@keyframes flickerAnimation {
+  0% {
+    opacity: 0.8;
+  }
+  50% {
+    opacity: 0.2;
+  }
+  100% {
+    opacity: 0.8;
+  }
+}
+@-o-keyframes flickerAnimation {
+  0% {
+    opacity: 0.8;
+  }
+  50% {
+    opacity: 0.2;
+  }
+  100% {
+    opacity: 0.8;
+  }
+}
+@-moz-keyframes flickerAnimation {
+  0% {
+    opacity: 0.8;
+  }
+  50% {
+    opacity: 0.2;
+  }
+  100% {
+    opacity: 0.8;
+  }
+}
+@-webkit-keyframes flickerAnimation {
+  0% {
+    opacity: 0.8;
+  }
+  50% {
+    opacity: 0.2;
+  }
+  100% {
+    opacity: 0.8;
+  }
+}
+
+.sphinx-charts-chart {
+  width: 100%;
+}
+
+.sphinx-charts-placeholder {
+  border: none;
+  font-weight: bold;
+  text-align: center;
+  margin: auto;
+  height: 20vh;
+  width: 100%;
+  max-height: 400px;
+  position: relative;
+  -webkit-animation: flickerAnimation 3s infinite;
+  -moz-animation: flickerAnimation 3s infinite;
+  -o-animation: flickerAnimation 3s infinite;
+  animation: flickerAnimation 3s infinite;
+}
+
+.sphinx-charts-placeholder p {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.sphinx-charts-hidden {
+  display: none;
+  margin: 0;
+}
