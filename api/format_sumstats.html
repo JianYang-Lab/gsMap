@@ -3,10 +3,10 @@
   <head><meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width,initial-scale=1"/>
     <meta name="color-scheme" content="light dark"><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
-<link rel="index" title="Index" href="../genindex.html" /><link rel="search" title="Search" href="../search.html" /><link rel="next" title="Release notes" href="../release.html" /><link rel="prev" title="Step 5: cauchy_combination (optional)" href="cauchy_combination.html" />
+<link rel="index" title="Index" href="../genindex.html" /><link rel="search" title="Search" href="../search.html" /><link rel="next" title="Step 1: find_latent_representation" href="find_latent_representations.html" /><link rel="prev" title="GPS Command Line Alphabets" href="../api.html" />
 
     <!-- Generated with Sphinx 6.0.0 and Furo 2024.01.29 -->
-        <title>Step 6: visualization (optional) - GPS 1.60 documentation</title>
+        <title>format_sumstats (optional) - GPS 1.60 documentation</title>
       <link rel="stylesheet" type="text/css" href="../_static/pygments.css" />
     <link rel="stylesheet" type="text/css" href="../_static/styles/furo.css?digest=369552022d0b975c8e74270ce6eabe0fb7978f24" />
     <link rel="stylesheet" type="text/css" href="../_static/copybutton.css" />
@@ -166,13 +166,13 @@
 </li>
 <li class="toctree-l1"><a class="reference internal" href="../data.html">GPS Resources Download</a></li>
 <li class="toctree-l1 current has-children"><a class="reference internal" href="../api.html">GPS Command Line Alphabets</a><input checked="" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><div class="visually-hidden">Toggle navigation of GPS Command Line Alphabets</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul class="current">
-<li class="toctree-l2"><a class="reference internal" href="format_sumstats.html">format_sumstats (optional)</a></li>
+<li class="toctree-l2 current current-page"><a class="current reference internal" href="#">format_sumstats (optional)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="find_latent_representations.html">Step 1: find_latent_representation</a></li>
 <li class="toctree-l2"><a class="reference internal" href="latent_to_gene.html">Step 2: latent_to_gene</a></li>
 <li class="toctree-l2"><a class="reference internal" href="generate_ldscore.html">Step 3: generate_ldscore</a></li>
 <li class="toctree-l2"><a class="reference internal" href="spatial_ldsc.html">Step 4: spatial_ldsc</a></li>
 <li class="toctree-l2"><a class="reference internal" href="cauchy_combination.html">Step 5: cauchy_combination (optional)</a></li>
-<li class="toctree-l2 current current-page"><a class="current reference internal" href="#">Step 6: visualization (optional)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="visualization.html">Step 6: visualization (optional)</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="../release.html">Release notes</a></li>
@@ -210,56 +210,93 @@
           </label>
         </div>
         <article role="main">
-          <section id="step-6-visualization-optional">
-<h1>Step 6: visualization (optional)<a class="headerlink" href="#step-6-visualization-optional" title="Permalink to this heading">#</a></h1>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">usage</span><span class="p">:</span> <span class="n">GPS</span> <span class="n">run_visualize</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="o">--</span><span class="n">input_hdf5_path</span> <span class="n">INPUT_HDF5_PATH</span>
-                         <span class="o">--</span><span class="n">input_ldsc_dir</span> <span class="n">INPUT_LDSC_DIR</span> <span class="o">--</span><span class="n">output_figure_dir</span>
-                         <span class="n">OUTPUT_FIGURE_DIR</span> <span class="o">--</span><span class="n">sample_name</span> <span class="n">SAMPLE_NAME</span>
-                         <span class="o">--</span><span class="n">trait_name</span> <span class="n">TRAIT_NAME</span> <span class="p">[</span><span class="o">--</span><span class="n">annotation</span> <span class="n">ANNOTATION</span><span class="p">]</span>
-                         <span class="p">[</span><span class="o">--</span><span class="n">fig_title</span> <span class="n">FIG_TITLE</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">fig_height</span> <span class="n">FIG_HEIGHT</span><span class="p">]</span>
-                         <span class="p">[</span><span class="o">--</span><span class="n">fig_width</span> <span class="n">FIG_WIDTH</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">point_size</span> <span class="n">POINT_SIZE</span><span class="p">]</span>
-                         <span class="p">[</span><span class="o">--</span><span class="n">fig_style</span> <span class="p">{</span><span class="n">dark</span><span class="p">,</span><span class="n">light</span><span class="p">}]</span>
+          <section id="format-sumstats-optional">
+<h1>format_sumstats (optional)<a class="headerlink" href="#format-sumstats-optional" title="Permalink to this heading">#</a></h1>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">usage</span><span class="p">:</span> <span class="n">GPS</span> <span class="n">format_sumstats</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="o">--</span><span class="n">sumstats</span> <span class="n">SUMSTATS</span> <span class="o">--</span><span class="n">out</span> <span class="n">OUT</span> <span class="p">[</span><span class="o">--</span><span class="n">snp</span> <span class="n">SNP</span><span class="p">]</span>
+                           <span class="p">[</span><span class="o">--</span><span class="n">a1</span> <span class="n">A1</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">a2</span> <span class="n">A2</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">info</span> <span class="n">INFO</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">beta</span> <span class="n">BETA</span><span class="p">]</span>
+                           <span class="p">[</span><span class="o">--</span><span class="n">se</span> <span class="n">SE</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">p</span> <span class="n">P</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">frq</span> <span class="n">FRQ</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">n</span> <span class="n">N</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">z</span> <span class="n">Z</span><span class="p">]</span>
+                           <span class="p">[</span><span class="o">--</span><span class="n">OR</span> <span class="n">OR</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">se_OR</span> <span class="n">SE_OR</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="nb">chr</span> <span class="n">CHR</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">pos</span> <span class="n">POS</span><span class="p">]</span>
+                           <span class="p">[</span><span class="o">--</span><span class="n">dbsnp</span> <span class="n">DBSNP</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">chunksize</span> <span class="n">CHUNKSIZE</span><span class="p">]</span>
+                           <span class="p">[</span><span class="o">--</span><span class="nb">format</span> <span class="p">{</span><span class="n">GPS</span><span class="p">,</span><span class="n">COJO</span><span class="p">}]</span> <span class="p">[</span><span class="o">--</span><span class="n">info_min</span> <span class="n">INFO_MIN</span><span class="p">]</span>
+                           <span class="p">[</span><span class="o">--</span><span class="n">maf_min</span> <span class="n">MAF_MIN</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">keep_chr_pos</span><span class="p">]</span>
 </pre></div>
 </div>
 <section id="named-arguments">
 <h2>Named Arguments<a class="headerlink" href="#named-arguments" title="Permalink to this heading">#</a></h2>
 <dl class="option-list">
-<dt><kbd>--input_hdf5_path</kbd></dt>
-<dd><p>Path to the HDF5 file</p>
+<dt><kbd>--sumstats</kbd></dt>
+<dd><p>Path to gwas summary data</p>
 </dd>
-<dt><kbd>--input_ldsc_dir</kbd></dt>
-<dd><p>Directory containing LDSC results</p>
+<dt><kbd>--out</kbd></dt>
+<dd><p>Path to save the formatted gwas data</p>
 </dd>
-<dt><kbd>--output_figure_dir</kbd></dt>
-<dd><p>Output directory for figures</p>
+<dt><kbd>--snp</kbd></dt>
+<dd><p>Name of snp column (if not a name that GPS understands)</p>
 </dd>
-<dt><kbd>--sample_name</kbd></dt>
-<dd><p>Name of the sample</p>
+<dt><kbd>--a1</kbd></dt>
+<dd><p>Name of effect allele column (if not a name that GPS understands)</p>
 </dd>
-<dt><kbd>--trait_name</kbd></dt>
-<dd><p>Name of the trait</p>
+<dt><kbd>--a2</kbd></dt>
+<dd><p>Name of none-effect allele column (if not a name that GPS understands)</p>
 </dd>
-<dt><kbd>--annotation</kbd></dt>
-<dd><p>Name of the annotation layer.</p>
+<dt><kbd>--info</kbd></dt>
+<dd><p>Name of info column (if not a name that GPS understands)</p>
 </dd>
-<dt><kbd>--fig_title</kbd></dt>
-<dd><p>Title of figure</p>
+<dt><kbd>--beta</kbd></dt>
+<dd><p>Name of gwas beta column (if not a name that GPS understands).</p>
 </dd>
-<dt><kbd>--fig_height</kbd></dt>
-<dd><p>Height of figure in pixels</p>
-<p>Default: 600</p>
+<dt><kbd>--se</kbd></dt>
+<dd><p>Name of gwas standar error of beta column (if not a name that GPS understands)</p>
 </dd>
-<dt><kbd>--fig_width</kbd></dt>
-<dd><p>Width of figure in pixels</p>
-<p>Default: 800</p>
+<dt><kbd>--p</kbd></dt>
+<dd><p>Name of p-value column (if not a name that GPS understands)</p>
 </dd>
-<dt><kbd>--point_size</kbd></dt>
-<dd><p>Point size of figure</p>
+<dt><kbd>--frq</kbd></dt>
+<dd><p>Name of A1 ferquency column (if not a name that GPS understands)</p>
 </dd>
-<dt><kbd>--fig_style</kbd></dt>
-<dd><p>Possible choices: dark, light</p>
-<p>Plot style of figure</p>
-<p>Default: “light”</p>
+<dt><kbd>--n</kbd></dt>
+<dd><p>Name of sample size column (if not a name that GPS understands)</p>
+</dd>
+<dt><kbd>--z</kbd></dt>
+<dd><p>Name of gwas Z-statistics column (if not a name that GPS understands)</p>
+</dd>
+<dt><kbd>--OR</kbd></dt>
+<dd><p>Name of gwas OR column (if not a name that GPS understands)</p>
+</dd>
+<dt><kbd>--se_OR</kbd></dt>
+<dd><p>Name of standar error of OR column (if not a name that GPS understands)</p>
+</dd>
+<dt><kbd>--chr</kbd></dt>
+<dd><p>Name of SNP chromosome column (if not a name that GPS understands)</p>
+<p>Default: “Chr”</p>
+</dd>
+<dt><kbd>--pos</kbd></dt>
+<dd><p>Name of SNP positions column (if not a name that GPS understands)</p>
+<p>Default: “Pos”</p>
+</dd>
+<dt><kbd>--dbsnp</kbd></dt>
+<dd><p>Path to reference dnsnp file</p>
+</dd>
+<dt><kbd>--chunksize</kbd></dt>
+<dd><p>Chunk size for loading dbsnp file</p>
+<p>Default: 1000000.0</p>
+</dd>
+<dt><kbd>--format</kbd></dt>
+<dd><p>Possible choices: GPS, COJO</p>
+<p>Format of output data</p>
+<p>Default: “GPS”</p>
+</dd>
+<dt><kbd>--info_min</kbd></dt>
+<dd><p>Minimum INFO score.</p>
+<p>Default: 0.9</p>
+</dd>
+<dt><kbd>--maf_min</kbd></dt>
+<dd><p>Minimum MAF.</p>
+<p>Default: 0.01</p>
+</dd>
+<dt><kbd>--keep_chr_pos</kbd></dt>
+<dd><p>Keep SNP chromosome and position columns in the output data</p>
+<p>Default: False</p>
 </dd>
 </dl>
 </section>
@@ -270,23 +307,23 @@
       <footer>
         
         <div class="related-pages">
-          <a class="next-page" href="../release.html">
+          <a class="next-page" href="find_latent_representations.html">
               <div class="page-info">
                 <div class="context">
                   <span>Next</span>
                 </div>
-                <div class="title">Release notes</div>
+                <div class="title">Step 1: find_latent_representation</div>
               </div>
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
             </a>
-          <a class="prev-page" href="cauchy_combination.html">
+          <a class="prev-page" href="../api.html">
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
               <div class="page-info">
                 <div class="context">
                   <span>Previous</span>
                 </div>
                 
-                <div class="title">Step 5: cauchy_combination (optional)</div>
+                <div class="title">GPS Command Line Alphabets</div>
                 
               </div>
             </a>
@@ -320,7 +357,7 @@
         <div class="toc-tree-container">
           <div class="toc-tree">
             <ul>
-<li><a class="reference internal" href="#">Step 6: visualization (optional)</a><ul>
+<li><a class="reference internal" href="#">format_sumstats (optional)</a><ul>
 <li><a class="reference internal" href="#named-arguments">Named Arguments</a></li>
 </ul>
 </li>

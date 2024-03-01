@@ -1,4 +1,4 @@
-Step 6: visualization
+Step 6: visualization (optional)
 =====================
 
 .. argparse::

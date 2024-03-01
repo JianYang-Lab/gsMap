@@ -32,6 +32,11 @@ Options
 Subcommands
 -----------
 
+.. option:: format_sumstats
+
+    Run Format_sumstats.
+    Convert GWAS summary statistics into the format that GPS can recognize.
+
 .. option:: run_find_latent_representations
 
     Run Find_latent_representations.
@@ -71,6 +76,7 @@ Subcommands
     :maxdepth: 1
     :caption: Subcommands Documentation
 
+    api/format_sumstats
     api/find_latent_representations
     api/latent_to_gene
     api/generate_ldscore

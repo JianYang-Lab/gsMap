@@ -3,7 +3,7 @@
   <head><meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width,initial-scale=1"/>
     <meta name="color-scheme" content="light dark"><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
-<link rel="index" title="Index" href="genindex.html" /><link rel="search" title="Search" href="search.html" /><link rel="next" title="step 1: find_latent_representation" href="api/find_latent_representations.html" /><link rel="prev" title="GPS Resources Download" href="data.html" />
+<link rel="index" title="Index" href="genindex.html" /><link rel="search" title="Search" href="search.html" /><link rel="next" title="format_sumstats (optional)" href="api/format_sumstats.html" /><link rel="prev" title="GPS Resources Download" href="data.html" />
 
     <!-- Generated with Sphinx 6.0.0 and Furo 2024.01.29 -->
         <title>GPS Command Line Alphabets - GPS 1.60 documentation</title>
@@ -166,12 +166,13 @@
 </li>
 <li class="toctree-l1"><a class="reference internal" href="data.html">GPS Resources Download</a></li>
 <li class="toctree-l1 current has-children current-page"><a class="current reference internal" href="#">GPS Command Line Alphabets</a><input checked="" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><div class="visually-hidden">Toggle navigation of GPS Command Line Alphabets</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
-<li class="toctree-l2"><a class="reference internal" href="api/find_latent_representations.html">step 1: find_latent_representation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/format_sumstats.html">format_sumstats (optional)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/find_latent_representations.html">Step 1: find_latent_representation</a></li>
 <li class="toctree-l2"><a class="reference internal" href="api/latent_to_gene.html">Step 2: latent_to_gene</a></li>
 <li class="toctree-l2"><a class="reference internal" href="api/generate_ldscore.html">Step 3: generate_ldscore</a></li>
 <li class="toctree-l2"><a class="reference internal" href="api/spatial_ldsc.html">Step 4: spatial_ldsc</a></li>
 <li class="toctree-l2"><a class="reference internal" href="api/cauchy_combination.html">Step 5: cauchy_combination (optional)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="api/visualization.html">Step 6: visualization</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/visualization.html">Step 6: visualization (optional)</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="release.html">Release notes</a></li>
@@ -239,6 +240,13 @@
 <section id="subcommands">
 <h2>Subcommands<a class="headerlink" href="#subcommands" title="Permalink to this heading">#</a></h2>
 <dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-GPS-arg-format_sumstats">
+<span class="sig-name descname"><span class="pre">format_sumstats</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-GPS-arg-format_sumstats" title="Permalink to this definition">#</a></dt>
+<dd><p>Run Format_sumstats.
+Convert GWAS summary statistics into the format that GPS can recognize.</p>
+</dd></dl>
+
+<dl class="std option">
 <dt class="sig sig-object std" id="cmdoption-GPS-arg-run_find_latent_representations">
 <span class="sig-name descname"><span class="pre">run_find_latent_representations</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-GPS-arg-run_find_latent_representations" title="Permalink to this definition">#</a></dt>
 <dd><p>Run Find_latent_representations.
@@ -289,12 +297,13 @@ GPS Pipeline (Run Find_latent_representations, Latent_to_gene, and Generate_ldsc
 <div class="toctree-wrapper compound">
 <p class="caption" role="heading"><span class="caption-text">Subcommands Documentation</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="api/find_latent_representations.html">step 1: find_latent_representation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/format_sumstats.html">format_sumstats (optional)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/find_latent_representations.html">Step 1: find_latent_representation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="api/latent_to_gene.html">Step 2: latent_to_gene</a></li>
 <li class="toctree-l1"><a class="reference internal" href="api/generate_ldscore.html">Step 3: generate_ldscore</a></li>
 <li class="toctree-l1"><a class="reference internal" href="api/spatial_ldsc.html">Step 4: spatial_ldsc</a></li>
 <li class="toctree-l1"><a class="reference internal" href="api/cauchy_combination.html">Step 5: cauchy_combination (optional)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="api/visualization.html">Step 6: visualization</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/visualization.html">Step 6: visualization (optional)</a></li>
 </ul>
 </div>
 </section>
@@ -305,12 +314,12 @@ GPS Pipeline (Run Find_latent_representations, Latent_to_gene, and Generate_ldsc
       <footer>
         
         <div class="related-pages">
-          <a class="next-page" href="api/find_latent_representations.html">
+          <a class="next-page" href="api/format_sumstats.html">
               <div class="page-info">
                 <div class="context">
                   <span>Next</span>
                 </div>
-                <div class="title">step 1: find_latent_representation</div>
+                <div class="title">format_sumstats (optional)</div>
               </div>
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
             </a>

@@ -1,41 +1,28 @@
 
 # Mouse Embryo Example
 
-## 1. Preparation
+## Preparation
 
-First you should [install](install) the GPS package.
+Please do not forget to [install](install) the GPS package before you start.
 
-### 1.1 Download running dependencies
+### 1. Download dependencies
 
+GPS requires reference files, which include:
+- **Gene transfer format (GTF) file**, to provide gene coordinates on the genome.
+- **LD reference panel (PLINK bfile)**, to compute LD scores.
+- **SNP weight file**, to ameliorate correlations between SNP association statistics.
+- **Homologous gene transformations file** (optional), to map gene names of different species (currently only mouse and macaques) to humans.
+- **Enhancer-gene mapping file** (optional), to map SNPs to genes based on enhancer-gene linkings.
+
+We've packaged these resources, and you can download them as follows:
 ```bash
-
 wget http://cnsgenomics.com/data/GPS/GPS_running_dependencies.tar.gz
 tar -xvzf GPS_running_dependencies.tar.gz
 ```
-
-
-### 1.2 Download example data
-
-```bash
-wget http://cnsgenomics.com/data/GPS/GPS_example_data.tar.gz
-tar -xvzf GPS_example_data.tar.gz
-```
-
-Directory structure
+The directory structure should be looks like this:
 ```bash
 tree -L 2
-```
 
-```
-example_data
-├── GWAS
-│   ├── GIANT_EUR_Height_2022_Nature.sumstats.gz
-│   ├── gwas_config.yaml
-│   ├── IQ_NG_2018.sumstats.gz
-│   └── BCX2_MCHC_EA_GWAMA.sumstats.gz
-└── ST
-    ├── Cortex_151507.h5ad
-    └── E16.5_E1S1.MOSTA.h5ad
 GPS_resource
 ├── genome_annotation
 │   ├── enhancer
@@ -45,44 +32,64 @@ GPS_resource
 └── LDSC_resource
     ├── hapmap3_snps
     └── weights_hm3_no_hla
+```
 
-10 directories, 6 files
+If you want to use your own reference files, please ensure that the versions of (Hg37 or Hg38) are consistent between the GTF and the LD reference panel.
+
+
+### 2. Download example data
+You can sownload the example data used in this tutorial as follows:
+
+```bash
+wget http://cnsgenomics.com/data/GPS/GPS_example_data.tar.gz
+tar -xvzf GPS_example_data.tar.gz
+```
+
+The directory structure should be looks like this:
+```bash
+tree -L 2
+
+example_data
+├── GWAS
+│   ├── GIANT_EUR_Height_2022_Nature.sumstats.gz
+│   ├── gwas_config.yaml
+│   ├── IQ_NG_2018.sumstats.gz
+│   └── BCX2_MCHC_EA_GWAMA.sumstats.gz
+└── ST
+    └── E16.5_E1S1.MOSTA.h5ad
 ```
 
 
-## 2. Run GPS
-
+## Run GPS
+First, let us set up the working directory, the input data, and the output files.
 ```shell
 # Constants and configuration
-WORKDIR='./example/Mouse_Embryo' # This should be the directory where the GPS output will be saved
-SAMPLE_NAME="E16.5_E1S1" # This should be the name of the sample
+WORKDIR='./example/Mouse_Embryo' # The directory where the GPS output will be saved
+SAMPLE_NAME="E16.5_E1S1.MOSTA" # The sample name of ST data
 
 # Input data
-HDF5_PATH="example_data/ST/E16.5_E1S1.MOSTA.h5ad"
-ANNOTATION="annotation" # This should be the cell type annotation of each spot
-DATA_TYPE='count' # This should be the type of ST data, either 'count' or 'log1p'
+HDF5_PATH="example_data/ST/E16.5_E1S1.MOSTA.h5ad" # The input ST data (h5ad format)
+ANNOTATION="annotation" # The column names where spot annotations are stored
+DATA_TYPE='counts' # The layer of the gene expression matrix that is being used
 
 # Running Dependencies and Resources
-GTFFILE="GPS_resource/genome_annotation/gtf/gencode.v39lift37.annotation.gtf"
-ALL_ENHANCER_FILE="GPS_resource/genome_annotation/enhancer/by_tissue/ALL/ABC_roadmap_merged.bed"
-BFILE_ROOT="GPS_resource/LD_Reference_Panel/1000G_EUR_Phase3_plink/1000G.EUR.QC"
-KEEP_SNP_ROOT="GPS_resource/LDSC_resource/hapmap3_snps/hm"
-W_FILE="GPS_resource/LDSC_resource/weights_hm3_no_hla/weights."
+GTFFILE="GPS_resource/genome_annotation/gtf/gencode.v39lift37.annotation.gtf" # The GTF file
+ALL_ENHANCER_FILE="GPS_resource/genome_annotation/enhancer/by_tissue/ALL/ABC_roadmap_merged.bed" # The enhancer-gene mapping file
+BFILE_ROOT="GPS_resource/LD_Reference_Panel/1000G_EUR_Phase3_plink/1000G.EUR.QC" # The LD reference panel
+KEEP_SNP_ROOT="GPS_resource/LDSC_resource/hapmap3_snps/hm" # Only use the hapmap3 snps
+W_FILE="GPS_resource/LDSC_resource/weights_hm3_no_hla/weights." # The SNP regression weight file
 ```
 
-
-After setting up the constants and configuration, execute the following steps in order to run the GPS analysis on the human cortex data:
-
 (find_latent_representations_mouse)=
-### 2.1 find_latent_representations
+### 1. find_latent_representations
 
-**Objective**: This initial step is for addressing technical noise and sparsity in spatial transcriptomics data. By employing the GNN model, the GPS finds latent representations for each spot.
+**Objective**: This step addresses technical noise and models spatial correlations of gene expression profiles in ST data. By employing the GNN model, GPS finds latent representations for each spot.
 
 
 **Input**: 
-- HDF5 file containing ST data (`HDF5_PATH`) with cell type annotation (`ANNOTATION`).
+- HDF5 file containing ST data (`HDF5_PATH`) with spots annotation (`ANNOTATION`, optional).
 
-**Output**: A .h5ad file containing the ST data with the refined latent representations for each spot.
+**Output**: A .h5ad file containing the ST data with the extracted latent representations for each spot.
 
 **Execution**:
 ```shell
@@ -95,10 +102,9 @@ GPS run_find_latent_representations \
     --type $DATA_TYPE
 ```
 (latent_to_gene_mouse)=
-### 2.2 latent_to_gene (Mouse)
+### 2. latent_to_gene
 
-**Objective**: Building on the latent representations, this step leverages the latent representations to find neighbors of each spot. The gene marker scores are then generated by aggregating information from neighbors. 
-
+**Objective**: Building on the latent representations, this step leverages them to find neighbors for each spot. Gene marker scores are then generated by aggregating information from these neighbors.
 
 **Input**:
 - HDF5 file with latent representations from the previous step (`HDF5_WITH_LATENT_PATH`).
@@ -124,22 +130,24 @@ GPS run_latent_to_gene \
 ```
 
 
-### 2.3 generate_ldscore
+### 3. generate_ldscore
 
-**Objective**: By using the gene marker scores from the previous step, GPS assigns gene specificity scores to each SNP by referencing the gene annotation data. Specifically, GPS assigns gene specificity scores to SNPs, based on their distances to TSS and, optionally, SNP-to-gene epigenetic linking maps. GPS then uses the specificity scores of SNPs to generates stratified LD scores (S-LD score) for each spot in ST data. 
-
+**Objective**: By using the gene marker scores from the previous step, GPS assigns a gene specificity score to SNPs by referencing the GTF data. Specifically, SNPs are mapped to genes based on their distances to the transcription start site (TSS) and, optionally, SNP-to-gene epigenetic linking maps. GPS then uses the specificity scores of SNPs to generate stratified LD scores (S-LD score) for each spot in the ST data.
 
 
 **Input**:
 - Feather file with gene marker scores from the previous step (`MKSCORE_FEATHER_FILE`).
 - Reference panel data (`BFILE_ROOT` and `KEEP_SNP_ROOT`).
-- Gene annotation file.
+- GTF file.
 
 **Output**: 
 - A set of LD score chunks stored in the (`LDScoreDir`).
 
 
 **Three SNP to gene linking methods are available:**
+
+The default setting only using the TSS mapping methods.
+
 ````{tab} 1. Use TSS Only
 This will use TSS only to link SNPs to gene specificity.
 
@@ -203,10 +211,7 @@ done
 
 
 `````{tab} 3. Use Both TSS and Enhancer-Gene Linking
-This will use both TSS and enhancer-gene linking to link SNPs to gene specificity.
-
-In the scenario where a single nucleotide polymorphism (SNP) falls within the proximity window of both a gene body window and an enhancer linked to a different gene, the determination of the SNP's gene specificity score is governed by the `--gene_window_enhancer_priority` parameter. Possible choices is `gene_window_first` or `enhancer_first`.
-
+This will use both the TSS and enhancer-gene linking to map SNPs to genes. In cases where a SNP falls within the proximity window of both a gene body and an enhancer linked to a different gene, the determination of the mapped gene is governed by the `--gene_window_enhancer_priority`. Possible choices include `gene_window_first` or `enhancer_first`.
 
 **Execution**:
 
@@ -241,9 +246,9 @@ you can reduce the `--spots_per_chunk` parameter to a smaller value.
 In general, 40GB memory is required when `--spots_per_chunk` is set to 1000.
 ```
 
-### 2.4 spatial_ldsc
+### 4. spatial_ldsc
 
-**Objective**: Identify spots associated with complex traits by associating S-LD score of spots with GWAS summary statistics of traits. 
+**Objective**: Spatially map traits-associated spots.
 
 
 **Input**:
@@ -300,9 +305,9 @@ GPS run_spatial_ldsc \
 `````
 
 
-### 2.5 cauchy_combination (optional)
+### 5. cauchy_combination (optional)
 
-**Objective**: Use the Cauchy Combination Test to aggregate P values of individual spots within specific spatial regions (cell types) to evaluate the association of these regions (cell types) with complex traits. 
+**Objective**: Use the Cauchy Combination Test to aggregate P values of individual spots within specific spatial regions to evaluate the association of these regions with the trait. 
 
 **Execution**:
 
@@ -318,7 +323,7 @@ GPS run_cauchy_combination \
     --annotation $ANNOTATION
 ```
 
-You will get a csv file with the aggregated P values for each region or cell type to find out the most significant regions or cell types associated with the complex trait.
+You will get a csv file showing the association P values for spatial each region with the trait.
 
 `````{tab} Height
 
@@ -360,15 +365,15 @@ You will get a csv file with the aggregated P values for each region or cell typ
 
 
 `````
-### 2.6 visualization
+### 6. visualization
 
 **Objective**: Visualize the results of GPS.
 
-You could use below command to visualize the spatial LDSC results. You will get a scatter plot with the -log10(p-value) of each spot.
+You could use below command to visualize the GPS results. You will get a scatter plot with the -log10(p-value) of each spot.
 
 **Output**
 - A pdf file.
-- A html file which could be opened in a web browser to interactively explore the spatial LDSC results.
+- A html file which could be opened in a web browser to interactively explore the results.
 
 ```shell
 GPS run_visualize \

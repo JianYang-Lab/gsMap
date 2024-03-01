@@ -166,12 +166,13 @@
 </li>
 <li class="toctree-l1"><a class="reference internal" href="data.html">GPS Resources Download</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="api.html">GPS Command Line Alphabets</a><input class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><div class="visually-hidden">Toggle navigation of GPS Command Line Alphabets</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
-<li class="toctree-l2"><a class="reference internal" href="api/find_latent_representations.html">step 1: find_latent_representation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/format_sumstats.html">format_sumstats (optional)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/find_latent_representations.html">Step 1: find_latent_representation</a></li>
 <li class="toctree-l2"><a class="reference internal" href="api/latent_to_gene.html">Step 2: latent_to_gene</a></li>
 <li class="toctree-l2"><a class="reference internal" href="api/generate_ldscore.html">Step 3: generate_ldscore</a></li>
 <li class="toctree-l2"><a class="reference internal" href="api/spatial_ldsc.html">Step 4: spatial_ldsc</a></li>
 <li class="toctree-l2"><a class="reference internal" href="api/cauchy_combination.html">Step 5: cauchy_combination (optional)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="api/visualization.html">Step 6: visualization</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/visualization.html">Step 6: visualization (optional)</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="release.html">Release notes</a></li>
@@ -212,77 +213,89 @@
           <section id="mouse-embryo-example">
 <h1>Mouse Embryo Example<a class="headerlink" href="#mouse-embryo-example" title="Permalink to this heading">#</a></h1>
 <section id="preparation">
-<h2>1. Preparation<a class="headerlink" href="#preparation" title="Permalink to this heading">#</a></h2>
-<p>First you should <a class="reference internal" href="install.html"><span class="doc std std-doc">install</span></a> the GPS package.</p>
-<section id="download-running-dependencies">
-<h3>1.1 Download running dependencies<a class="headerlink" href="#download-running-dependencies" title="Permalink to this heading">#</a></h3>
+<h2>Preparation<a class="headerlink" href="#preparation" title="Permalink to this heading">#</a></h2>
+<p>Please do not forget to <a class="reference internal" href="install.html"><span class="doc std std-doc">install</span></a> the GPS package before you start.</p>
+<section id="download-dependencies">
+<h3>1. Download dependencies<a class="headerlink" href="#download-dependencies" title="Permalink to this heading">#</a></h3>
+<p>GPS requires reference files, which include:</p>
+<ul class="simple">
+<li><p><strong>Gene transfer format (GTF) file</strong>, to provide gene coordinates on the genome.</p></li>
+<li><p><strong>LD reference panel (PLINK bfile)</strong>, to compute LD scores.</p></li>
+<li><p><strong>SNP weight file</strong>, to ameliorate correlations between SNP association statistics.</p></li>
+<li><p><strong>Homologous gene transformations file</strong> (optional), to map gene names of different species (currently only mouse and macaques) to humans.</p></li>
+<li><p><strong>Enhancer-gene mapping file</strong> (optional), to map SNPs to genes based on enhancer-gene linkings.</p></li>
+</ul>
+<p>We’ve packaged these resources, and you can download them as follows:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>wget<span class="w"> </span>http://cnsgenomics.com/data/GPS/GPS_running_dependencies.tar.gz
 tar<span class="w"> </span>-xvzf<span class="w"> </span>GPS_running_dependencies.tar.gz
 </pre></div>
 </div>
+<p>The directory structure should be looks like this:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>tree<span class="w"> </span>-L<span class="w"> </span><span class="m">2</span>
+
+GPS_resource
+├──<span class="w"> </span>genome_annotation
+│<span class="w">   </span>├──<span class="w"> </span>enhancer
+│<span class="w">   </span>└──<span class="w"> </span>gtf
+├──<span class="w"> </span>LD_Reference_Panel
+│<span class="w">   </span>└──<span class="w"> </span>1000G_EUR_Phase3_plink
+└──<span class="w"> </span>LDSC_resource
+<span class="w">    </span>├──<span class="w"> </span>hapmap3_snps
+<span class="w">    </span>└──<span class="w"> </span>weights_hm3_no_hla
+</pre></div>
+</div>
+<p>If you want to use your own reference files, please ensure that the versions of (Hg37 or Hg38) are consistent between the GTF and the LD reference panel.</p>
 </section>
 <section id="download-example-data">
-<h3>1.2 Download example data<a class="headerlink" href="#download-example-data" title="Permalink to this heading">#</a></h3>
+<h3>2. Download example data<a class="headerlink" href="#download-example-data" title="Permalink to this heading">#</a></h3>
+<p>You can sownload the example data used in this tutorial as follows:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>wget<span class="w"> </span>http://cnsgenomics.com/data/GPS/GPS_example_data.tar.gz
 tar<span class="w"> </span>-xvzf<span class="w"> </span>GPS_example_data.tar.gz
 </pre></div>
 </div>
-<p>Directory structure</p>
+<p>The directory structure should be looks like this:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>tree<span class="w"> </span>-L<span class="w"> </span><span class="m">2</span>
-</pre></div>
-</div>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>example_data
-├── GWAS
-│   ├── GIANT_EUR_Height_2022_Nature.sumstats.gz
-│   ├── gwas_config.yaml
-│   ├── IQ_NG_2018.sumstats.gz
-│   └── BCX2_MCHC_EA_GWAMA.sumstats.gz
-└── ST
-    ├── Cortex_151507.h5ad
-    └── E16.5_E1S1.MOSTA.h5ad
-GPS_resource
-├── genome_annotation
-│   ├── enhancer
-│   └── gtf
-├── LD_Reference_Panel
-│   └── 1000G_EUR_Phase3_plink
-└── LDSC_resource
-    ├── hapmap3_snps
-    └── weights_hm3_no_hla
 
-10 directories, 6 files
+example_data
+├──<span class="w"> </span>GWAS
+│<span class="w">   </span>├──<span class="w"> </span>GIANT_EUR_Height_2022_Nature.sumstats.gz
+│<span class="w">   </span>├──<span class="w"> </span>gwas_config.yaml
+│<span class="w">   </span>├──<span class="w"> </span>IQ_NG_2018.sumstats.gz
+│<span class="w">   </span>└──<span class="w"> </span>BCX2_MCHC_EA_GWAMA.sumstats.gz
+└──<span class="w"> </span>ST
+<span class="w">    </span>└──<span class="w"> </span>E16.5_E1S1.MOSTA.h5ad
 </pre></div>
 </div>
 </section>
 </section>
 <section id="run-gps">
-<h2>2. Run GPS<a class="headerlink" href="#run-gps" title="Permalink to this heading">#</a></h2>
+<h2>Run GPS<a class="headerlink" href="#run-gps" title="Permalink to this heading">#</a></h2>
+<p>First, let us set up the working directory, the input data, and the output files.</p>
 <div class="highlight-shell notranslate"><div class="highlight"><pre><span></span><span class="c1"># Constants and configuration</span>
-<span class="nv">WORKDIR</span><span class="o">=</span><span class="s1">&#39;./example/Mouse_Embryo&#39;</span><span class="w"> </span><span class="c1"># This should be the directory where the GPS output will be saved</span>
-<span class="nv">SAMPLE_NAME</span><span class="o">=</span><span class="s2">&quot;E16.5_E1S1&quot;</span><span class="w"> </span><span class="c1"># This should be the name of the sample</span>
+<span class="nv">WORKDIR</span><span class="o">=</span><span class="s1">&#39;./example/Mouse_Embryo&#39;</span><span class="w"> </span><span class="c1"># The directory where the GPS output will be saved</span>
+<span class="nv">SAMPLE_NAME</span><span class="o">=</span><span class="s2">&quot;E16.5_E1S1.MOSTA&quot;</span><span class="w"> </span><span class="c1"># The sample name of ST data</span>
 
 <span class="c1"># Input data</span>
-<span class="nv">HDF5_PATH</span><span class="o">=</span><span class="s2">&quot;example_data/ST/E16.5_E1S1.MOSTA.h5ad&quot;</span>
-<span class="nv">ANNOTATION</span><span class="o">=</span><span class="s2">&quot;annotation&quot;</span><span class="w"> </span><span class="c1"># This should be the cell type annotation of each spot</span>
-<span class="nv">DATA_TYPE</span><span class="o">=</span><span class="s1">&#39;count&#39;</span><span class="w"> </span><span class="c1"># This should be the type of ST data, either &#39;count&#39; or &#39;log1p&#39;</span>
+<span class="nv">HDF5_PATH</span><span class="o">=</span><span class="s2">&quot;example_data/ST/E16.5_E1S1.MOSTA.h5ad&quot;</span><span class="w"> </span><span class="c1"># The input ST data (h5ad format)</span>
+<span class="nv">ANNOTATION</span><span class="o">=</span><span class="s2">&quot;annotation&quot;</span><span class="w"> </span><span class="c1"># The column names where spot annotations are stored</span>
+<span class="nv">DATA_TYPE</span><span class="o">=</span><span class="s1">&#39;counts&#39;</span><span class="w"> </span><span class="c1"># The layer of the gene expression matrix that is being used</span>
 
 <span class="c1"># Running Dependencies and Resources</span>
-<span class="nv">GTFFILE</span><span class="o">=</span><span class="s2">&quot;GPS_resource/genome_annotation/gtf/gencode.v39lift37.annotation.gtf&quot;</span>
-<span class="nv">ALL_ENHANCER_FILE</span><span class="o">=</span><span class="s2">&quot;GPS_resource/genome_annotation/enhancer/by_tissue/ALL/ABC_roadmap_merged.bed&quot;</span>
-<span class="nv">BFILE_ROOT</span><span class="o">=</span><span class="s2">&quot;GPS_resource/LD_Reference_Panel/1000G_EUR_Phase3_plink/1000G.EUR.QC&quot;</span>
-<span class="nv">KEEP_SNP_ROOT</span><span class="o">=</span><span class="s2">&quot;GPS_resource/LDSC_resource/hapmap3_snps/hm&quot;</span>
-<span class="nv">W_FILE</span><span class="o">=</span><span class="s2">&quot;GPS_resource/LDSC_resource/weights_hm3_no_hla/weights.&quot;</span>
+<span class="nv">GTFFILE</span><span class="o">=</span><span class="s2">&quot;GPS_resource/genome_annotation/gtf/gencode.v39lift37.annotation.gtf&quot;</span><span class="w"> </span><span class="c1"># The GTF file</span>
+<span class="nv">ALL_ENHANCER_FILE</span><span class="o">=</span><span class="s2">&quot;GPS_resource/genome_annotation/enhancer/by_tissue/ALL/ABC_roadmap_merged.bed&quot;</span><span class="w"> </span><span class="c1"># The enhancer-gene mapping file</span>
+<span class="nv">BFILE_ROOT</span><span class="o">=</span><span class="s2">&quot;GPS_resource/LD_Reference_Panel/1000G_EUR_Phase3_plink/1000G.EUR.QC&quot;</span><span class="w"> </span><span class="c1"># The LD reference panel</span>
+<span class="nv">KEEP_SNP_ROOT</span><span class="o">=</span><span class="s2">&quot;GPS_resource/LDSC_resource/hapmap3_snps/hm&quot;</span><span class="w"> </span><span class="c1"># Only use the hapmap3 snps</span>
+<span class="nv">W_FILE</span><span class="o">=</span><span class="s2">&quot;GPS_resource/LDSC_resource/weights_hm3_no_hla/weights.&quot;</span><span class="w"> </span><span class="c1"># The SNP regression weight file</span>
 </pre></div>
 </div>
-<p>After setting up the constants and configuration, execute the following steps in order to run the GPS analysis on the human cortex data:</p>
 <section id="find-latent-representations">
-<span id="find-latent-representations-mouse"></span><h3>2.1 find_latent_representations<a class="headerlink" href="#find-latent-representations" title="Permalink to this heading">#</a></h3>
-<p><strong>Objective</strong>: This initial step is for addressing technical noise and sparsity in spatial transcriptomics data. By employing the GNN model, the GPS finds latent representations for each spot.</p>
+<span id="find-latent-representations-mouse"></span><h3>1. find_latent_representations<a class="headerlink" href="#find-latent-representations" title="Permalink to this heading">#</a></h3>
+<p><strong>Objective</strong>: This step addresses technical noise and models spatial correlations of gene expression profiles in ST data. By employing the GNN model, GPS finds latent representations for each spot.</p>
 <p><strong>Input</strong>:</p>
 <ul class="simple">
-<li><p>HDF5 file containing ST data (<code class="docutils literal notranslate"><span class="pre">HDF5_PATH</span></code>) with cell type annotation (<code class="docutils literal notranslate"><span class="pre">ANNOTATION</span></code>).</p></li>
+<li><p>HDF5 file containing ST data (<code class="docutils literal notranslate"><span class="pre">HDF5_PATH</span></code>) with spots annotation (<code class="docutils literal notranslate"><span class="pre">ANNOTATION</span></code>, optional).</p></li>
 </ul>
-<p><strong>Output</strong>: A .h5ad file containing the ST data with the refined latent representations for each spot.</p>
+<p><strong>Output</strong>: A .h5ad file containing the ST data with the extracted latent representations for each spot.</p>
 <p><strong>Execution</strong>:</p>
 <div class="highlight-shell notranslate"><div class="highlight"><pre><span></span><span class="nv">HDF5_WITH_LATENT_PATH</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$WORKDIR</span><span class="s2">/</span><span class="nv">$SAMPLE_NAME</span><span class="s2">/find_latent_representations/</span><span class="si">${</span><span class="nv">SAMPLE_NAME</span><span class="si">}</span><span class="s2">_add_latent.h5ad&quot;</span>
 GPS<span class="w"> </span>run_find_latent_representations<span class="w"> </span><span class="se">\</span>
@@ -294,9 +307,9 @@ GPS<span class="w"> </span>run_find_latent_representations<span class="w"> </spa
 </pre></div>
 </div>
 </section>
-<section id="latent-to-gene-mouse">
-<span id="id1"></span><h3>2.2 latent_to_gene (Mouse)<a class="headerlink" href="#latent-to-gene-mouse" title="Permalink to this heading">#</a></h3>
-<p><strong>Objective</strong>: Building on the latent representations, this step leverages the latent representations to find neighbors of each spot. The gene marker scores are then generated by aggregating information from neighbors.</p>
+<section id="latent-to-gene">
+<span id="latent-to-gene-mouse"></span><h3>2. latent_to_gene<a class="headerlink" href="#latent-to-gene" title="Permalink to this heading">#</a></h3>
+<p><strong>Objective</strong>: Building on the latent representations, this step leverages them to find neighbors for each spot. Gene marker scores are then generated by aggregating information from these neighbors.</p>
 <p><strong>Input</strong>:</p>
 <ul class="simple">
 <li><p>HDF5 file with latent representations from the previous step (<code class="docutils literal notranslate"><span class="pre">HDF5_WITH_LATENT_PATH</span></code>).</p></li>
@@ -322,19 +335,20 @@ GPS<span class="w"> </span>run_latent_to_gene<span class="w"> </span><span class
 </div>
 </section>
 <section id="generate-ldscore">
-<h3>2.3 generate_ldscore<a class="headerlink" href="#generate-ldscore" title="Permalink to this heading">#</a></h3>
-<p><strong>Objective</strong>: By using the gene marker scores from the previous step, GPS assigns gene specificity scores to each SNP by referencing the gene annotation data. Specifically, GPS assigns gene specificity scores to SNPs, based on their distances to TSS and, optionally, SNP-to-gene epigenetic linking maps. GPS then uses the specificity scores of SNPs to generates stratified LD scores (S-LD score) for each spot in ST data.</p>
+<h3>3. generate_ldscore<a class="headerlink" href="#generate-ldscore" title="Permalink to this heading">#</a></h3>
+<p><strong>Objective</strong>: By using the gene marker scores from the previous step, GPS assigns a gene specificity score to SNPs by referencing the GTF data. Specifically, SNPs are mapped to genes based on their distances to the transcription start site (TSS) and, optionally, SNP-to-gene epigenetic linking maps. GPS then uses the specificity scores of SNPs to generate stratified LD scores (S-LD score) for each spot in the ST data.</p>
 <p><strong>Input</strong>:</p>
 <ul class="simple">
 <li><p>Feather file with gene marker scores from the previous step (<code class="docutils literal notranslate"><span class="pre">MKSCORE_FEATHER_FILE</span></code>).</p></li>
 <li><p>Reference panel data (<code class="docutils literal notranslate"><span class="pre">BFILE_ROOT</span></code> and <code class="docutils literal notranslate"><span class="pre">KEEP_SNP_ROOT</span></code>).</p></li>
-<li><p>Gene annotation file.</p></li>
+<li><p>GTF file.</p></li>
 </ul>
 <p><strong>Output</strong>:</p>
 <ul class="simple">
 <li><p>A set of LD score chunks stored in the (<code class="docutils literal notranslate"><span class="pre">LDScoreDir</span></code>).</p></li>
 </ul>
 <p><strong>Three SNP to gene linking methods are available:</strong></p>
+<p>The default setting only using the TSS mapping methods.</p>
 <div class="tab-set docutils">
 <input checked="True" class="tab-input" id="tab-set--0-input--1" name="tab-set--0" type="radio"><label class="tab-label" for="tab-set--0-input--1">1. Use TSS Only</label><div class="tab-content docutils">
 <p>This will use TSS only to link SNPs to gene specificity.</p>
@@ -384,8 +398,7 @@ If a SNP is within the gene window, it will be assigned the gene specificity sco
 </div>
 </div>
 <input class="tab-input" id="tab-set--0-input--3" name="tab-set--0" type="radio"><label class="tab-label" for="tab-set--0-input--3">3. Use Both TSS and Enhancer-Gene Linking</label><div class="tab-content docutils">
-<p>This will use both TSS and enhancer-gene linking to link SNPs to gene specificity.</p>
-<p>In the scenario where a single nucleotide polymorphism (SNP) falls within the proximity window of both a gene body window and an enhancer linked to a different gene, the determination of the SNP’s gene specificity score is governed by the <code class="docutils literal notranslate"><span class="pre">--gene_window_enhancer_priority</span></code> parameter. Possible choices is <code class="docutils literal notranslate"><span class="pre">gene_window_first</span></code> or <code class="docutils literal notranslate"><span class="pre">enhancer_first</span></code>.</p>
+<p>This will use both the TSS and enhancer-gene linking to map SNPs to genes. In cases where a SNP falls within the proximity window of both a gene body and an enhancer linked to a different gene, the determination of the mapped gene is governed by the <code class="docutils literal notranslate"><span class="pre">--gene_window_enhancer_priority</span></code>. Possible choices include <code class="docutils literal notranslate"><span class="pre">gene_window_first</span></code> or <code class="docutils literal notranslate"><span class="pre">enhancer_first</span></code>.</p>
 <p><strong>Execution</strong>:</p>
 <div class="highlight-shell notranslate"><div class="highlight"><pre><span></span><span class="nv">LDScoreDir</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$WORKDIR</span><span class="s2">/</span><span class="nv">$SAMPLE_NAME</span><span class="s2">/generate_ldscore&quot;</span>
 <span class="k">for</span><span class="w"> </span>CHROM<span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="o">{</span><span class="m">1</span>..22<span class="o">}</span><span class="p">;</span><span class="w"> </span><span class="k">do</span>
@@ -417,8 +430,8 @@ you can reduce the <code class="docutils literal notranslate"><span class="pre">
 </div>
 </section>
 <section id="spatial-ldsc">
-<h3>2.4 spatial_ldsc<a class="headerlink" href="#spatial-ldsc" title="Permalink to this heading">#</a></h3>
-<p><strong>Objective</strong>: Identify spots associated with complex traits by associating S-LD score of spots with GWAS summary statistics of traits.</p>
+<h3>4. spatial_ldsc<a class="headerlink" href="#spatial-ldsc" title="Permalink to this heading">#</a></h3>
+<p><strong>Objective</strong>: Spatially map traits-associated spots.</p>
 <p><strong>Input</strong>:</p>
 <ul class="simple">
 <li><p>Directory containing LD scores generated in the previous step (<code class="docutils literal notranslate"><span class="pre">LDScoreDir</span></code>).</p></li>
@@ -468,8 +481,8 @@ GPS<span class="w"> </span>run_spatial_ldsc<span class="w"> </span><span class="
 </div>
 </section>
 <section id="cauchy-combination-optional">
-<h3>2.5 cauchy_combination (optional)<a class="headerlink" href="#cauchy-combination-optional" title="Permalink to this heading">#</a></h3>
-<p><strong>Objective</strong>: Use the Cauchy Combination Test to aggregate P values of individual spots within specific spatial regions (cell types) to evaluate the association of these regions (cell types) with complex traits.</p>
+<h3>5. cauchy_combination (optional)<a class="headerlink" href="#cauchy-combination-optional" title="Permalink to this heading">#</a></h3>
+<p><strong>Objective</strong>: Use the Cauchy Combination Test to aggregate P values of individual spots within specific spatial regions to evaluate the association of these regions with the trait.</p>
 <p><strong>Execution</strong>:</p>
 <div class="highlight-shell notranslate"><div class="highlight"><pre><span></span><span class="nv">CAUCHY_SAVE_DIR</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$WORKDIR</span><span class="s2">/</span><span class="nv">$SAMPLE_NAME</span><span class="s2">/cauchy_combination&quot;</span>
 <span class="nv">TRAIT_NAME</span><span class="o">=</span><span class="s2">&quot;IQ&quot;</span>
@@ -482,7 +495,7 @@ GPS<span class="w"> </span>run_cauchy_combination<span class="w"> </span><span c
 <span class="w">    </span>--annotation<span class="w"> </span><span class="nv">$ANNOTATION</span>
 </pre></div>
 </div>
-<p>You will get a csv file with the aggregated P values for each region or cell type to find out the most significant regions or cell types associated with the complex trait.</p>
+<p>You will get a csv file showing the association P values for spatial each region with the trait.</p>
 <div class="tab-set docutils">
 <input checked="True" class="tab-input" id="tab-set--2-input--1" name="tab-set--2" type="radio"><label class="tab-label" for="tab-set--2-input--1">Height</label><div class="tab-content docutils">
 <div class="table-wrapper colwidths-auto docutils container">
@@ -601,13 +614,13 @@ GPS<span class="w"> </span>run_cauchy_combination<span class="w"> </span><span c
 </div>
 </section>
 <section id="visualization">
-<h3>2.6 visualization<a class="headerlink" href="#visualization" title="Permalink to this heading">#</a></h3>
+<h3>6. visualization<a class="headerlink" href="#visualization" title="Permalink to this heading">#</a></h3>
 <p><strong>Objective</strong>: Visualize the results of GPS.</p>
-<p>You could use below command to visualize the spatial LDSC results. You will get a scatter plot with the -log10(p-value) of each spot.</p>
+<p>You could use below command to visualize the GPS results. You will get a scatter plot with the -log10(p-value) of each spot.</p>
 <p><strong>Output</strong></p>
 <ul class="simple">
 <li><p>A pdf file.</p></li>
-<li><p>A html file which could be opened in a web browser to interactively explore the spatial LDSC results.</p></li>
+<li><p>A html file which could be opened in a web browser to interactively explore the results.</p></li>
 </ul>
 <div class="highlight-shell notranslate"><div class="highlight"><pre><span></span>GPS<span class="w"> </span>run_visualize<span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>--input_hdf5_path<span class="w"> </span><span class="nv">$HDF5_PATH</span><span class="w"> </span><span class="se">\</span>
@@ -663,18 +676,18 @@ GPS<span class="w"> </span>run_cauchy_combination<span class="w"> </span><span c
           <div class="toc-tree">
             <ul>
 <li><a class="reference internal" href="#">Mouse Embryo Example</a><ul>
-<li><a class="reference internal" href="#preparation">1. Preparation</a><ul>
-<li><a class="reference internal" href="#download-running-dependencies">1.1 Download running dependencies</a></li>
-<li><a class="reference internal" href="#download-example-data">1.2 Download example data</a></li>
+<li><a class="reference internal" href="#preparation">Preparation</a><ul>
+<li><a class="reference internal" href="#download-dependencies">1. Download dependencies</a></li>
+<li><a class="reference internal" href="#download-example-data">2. Download example data</a></li>
 </ul>
 </li>
-<li><a class="reference internal" href="#run-gps">2. Run GPS</a><ul>
-<li><a class="reference internal" href="#find-latent-representations">2.1 find_latent_representations</a></li>
-<li><a class="reference internal" href="#latent-to-gene-mouse">2.2 latent_to_gene (Mouse)</a></li>
-<li><a class="reference internal" href="#generate-ldscore">2.3 generate_ldscore</a></li>
-<li><a class="reference internal" href="#spatial-ldsc">2.4 spatial_ldsc</a></li>
-<li><a class="reference internal" href="#cauchy-combination-optional">2.5 cauchy_combination (optional)</a></li>
-<li><a class="reference internal" href="#visualization">2.6 visualization</a></li>
+<li><a class="reference internal" href="#run-gps">Run GPS</a><ul>
+<li><a class="reference internal" href="#find-latent-representations">1. find_latent_representations</a></li>
+<li><a class="reference internal" href="#latent-to-gene">2. latent_to_gene</a></li>
+<li><a class="reference internal" href="#generate-ldscore">3. generate_ldscore</a></li>
+<li><a class="reference internal" href="#spatial-ldsc">4. spatial_ldsc</a></li>
+<li><a class="reference internal" href="#cauchy-combination-optional">5. cauchy_combination (optional)</a></li>
+<li><a class="reference internal" href="#visualization">6. visualization</a></li>
 </ul>
 </li>
 </ul>

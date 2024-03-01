@@ -31,8 +31,7 @@ Overview of ``GPS`` Method
 .. image:: _static/architecture.svg
    :width: 600
    :alt: Model architecture
-
-For more details about the ``GPS`` algorithm, please check out our `publication <URL>`__.
+Schmatics of ``GPS`` method. For more details about the ``GPS``, please check out our `publication <URL>`__.
 
 Installation
 ------------
@@ -51,7 +50,7 @@ Web Application
 
 You could visit our `GPS website <https://gps.yanglab.westlake.edu.cn/>`__ to see the results of our analysis.
 
-Online Analysis Service
+Online Analysis Service (not avaliable yet)
 +++++++++++++++++++++++
 
 Please check out our `GPS online application <not available yet>`__ for a user-friendly online analysis. Users could upload their own GWAS summary statistics data to perform the analysis.

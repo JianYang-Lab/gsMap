@@ -166,12 +166,13 @@
 </li>
 <li class="toctree-l1"><a class="reference internal" href="data.html">GPS Resources Download</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="api.html">GPS Command Line Alphabets</a><input class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><div class="visually-hidden">Toggle navigation of GPS Command Line Alphabets</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
-<li class="toctree-l2"><a class="reference internal" href="api/find_latent_representations.html">step 1: find_latent_representation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/format_sumstats.html">format_sumstats (optional)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/find_latent_representations.html">Step 1: find_latent_representation</a></li>
 <li class="toctree-l2"><a class="reference internal" href="api/latent_to_gene.html">Step 2: latent_to_gene</a></li>
 <li class="toctree-l2"><a class="reference internal" href="api/generate_ldscore.html">Step 3: generate_ldscore</a></li>
 <li class="toctree-l2"><a class="reference internal" href="api/spatial_ldsc.html">Step 4: spatial_ldsc</a></li>
 <li class="toctree-l2"><a class="reference internal" href="api/cauchy_combination.html">Step 5: cauchy_combination (optional)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="api/visualization.html">Step 6: visualization</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/visualization.html">Step 6: visualization (optional)</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="release.html">Release notes</a></li>
@@ -211,30 +212,28 @@
         <article role="main">
           <section id="gps-tutorials">
 <h1>GPS Tutorials<a class="headerlink" href="#gps-tutorials" title="Permalink to this heading">#</a></h1>
-<p>Welcome to the GPS Tutorials. In this section, we present detailed examples and guides to help you understand and utilize GPS effectively. Our tutorials provide a Mouse Embryo ST data, alongside three cleaned GWAS summary statistics to demonstrate the application of GPS in spatially mapping trait-associated cells (spots).</p>
+<p>Welcome to the GPS Tutorials. In this section, we present detailed examples and guides to help you understand and utilize GPS effectively. Our tutorials provide Mouse Embryo ST data, alongside three cleaned GWAS summary statistics to demonstrate the application of GPS in spatially mapping trait-associated cells (spots).</p>
 <section id="datasets-used-in-the-tutorials">
-<h2>Datasets Used in the Tutorials<a class="headerlink" href="#datasets-used-in-the-tutorials" title="Permalink to this heading">#</a></h2>
+<h2>Datasets used in the tutorials<a class="headerlink" href="#datasets-used-in-the-tutorials" title="Permalink to this heading">#</a></h2>
 <ol class="arabic simple">
-<li><p><strong>Mouse Embryo ST Data</strong></p>
-<ul class="simple">
-<li><p>Num of spots: 121k</p></li>
-<li><p>Technology: Stereo-Seq.</p></li>
-</ul>
-</li>
-<li><p><strong>GWAS Data</strong></p>
-<ul class="simple">
-<li><p>The following Genome-Wide Association Study (GWAS) datasets are provided to illustrate the use of GPS in understanding spatial heterogeneity in complex traits:</p>
-<ol class="arabic simple">
-<li><p>Height - (<a class="reference external" href="https://www.nature.com/articles/s41586-022-05275-y">https://www.nature.com/articles/s41586-022-05275-y</a>)</p></li>
-<li><p>IQ - (<a class="reference external" href="https://www.nature.com/articles/s41588-018-0152-6">https://www.nature.com/articles/s41588-018-0152-6</a>)</p></li>
-<li><p>Mean Corpuscular Hemoglobin Concentration (MCHC) - (<a class="reference external" href="https://doi.org/10.1016/j.cell.2020.08.008">https://doi.org/10.1016/j.cell.2020.08.008</a>)</p></li>
+<li><dl class="simple">
+<dt><strong>ST data</strong></dt><dd><ol class="arabic simple">
+<li><p>Mouse E16.5 embryo sagittal section - (E16.5_E1S1.MOSTA.h5ad)</p></li>
 </ol>
+</dd>
+</dl>
 </li>
-</ul>
+<li><dl class="simple">
+<dt><strong>GWAS data</strong></dt><dd><ol class="arabic simple">
+<li><p>Height - (GIANT_EUR_Height_2022_Nature.sumstats.gz)</p></li>
+<li><p>Intelligence - (IQ_NG_2018.sumstats.gz)</p></li>
+<li><p>Mean corpusular hemoglobin concerntration - (BCX2_MCHC_EA_GWAMA.sumstats.gz)</p></li>
+</ol>
+</dd>
+</dl>
 </li>
 </ol>
 <p>For how to use your own data, please check the <a class="reference internal" href="data_format.html#data-format"><span class="std std-ref">Data Format</span></a> section.</p>
-<p>For the full dataset used in the paper, refer to the <a class="reference internal" href="data.html#data-availability"><span class="std std-ref">Data Available</span></a></p>
 </section>
 <section id="tutorials">
 <h2>Tutorials<a class="headerlink" href="#tutorials" title="Permalink to this heading">#</a></h2>
@@ -242,30 +241,33 @@
 <div class="toctree-wrapper compound">
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="mouse.html">Mouse Embryo Example</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="mouse.html#preparation">1. Preparation</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="mouse.html#download-running-dependencies">1.1 Download running dependencies</a></li>
-<li class="toctree-l3"><a class="reference internal" href="mouse.html#download-example-data">1.2 Download example data</a></li>
+<li class="toctree-l2"><a class="reference internal" href="mouse.html#preparation">Preparation</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="mouse.html#download-dependencies">1. Download dependencies</a></li>
+<li class="toctree-l3"><a class="reference internal" href="mouse.html#download-example-data">2. Download example data</a></li>
 </ul>
 </li>
-<li class="toctree-l2"><a class="reference internal" href="mouse.html#run-gps">2. Run GPS</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="mouse.html#find-latent-representations">2.1 find_latent_representations</a></li>
-<li class="toctree-l3"><a class="reference internal" href="mouse.html#latent-to-gene-mouse">2.2 latent_to_gene (Mouse)</a></li>
-<li class="toctree-l3"><a class="reference internal" href="mouse.html#generate-ldscore">2.3 generate_ldscore</a></li>
-<li class="toctree-l3"><a class="reference internal" href="mouse.html#spatial-ldsc">2.4 spatial_ldsc</a></li>
-<li class="toctree-l3"><a class="reference internal" href="mouse.html#cauchy-combination-optional">2.5 cauchy_combination (optional)</a></li>
-<li class="toctree-l3"><a class="reference internal" href="mouse.html#visualization">2.6 visualization</a></li>
+<li class="toctree-l2"><a class="reference internal" href="mouse.html#run-gps">Run GPS</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="mouse.html#find-latent-representations">1. find_latent_representations</a></li>
+<li class="toctree-l3"><a class="reference internal" href="mouse.html#latent-to-gene">2. latent_to_gene</a></li>
+<li class="toctree-l3"><a class="reference internal" href="mouse.html#generate-ldscore">3. generate_ldscore</a></li>
+<li class="toctree-l3"><a class="reference internal" href="mouse.html#spatial-ldsc">4. spatial_ldsc</a></li>
+<li class="toctree-l3"><a class="reference internal" href="mouse.html#cauchy-combination-optional">5. cauchy_combination (optional)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="mouse.html#visualization">6. visualization</a></li>
 </ul>
 </li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="data_format.html">Data Format</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="data_format.html#st-data">1. ST Data</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="data_format.html#spatial-coordinates">1.1 Spatial Coordinates</a></li>
-<li class="toctree-l3"><a class="reference internal" href="data_format.html#data-type">1.2 DATA_TYPE</a></li>
-<li class="toctree-l3"><a class="reference internal" href="data_format.html#spots-cells-annotation">1.3 Spots (cells) Annotation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="data_format.html#st-data">ST Data</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="data_format.html#gene-expression-matrix">gene expression matrix</a></li>
+<li class="toctree-l3"><a class="reference internal" href="data_format.html#spatial-coordinates">spatial coordinates</a></li>
+<li class="toctree-l3"><a class="reference internal" href="data_format.html#spots-cells-annotation">spots (cells) annotation</a></li>
 </ul>
 </li>
-<li class="toctree-l2"><a class="reference internal" href="data_format.html#gwas-summary-data">2. GWAS Summary Data</a></li>
+<li class="toctree-l2"><a class="reference internal" href="data_format.html#gwas-data">GWAS Data</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="data_format.html#tips-for-formatting-the-gwas-data">Tips for formatting the GWAS data</a></li>
+</ul>
+</li>
 </ul>
 </li>
 </ul>
@@ -329,7 +331,7 @@
           <div class="toc-tree">
             <ul>
 <li><a class="reference internal" href="#">GPS Tutorials</a><ul>
-<li><a class="reference internal" href="#datasets-used-in-the-tutorials">Datasets Used in the Tutorials</a></li>
+<li><a class="reference internal" href="#datasets-used-in-the-tutorials">Datasets used in the tutorials</a></li>
 <li><a class="reference internal" href="#tutorials">Tutorials</a></li>
 </ul>
 </li>

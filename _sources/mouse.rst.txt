@@ -9,7 +9,6 @@
 
        ‎
 
-
 .. tab:: IQ
 
     .. chart:: charts/mouse_embryo/E16.5_E1S1_IQ.json

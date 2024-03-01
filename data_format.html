@@ -166,12 +166,13 @@
 </li>
 <li class="toctree-l1"><a class="reference internal" href="data.html">GPS Resources Download</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="api.html">GPS Command Line Alphabets</a><input class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><div class="visually-hidden">Toggle navigation of GPS Command Line Alphabets</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
-<li class="toctree-l2"><a class="reference internal" href="api/find_latent_representations.html">step 1: find_latent_representation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/format_sumstats.html">format_sumstats (optional)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/find_latent_representations.html">Step 1: find_latent_representation</a></li>
 <li class="toctree-l2"><a class="reference internal" href="api/latent_to_gene.html">Step 2: latent_to_gene</a></li>
 <li class="toctree-l2"><a class="reference internal" href="api/generate_ldscore.html">Step 3: generate_ldscore</a></li>
 <li class="toctree-l2"><a class="reference internal" href="api/spatial_ldsc.html">Step 4: spatial_ldsc</a></li>
 <li class="toctree-l2"><a class="reference internal" href="api/cauchy_combination.html">Step 5: cauchy_combination (optional)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="api/visualization.html">Step 6: visualization</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/visualization.html">Step 6: visualization (optional)</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="release.html">Release notes</a></li>
@@ -212,16 +213,27 @@
           <section id="data-format">
 <span id="id1"></span><h1>Data Format<a class="headerlink" href="#data-format" title="Permalink to this heading">#</a></h1>
 <section id="st-data">
-<h2>1. ST Data<a class="headerlink" href="#st-data" title="Permalink to this heading">#</a></h2>
-<p>The input ST data should be the h5ad format.</p>
+<h2>ST Data<a class="headerlink" href="#st-data" title="Permalink to this heading">#</a></h2>
+<p>The input ST data should be a h5ad file, which include, at least, gene expression matrix and spatial coordinates.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">scanpy</span> <span class="k">as</span> <span class="nn">sc</span>
 <span class="n">HDF5_PATH</span><span class="o">=</span><span class="s2">&quot;example_data/ST/E16.5_E1S1.MOSTA.h5ad&quot;</span>
 <span class="n">adata</span> <span class="o">=</span> <span class="n">sc</span><span class="o">.</span><span class="n">read_h5ad</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">HDF5_PATH</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
 </pre></div>
 </div>
+<section id="gene-expression-matrix">
+<h3>gene expression matrix<a class="headerlink" href="#gene-expression-matrix" title="Permalink to this heading">#</a></h3>
+<p>The gene expression matrix should be stored in the <code class="docutils literal notranslate"><span class="pre">layers</span></code> attribute of the h5ad file.<br />
+The parameter <code class="docutils literal notranslate"><span class="pre">Type</span></code> of the <code class="docutils literal notranslate"><span class="pre">find_latent_representations</span></code> specifies which data layer to use. If you set <code class="docutils literal notranslate"><span class="pre">Type</span></code> to <code class="docutils literal notranslate"><span class="pre">counts</span></code>, GPS will use the gene count matrix and automatically normalize it. If <code class="docutils literal notranslate"><span class="pre">Type</span></code> is set to another value, GPS will use the data provided in the corresponding layer without any normalization.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">adata</span><span class="o">.</span><span class="n">layers</span><span class="p">[</span><span class="s1">&#39;counts&#39;</span><span class="p">]</span>
+
+<span class="go">&lt;121767x28204 sparse matrix of type &#39;&lt;class &#39;numpy.int64&#39;&gt;&#39;</span>
+<span class="go">	with 211994186 stored elements in Compressed Sparse Row format&gt;</span>
+</pre></div>
+</div>
+</section>
 <section id="spatial-coordinates">
-<h3>1.1 Spatial Coordinates<a class="headerlink" href="#spatial-coordinates" title="Permalink to this heading">#</a></h3>
-<p>The spatial coordinate information should be stored in the <code class="docutils literal notranslate"><span class="pre">obsm</span></code> attribute with the key <code class="docutils literal notranslate"><span class="pre">spatial</span></code>, which is a 2D numpy array with the shape of <code class="docutils literal notranslate"><span class="pre">(n_spots,</span> <span class="pre">2)</span></code>. The first column is the x coordinate and the second column is the y coordinate.</p>
+<h3>spatial coordinates<a class="headerlink" href="#spatial-coordinates" title="Permalink to this heading">#</a></h3>
+<p>The spatial coordinates should be stored in the <code class="docutils literal notranslate"><span class="pre">obsm</span></code> attribute of the h5ad file with the key <code class="docutils literal notranslate"><span class="pre">spatial</span></code>.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">adata</span><span class="o">.</span><span class="n">obsm</span><span class="p">[</span><span class="s1">&#39;spatial&#39;</span><span class="p">]</span>
 
 <span class="go">[[158.05955033 220.80121954]</span>
@@ -234,20 +246,10 @@
 </pre></div>
 </div>
 </section>
-<section id="data-type">
-<h3>1.2 DATA_TYPE<a class="headerlink" href="#data-type" title="Permalink to this heading">#</a></h3>
-<p><code class="docutils literal notranslate"><span class="pre">DATA_TYPE</span></code> parameter used in the :ref:<code class="docutils literal notranslate"><span class="pre">find_latent_representations_mouse</span></code> is used to specify the data layer where the gene expression data is stored.
-If you set the <code class="docutils literal notranslate"><span class="pre">DATA_TYPE</span></code> to <code class="docutils literal notranslate"><span class="pre">count</span></code>, the GPS will automatically normalize the data. Otherwise the GPS will use the data provided in the <code class="docutils literal notranslate"><span class="pre">DATA_TYPE</span></code> layer.</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">adata</span><span class="o">.</span><span class="n">layers</span><span class="p">[</span><span class="s1">&#39;counts&#39;</span><span class="p">]</span>
-
-<span class="go">&lt;121767x28204 sparse matrix of type &#39;&lt;class &#39;numpy.int64&#39;&gt;&#39;</span>
-<span class="go">	with 211994186 stored elements in Compressed Sparse Row format&gt;</span>
-</pre></div>
-</div>
-</section>
 <section id="spots-cells-annotation">
-<h3>1.3 Spots (cells) Annotation<a class="headerlink" href="#spots-cells-annotation" title="Permalink to this heading">#</a></h3>
-<p>Optional, the h5ad file could contain a annotation of the spots (cells) in the <code class="docutils literal notranslate"><span class="pre">obs</span></code> attribute. The annotation could be a region label or cell type label.</p>
+<h3>spots (cells) annotation<a class="headerlink" href="#spots-cells-annotation" title="Permalink to this heading">#</a></h3>
+<p>Optionally, the h5ad file could contain annotations of the spots (cells) in the <code class="docutils literal notranslate"><span class="pre">obs</span></code> attribute.<br />
+The parameter <code class="docutils literal notranslate"><span class="pre">annotation</span></code> of the <code class="docutils literal notranslate"><span class="pre">find_latent_representations</span></code> specifies the names of annotation columns in the <code class="docutils literal notranslate"><span class="pre">obs</span></code> attribute.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="nb">print</span><span class="p">(</span><span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="s1">&#39;annotation&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">value_counts</span><span class="p">()</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
 
 <span class="go">Brain                17374</span>
@@ -260,8 +262,71 @@ If you set the <code class="docutils literal notranslate"><span class="pre">DATA
 </div>
 </section>
 </section>
-<section id="gwas-summary-data">
-<h2>2. GWAS Summary Data<a class="headerlink" href="#gwas-summary-data" title="Permalink to this heading">#</a></h2>
+<section id="gwas-data">
+<h2>GWAS Data<a class="headerlink" href="#gwas-data" title="Permalink to this heading">#</a></h2>
+<p>The input GWAS data is in a gzip text file, which should, at least, include SNP (rs number), Z (Z-statistics), and N (sample size). Columns A1 and A2 represent the effect allele and non-effect allele, respectively, but they are not necessary. The column orders can be customized, but headers are keywords and will be used by GPS.</p>
+<div class="highlight-shell notranslate"><div class="highlight"><pre><span></span>zcat<span class="w"> </span>example_data/GWAS/IQ_NG_2018.sumstats.gz<span class="w"> </span><span class="p">|</span><span class="w"> </span>head<span class="w"> </span>-n<span class="w"> </span><span class="m">5</span>
+
+SNP<span class="w">		</span>A1<span class="w">	</span>A2<span class="w">	</span>Z<span class="w">	</span>N
+rs12184267<span class="w">	</span>T<span class="w">	</span>C<span class="w">	</span><span class="m">0</span>.916<span class="w">	</span><span class="m">225955</span>
+rs12184277<span class="w">	</span>G<span class="w">	</span>A<span class="w">	</span><span class="m">0</span>.656<span class="w">	</span><span class="m">226215</span>
+rs12184279<span class="w">	</span>A<span class="w">	</span>C<span class="w">	</span><span class="m">1</span>.050<span class="w">	</span><span class="m">226224</span>
+rs116801199<span class="w">	</span>T<span class="w">	</span>G<span class="w">	</span><span class="m">0</span>.300<span class="w">	</span><span class="m">226626</span>
+</pre></div>
+</div>
+<section id="tips-for-formatting-the-gwas-data">
+<h3>Tips for formatting the GWAS data<a class="headerlink" href="#tips-for-formatting-the-gwas-data" title="Permalink to this heading">#</a></h3>
+<p>You can convert the GWAS summary data into the required format using customized code. For ease of use, we’ve provided a command in GPS to do this. We’ll demonstrate how to use this command with the human height GWAS data as an example.</p>
+<p>First, download the human height GWAS data and decompress it.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>wegt<span class="w"> </span>https://portals.broadinstitute.org/collaboration/giant/images/4/4e/GIANT_HEIGHT_YENGO_2022_GWAS_SUMMARY_STATS_ALL.gz
+gzip<span class="w"> </span>-d<span class="w"> </span>GIANT_HEIGHT_YENGO_2022_GWAS_SUMMARY_STATS_ALL.gz
+</pre></div>
+</div>
+<p>The first 5 lines of the file should look like this:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>head<span class="w"> </span>-n<span class="w"> </span><span class="m">5</span><span class="w"> </span>GIANT_HEIGHT_YENGO_2022_GWAS_SUMMARY_STATS_ALL
+
+SNPID<span class="w">	</span>RSID<span class="w">	</span>CHR<span class="w">	</span>POS<span class="w">	</span>EFFECT_ALLELE<span class="w">	</span>OTHER_ALLELE<span class="w">	</span>EFFECT_ALLELE_FREQ<span class="w">	</span>BETA<span class="w">	</span>SE<span class="w">	</span>P<span class="w">	</span>N
+<span class="m">1</span>:566875:C:T<span class="w">	</span>rs2185539<span class="w">	</span><span class="m">1</span><span class="w">	</span><span class="m">566875</span><span class="w">	</span>T<span class="w">	</span>C<span class="w">	</span><span class="m">0</span>.00413<span class="w">	</span><span class="m">0</span>.00762959<span class="w">	</span><span class="m">0</span>.0197<span class="w">	</span><span class="m">0</span>.699009<span class="w">	</span><span class="m">607057</span>
+<span class="m">1</span>:728951:C:T<span class="w">	</span>rs11240767<span class="w">	</span><span class="m">1</span><span class="w">	</span><span class="m">728951</span><span class="w">	</span>T<span class="w">	</span>C<span class="w">	</span><span class="m">0</span>.0438<span class="w">	</span><span class="m">0</span>.0206708<span class="w">	</span><span class="m">0</span>.00956<span class="w">	</span><span class="m">0</span>.0306735<span class="w">	</span><span class="m">241218</span>
+<span class="m">1</span>:734462:A:G<span class="w">	</span>rs12564807<span class="w">	</span><span class="m">1</span><span class="w">	</span><span class="m">734462</span><span class="w">	</span>A<span class="w">	</span>G<span class="w">	</span><span class="m">0</span>.896<span class="w">	</span><span class="m">0</span>.00426816<span class="w">	</span><span class="m">0</span>.0110<span class="w">	</span><span class="m">0</span>.697777<span class="w">	</span><span class="m">117377</span>
+<span class="m">1</span>:752721:A:G<span class="w">	</span>rs3131972<span class="w">	</span><span class="m">1</span><span class="w">	</span><span class="m">752721</span><span class="w">	</span>G<span class="w">	</span>A<span class="w">	</span><span class="m">0</span>.786<span class="w">	</span><span class="m">0</span>.0000413581<span class="w">	</span><span class="m">0</span>.00205<span class="w">	</span><span class="m">0</span>.983898<span class="w">	</span><span class="m">1009515</span>
+</pre></div>
+</div>
+<p>To convert the summary statistics, use the commands:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>GPS<span class="w"> </span>format_sumstats<span class="w"> </span><span class="se">\</span>
+--sumstats<span class="w"> </span>GIANT_HEIGHT_YENGO_2022_GWAS_SUMMARY_STATS_ALL<span class="w"> </span>
+--out<span class="w"> </span>HEIGHT
+</pre></div>
+</div>
+<p>you will get HEIGHT.sumstats.gz, which should look like this:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>zcat<span class="w"> </span>HEIGHT.sumstats.gz<span class="w"> </span><span class="p">|</span><span class="w"> </span>head<span class="w"> </span>-n<span class="w"> </span><span class="m">5</span>
+
+SNP<span class="w">		</span>A1<span class="w">	</span>A2<span class="w">	</span>Z<span class="w">	</span>N<span class="w">	</span>
+rs3131969<span class="w">	</span>G<span class="w">	</span>A<span class="w">	</span><span class="m">0</span>.328<span class="w">	</span><span class="m">1494218</span>.000<span class="w">	</span>
+rs3131967<span class="w">	</span>C<span class="w">	</span>T<span class="w">	</span><span class="m">0</span>.386<span class="w">	</span><span class="m">1488150</span>.000<span class="w">	</span>
+rs12562034<span class="w">	</span>A<span class="w">	</span>G<span class="w">	</span><span class="m">1</span>.714<span class="w">	</span><span class="m">1554976</span>.000<span class="w">	</span>
+rs4040617<span class="w">	</span>G<span class="w">	</span>A<span class="w">	</span>-0.463<span class="w">	</span><span class="m">1602016</span>.000<span class="w">	</span>
+</pre></div>
+</div>
+<p>In most cases, this command can automatically recognize different column names of GWAS data, but you can also specify the column names to ensure correctness.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>GPS<span class="w"> </span>format_sumstats<span class="w"> </span><span class="se">\</span>
+--sumstats<span class="w"> </span>GIANT_HEIGHT_YENGO_2022_GWAS_SUMMARY_STATS_ALL<span class="w"> </span>
+--out<span class="w"> </span>HEIGHT<span class="w"> </span><span class="se">\</span>
+--a1<span class="w"> </span>EFFECT_ALLELE<span class="w"> </span><span class="se">\</span>
+--a2<span class="w"> </span>OTHER_ALLELE<span class="w"> </span><span class="se">\</span>
+--p<span class="w"> </span>P<span class="w"> </span><span class="se">\</span>
+--frq<span class="w"> </span>EFFECT_ALLELE_FREQ<span class="w"> </span><span class="se">\</span>
+--snp<span class="w"> </span>RSID<span class="w"> </span><span class="se">\</span>
+--beta<span class="w"> </span>BETA<span class="w"> </span><span class="se">\</span>
+--se<span class="w"> </span>SE<span class="w"> </span><span class="se">\</span>
+--n<span class="w"> </span>N
+</pre></div>
+</div>
+<p>For more usage options, please see:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>GPS<span class="w"> </span>format_sumstats<span class="w"> </span>-h
+</pre></div>
+</div>
+</section>
 </section>
 </section>
 
@@ -321,13 +386,16 @@ If you set the <code class="docutils literal notranslate"><span class="pre">DATA
           <div class="toc-tree">
             <ul>
 <li><a class="reference internal" href="#">Data Format</a><ul>
-<li><a class="reference internal" href="#st-data">1. ST Data</a><ul>
-<li><a class="reference internal" href="#spatial-coordinates">1.1 Spatial Coordinates</a></li>
-<li><a class="reference internal" href="#data-type">1.2 DATA_TYPE</a></li>
-<li><a class="reference internal" href="#spots-cells-annotation">1.3 Spots (cells) Annotation</a></li>
+<li><a class="reference internal" href="#st-data">ST Data</a><ul>
+<li><a class="reference internal" href="#gene-expression-matrix">gene expression matrix</a></li>
+<li><a class="reference internal" href="#spatial-coordinates">spatial coordinates</a></li>
+<li><a class="reference internal" href="#spots-cells-annotation">spots (cells) annotation</a></li>
 </ul>
 </li>
-<li><a class="reference internal" href="#gwas-summary-data">2. GWAS Summary Data</a></li>
+<li><a class="reference internal" href="#gwas-data">GWAS Data</a><ul>
+<li><a class="reference internal" href="#tips-for-formatting-the-gwas-data">Tips for formatting the GWAS data</a></li>
+</ul>
+</li>
 </ul>
 </li>
 </ul>

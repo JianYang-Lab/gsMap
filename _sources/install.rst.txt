@@ -4,8 +4,6 @@ Installation guide
 
 The ``GPS`` package can be installed via pip:
 
-it can be installed via pip:
-
 .. code-block:: bash
 
     pip install GPS
