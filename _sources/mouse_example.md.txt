@@ -38,7 +38,7 @@ If you want to use your own reference files, please ensure that the versions of 
 
 
 ### 2. Download example data
-You can sownload the example data used in this tutorial as follows:
+You can download the example data used in this tutorial as follows:
 
 ```bash
 wget http://cnsgenomics.com/data/GPS/GPS_example_data.tar.gz
