@@ -222,6 +222,7 @@ def save_plot(sub_fig, sub_fig_save_dir, sample_name, selected_gene, plot_type):
     save_sub_fig_path = sub_fig_save_dir / f'{sample_name}_{selected_gene}_{plot_type}_Distribution.html'
     # sub_fig.write_html(str(save_sub_fig_path))
     sub_fig.update_layout(showlegend=False)
+    # print()
     sub_fig.write_image(str(save_sub_fig_path).replace('.html', '.png'))
 
 
@@ -259,11 +260,17 @@ def generate_gsMap_plot(config: DiagnosisConfig):
 def run_Diagnosis(config: DiagnosisConfig):
     """Main function to run the diagnostic plot generation."""
     global adata
+    # print(config.hdf5_with_latent_path)
     adata = sc.read_h5ad(config.hdf5_with_latent_path)
+    # print(adata.obsm)
+    # print(config.representation)
     if 'log1p' not in adata.uns.keys() and adata.X.max() > 14: 
         sc.pp.normalize_total(adata, target_sum=1e4)
         sc.pp.log1p(adata)
 
+    if config.data_type =='scRNA':
+        adata.obsm['spatial'] = adata.obsm[config.show_representation]
+        
     if config.plot_type in ['manhattan', 'all']:
         generate_manhattan_plot(config)
     if config.plot_type in ['GSS', 'all']:

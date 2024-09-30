@@ -51,7 +51,8 @@ def register_cli(name: str, description: str, add_args_function: Callable) -> Ca
 def add_shared_args(parser):
     parser.add_argument('--workdir', type=str, required=True, help='Path to the working directory.')
     parser.add_argument('--sample_name', type=str, required=True, help='Name of the sample.')
-
+    parser.add_argument('--data_type', type=str, choices=['scRNA', 'ST'], default='ST',help='Types of data: either scRNA or ST.')
+    
 def add_find_latent_representations_args(parser):
     add_shared_args(parser)
     parser.add_argument('--input_hdf5_path', required=True, type=str, help='Path to the input HDF5 file.')
@@ -169,6 +170,7 @@ def add_report_args(parser):
     parser.add_argument('--sumstats_file', type=str, required=True, help='Path to GWAS summary statistics file.')
 
     # Optional arguments for customization
+    parser.add_argument('--show_representation', type=str, default=None,help='Representation to show cells')
     parser.add_argument('--fig_width', type=int, default=None, help='Width of the generated figures in pixels.')
     parser.add_argument('--fig_height', type=int, default=None, help='Height of the generated figures in pixels.')
     parser.add_argument('--point_size', type=int, default=None, help='Point size for the figures.')
@@ -240,7 +242,10 @@ def add_run_all_mode_args(parser):
                         help='Name of the annotation in adata.obs to use.')
     parser.add_argument('--data_layer', type=str, default='counts', required=True,
                         help='Data layer for gene expression (e.g., "count", "counts", "log1p").')
-
+    parser.add_argument('--show_representation', type=str, default=None,help='Representation to show cells')
+    parser.add_argument('--latent_representation', type=str, choices=['latent_GVAE', 'latent_PCA'], default='latent_GVAE',
+                        help='Type of latent representation.')
+    
     # GWAS Data Parameters
     parser.add_argument('--trait_name', type=str, help='Name of the trait for GWAS analysis (required if sumstats_file is provided).')
     parser.add_argument('--sumstats_file', type=str,
@@ -289,6 +294,7 @@ def ensure_path_exists(func):
 class ConfigWithAutoPaths:
     workdir: str
     sample_name: str
+    data_type: str
 
     def __post_init__(self):
         if self.workdir is None:
@@ -627,6 +633,7 @@ class DiagnosisConfig(ConfigWithAutoPaths):
 
     trait_name: str
     sumstats_file: str
+    show_representation: str
     plot_type: Literal['manhattan', 'GSS', 'gsMap', 'all'] = 'all'
     top_corr_genes: int = 50
     selected_genes: Optional[List[str]] = None
@@ -656,6 +663,7 @@ class RunAllModeConfig(ConfigWithAutoPaths):
     hdf5_path: str
     annotation: str
     data_layer: str = 'X'
+    data_type: str
 
     # ==GWAS DATA PARAMETERS==
     trait_name: Optional[str] = None
@@ -664,6 +672,10 @@ class RunAllModeConfig(ConfigWithAutoPaths):
 
     # === homolog PARAMETERS ===
     homolog_file: Optional[str] = None
+
+    # === representations ===
+    latent_representation: Optional[str] = None
+    show_representation: Optional[str] = None
 
     max_processes: int = 10
 

@@ -60,8 +60,8 @@ class LatentRepresentationFinder:
         self.expression_array = adata[:, adata.var.highly_variable].X.copy()
         self.expression_array = sc.pp.scale(self.expression_array, max_value=10)
 
-        # Construct the neighboring graph
-        self.graph_dict = construct_adjacency_matrix(adata, self.params)
+        if not self.params.data_type == 'scRNA':
+            self.graph_dict = construct_adjacency_matrix(adata, self.params)
 
     def compute_pca(self):
         self.latent_pca = PCA(n_components=self.params.feat_cell).fit_transform(self.expression_array)
@@ -114,19 +114,25 @@ def run_find_latent_representation(args: FindLatentRepresentationsConfig):
     adata = preprocess_data(adata, args)
 
     latent_rep = LatentRepresentationFinder(adata, args)
-    latent_gvae = latent_rep.run_gnn_vae(label)
-    latent_pca = latent_rep.latent_pca
 
-    # Add latent representations to the AnnData object
-    logger.info('Adding latent representations...')
-    adata.obsm["latent_GVAE"] = latent_gvae
-    adata.obsm["latent_PCA"] = latent_pca
+    if args.data_type =='scRNA':
+        args.feat_cell = 30
+        logger.info('The input data is scRNA-seq, and the cell embedding will be generated using the first 30 PCs!')
+        latent_pca = latent_rep.compute_pca()
+        adata.obsm["latent_PCA"] = latent_pca
+    else:
+        latent_gvae = latent_rep.run_gnn_vae(label)
+        latent_pca = latent_rep.latent_pca
+        adata.obsm["latent_GVAE"] = latent_gvae
+        adata.obsm["latent_PCA"] = latent_pca
+
 
     # Run UMAP based on latent representations
-    #for name in ['latent_GVAE', 'latent_PCA']:
-    #    sc.pp.neighbors(adata, n_neighbors=10, use_rep=name)
-    #    sc.tl.umap(adata)
-    #    adata.obsm['X_umap_' + name] = adata.obsm['X_umap']
+    for name in ['latent_GVAE', 'latent_PCA']:
+       if name in adata.obsm.keys():
+        sc.pp.neighbors(adata, n_neighbors=10, use_rep=name)
+        sc.tl.umap(adata)
+        adata.obsm['X_umap_' + name] = adata.obsm['X_umap']
 
     # Save the AnnData object
     logger.info('Saving ST data...')

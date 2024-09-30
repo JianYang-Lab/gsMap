@@ -40,17 +40,19 @@ def run_pipeline(config: RunAllModeConfig):
         input_hdf5_path=config.hdf5_path,
         sample_name=config.sample_name,
         annotation=config.annotation,
-        data_layer=config.data_layer
+        data_layer=config.data_layer,
+        data_type=config.data_type
     )
 
     latent_to_gene_config = LatentToGeneConfig(
         workdir=config.workdir,
         sample_name=config.sample_name,
         annotation=config.annotation,
-        latent_representation='latent_GVAE',
-        num_neighbour=51,
+        latent_representation=config.latent_representation,
+        num_neighbour=21,
         num_neighbour_spatial=201,
-        homolog_file=config.homolog_file
+        homolog_file=config.homolog_file,
+        data_type=config.data_type
     )
 
     ldscore_config = GenerateLDScoreConfig(
@@ -65,8 +67,8 @@ def run_pipeline(config: RunAllModeConfig):
         spots_per_chunk=5_000,
         baseline_annotation_dir=config.baseline_annotation_dir,
         SNP_gene_pair_dir=config.SNP_gene_pair_dir,
-        ldscore_save_format='quick_mode'
-
+        ldscore_save_format='quick_mode',
+        data_type=config.data_type
     )
 
     pipeline_start_time = time.time()
@@ -133,6 +135,7 @@ def run_pipeline(config: RunAllModeConfig):
             # ldsc_save_dir=spatial_ldsc_config.ldsc_save_dir,
             num_processes=config.max_processes,
             ldscore_save_format='quick_mode',
+            data_type=config.data_type,
             snp_gene_weight_adata_path=config.snp_gene_weight_adata_path,
         )
         run_spatial_ldsc(spatial_ldsc_config_trait)
@@ -152,6 +155,7 @@ def run_pipeline(config: RunAllModeConfig):
             continue
         cauchy_config = CauchyCombinationConfig(
             workdir=config.workdir,
+            data_type=config.data_type,
             sample_name=config.sample_name,
             annotation=config.annotation,
             trait_name=trait_name,
@@ -171,6 +175,8 @@ def run_pipeline(config: RunAllModeConfig):
             plot_type='all',
             top_corr_genes=50,
             selected_genes=None,
+            data_type=config.data_type,
+            show_representation=config.show_representation,
             sumstats_file=sumstats_config[trait_name],
         )
         # Create the run parameters dictionary for each trait
@@ -179,6 +185,7 @@ def run_pipeline(config: RunAllModeConfig):
             "Trait Name": trait_name,
             "Summary Statistics File": sumstats_config[trait_name],
             "HDF5 Path": config.hdf5_path,
+            "Data Type": config.hdf5_path,
             "Annotation": config.annotation,
             "Number of Processes": config.max_processes,
             "Spatial LDSC Save Directory": config.ldsc_save_dir,

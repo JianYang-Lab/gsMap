@@ -1,6 +1,7 @@
 import logging
 from pathlib import Path
 
+import pickle
 import numpy as np
 import pandas as pd
 import scanpy as sc
@@ -28,6 +29,33 @@ def find_neighbors(coor, num_neighbour):
     spatial_net = pd.DataFrame({'Cell1': cell1, 'Cell2': cell2, 'Distance': distance})
     return spatial_net
 
+def build_similarity_net(adata,annotation,num_neighbour,latent_representation):
+    """
+    Build similarity neighbourhood matrix for each spot (cell) based on the latent_representation.
+    """
+    nbrs = NearestNeighbors(n_neighbors=num_neighbour, metric='minkowski') 
+    if annotation is not None:
+        neighbors_dict = {}
+        for ct_focal in adata.obs[annotation].unique():
+            embeding_focal = adata[adata.obs[annotation]==ct_focal].obsm[latent_representation]
+            cell_name = adata[adata.obs[annotation]==ct_focal].obs_names
+            nbrs.fit(embeding_focal)
+            _, indices = nbrs.kneighbors(embeding_focal)
+            neighbors_dict_focal = {
+                cell_name[i]: [cell_name[idx] for idx in indices[i]]
+                for i in range(len(cell_name))}
+            
+            neighbors_dict.update(neighbors_dict_focal)
+    else:
+        embeding = adata.obsm[latent_representation]
+        cell_name = adata.obs_names
+        nbrs.fit(embeding)
+        _, indices = nbrs.kneighbors(embeding)
+        neighbors_dict = {
+                cell_name[i]: [cell_name[idx] for idx in indices[i]]
+                for i in range(len(cell_name))}
+
+    return(neighbors_dict)
 
 def build_spatial_net(adata, annotation, num_neighbour):
     """
@@ -95,16 +123,20 @@ def find_neighbors_regional(cell_pos, spatial_net_dict, coor_latent, config, cel
     return cell_select_pos
 
 
-def compute_regional_mkscore(cell_pos, spatial_net_dict, coor_latent, config, cell_annotations,
-                             ranks, frac_whole, adata_X_bool):
+
+def compute_regional_mkscore(cell_pos, neighbors_dict, coor_latent, config, cell_annotations,
+                             ranks, frac_whole, adata_X_bool,adata,n_cells):
     """
     Compute gmean ranks of a region.
     """
-    cell_select_pos = find_neighbors_regional(
-        cell_pos, spatial_net_dict, coor_latent, config, cell_annotations
-    )
-    if len(cell_select_pos) == 0:
-        return np.zeros(ranks.shape[1], dtype=np.float16)
+    if config.data_type=='scRNA':
+        cell_select_pos = np.arange(n_cells)[adata.obs_names.isin(neighbors_dict[adata.obs_names[cell_pos]])]
+    else:
+        cell_select_pos = find_neighbors_regional(
+            cell_pos, neighbors_dict, coor_latent, config, cell_annotations
+        )
+        if len(cell_select_pos) == 0:
+            return np.zeros(ranks.shape[1], dtype=np.float16)
 
     # Ratio of expression ranks
     ranks_tg = ranks[cell_select_pos, :]
@@ -159,13 +191,21 @@ def run_latent_to_gene(config: LatentToGeneConfig):
     else:
         cell_annotations = None
 
-    # Build the spatial graph
-    spatial_net = build_spatial_net(adata, config.annotation, config.num_neighbour_spatial)
-    spatial_net_dict = spatial_net.groupby('Cell1')['Cell2'].apply(np.array).to_dict()
+    if  config.data_type =='scRNA':
+        logger.info(f'------The input data is scRNA-seq, will generate the GSS based on {config.latent_representation}...')
+        # Build the similarity dict
+        # latent_representation_use = 'X_umap_' + config.latent_representation
+        latent_representation_use = config.latent_representation
+        neighbors_dict = build_similarity_net(adata,config.annotation,config.num_neighbour, latent_representation_use)
+        coor_latent = None
+    else:
+        # Build the spatial graph
+        spatial_net = build_spatial_net(adata, config.annotation, config.num_neighbour_spatial)
+        neighbors_dict = spatial_net.groupby('Cell1')['Cell2'].apply(np.array).to_dict()
 
-    # Extract the latent representation
-    coor_latent = adata.obsm[config.latent_representation]
-    coor_latent = coor_latent.astype(np.float32)
+        # Extract the latent representation
+        coor_latent = adata.obsm[config.latent_representation]
+        coor_latent = coor_latent.astype(np.float32)
 
     # Compute ranks
     logger.info('------Ranking the spatial data...')
@@ -209,7 +249,7 @@ def run_latent_to_gene(config: LatentToGeneConfig):
 
     def compute_mk_score_wrapper(cell_pos):
         return compute_regional_mkscore(
-            cell_pos, spatial_net_dict, coor_latent, config, cell_annotations, ranks, frac_whole, adata_X_bool
+            cell_pos, neighbors_dict, coor_latent, config, cell_annotations, ranks, frac_whole, adata_X_bool,adata,n_cells
         )
 
     mk_scores = [compute_mk_score_wrapper(cell_pos) for cell_pos in tqdm(range(n_cells), desc="Calculating marker scores")]
@@ -229,6 +269,10 @@ def run_latent_to_gene(config: LatentToGeneConfig):
     mk_score_df.reset_index(inplace=True)
     mk_score_df.rename(columns={'index': 'HUMAN_GENE_SYM'}, inplace=True)
     mk_score_df.to_feather(output_file_path)
+
+    # Save the dict for test
+    # with open('test_dict.pkl', 'wb') as f:
+    #     pickle.dump(neighbors_dict, f)
 
     # Save the modified adata object to disk
     adata.write(config.hdf5_with_latent_path)
