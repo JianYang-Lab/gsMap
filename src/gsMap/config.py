@@ -9,6 +9,7 @@ from typing import Callable
 from typing import Union, Literal, Tuple, Optional, List
 from functools import wraps
 import pyfiglet
+import yaml
 
 from gsMap.__init__ import __version__
 
@@ -174,6 +175,25 @@ def add_report_args(parser):
     parser.add_argument('--point_size', type=int, default=None, help='Point size for the figures.')
     parser.add_argument('--fig_style', type=str, default='light', choices=['dark', 'light'],
                         help='Style of the generated figures.')
+
+def add_create_slice_mean_args(parser):
+    parser.add_argument(
+        '--h5ad_yaml', type=str, default=None,
+        help="Path to the YAML file containing sample names and associated h5ad file paths"
+    )
+    parser.add_argument(
+        '--sample_name_list', type=str, default=None,
+        help="Comma-separated list of sample names"
+    )
+    parser.add_argument(
+        '--h5ad_list', type=str, default=None,
+        help="Comma-separated list of h5ad file paths corresponding to the sample names"
+    )
+    parser.add_argument(
+        '--slice_mean_output_file', type=str, required=True,
+        help="Path to the output file for the slice mean"
+    )
+
 
 def add_format_sumstats_args(parser):
     # Required arguments
@@ -357,6 +377,42 @@ class ConfigWithAutoPaths:
 
     def get_gsMap_html_plot_save_path(self, trait_name: str) -> Path:
         return self.get_gsMap_plot_save_dir(trait_name) / f'{self.sample_name}_{trait_name}_gsMap_plot.html'
+
+
+@dataclass
+class CreateSliceMeanConfig:
+    slice_mean_output_file: str | Path
+    h5ad_yaml: str | dict | None = None
+    sample_name_list: str | None = None
+    h5ad_list: str | None = None
+    def __post_init__(self):
+
+        if self.h5ad_yaml is not None:
+            logger.info(f"Reading h5ad yaml file: {self.h5ad_yaml}")
+            h5ad_dict = yaml.safe_load(open(self.h5ad_yaml)) if isinstance(self.h5ad_yaml, str) else self.h5ad_yaml
+        elif self.sample_name_list is not None and self.h5ad_list is not None:
+            logger.info(f"Reading sample name list and h5ad list")
+            h5ad_dict = dict(zip(self.sample_name_list.split(','), self.h5ad_list.split(',')))
+        else:
+            raise ValueError("Please provide either h5ad_yaml or both sample_name_list and h5ad_list.")
+
+        # check if sample names is unique
+        if len(h5ad_dict) != len(set(h5ad_dict)):
+            raise ValueError("Sample names must be unique.")
+
+        logger.info(f'Input h5ad files: {h5ad_dict}')
+
+        # Check if all files exist
+        self.h5ad_dict = {}
+        for sample_name, h5ad_file in h5ad_dict.items():
+            h5ad_file = Path(h5ad_file)
+            if not h5ad_file.exists():
+                raise FileNotFoundError(f"{h5ad_file} does not exist.")
+            self.h5ad_dict[sample_name] = h5ad_file
+
+        self.slice_mean_output_file = Path(self.slice_mean_output_file)
+        self.slice_mean_output_file.parent.mkdir(parents=True, exist_ok=True)
+
 
 @dataclass
 class FindLatentRepresentationsConfig(ConfigWithAutoPaths):
@@ -804,3 +860,11 @@ def run_all_mode_from_cli(args: argparse.Namespace):
     from gsMap.run_all_mode import run_pipeline
     config = get_dataclass_from_parser(args, RunAllModeConfig)
     run_pipeline(config)
+
+@register_cli(name='create_slice_mean',
+                description='Create slice mean from multiple h5ad files',
+                add_args_function=add_create_slice_mean_args)
+def create_slice_mean_from_cli(args: argparse.Namespace):
+    from gsMap.create_slice_mean import run_create_slice_mean
+    config = get_dataclass_from_parser(args, CreateSliceMeanConfig)
+    run_create_slice_mean(config)
