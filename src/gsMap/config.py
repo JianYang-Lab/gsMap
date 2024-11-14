@@ -194,6 +194,7 @@ def add_create_slice_mean_args(parser):
         help="Path to the output file for the slice mean"
     )
 
+    parser.add_argument('--homolog_file', type=str, help='Path to homologous gene conversion file (optional).')
 
 def add_format_sumstats_args(parser):
     # Required arguments
@@ -385,6 +386,8 @@ class CreateSliceMeanConfig:
     h5ad_yaml: str | dict | None = None
     sample_name_list: str | None = None
     h5ad_list: str | None = None
+    homolog_file: str | None = None
+    species: str | None = None
     def __post_init__(self):
 
         if self.h5ad_yaml is not None:
@@ -412,6 +415,8 @@ class CreateSliceMeanConfig:
 
         self.slice_mean_output_file = Path(self.slice_mean_output_file)
         self.slice_mean_output_file.parent.mkdir(parents=True, exist_ok=True)
+
+        verify_homolog_file_format(self)
 
 
 @dataclass
@@ -471,23 +476,26 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
     species: str = None
 
     def __post_init__(self):
-        if self.homolog_file is not None:
-            logger.info(f"User provided homolog file to map gene names to human: {self.homolog_file}")
-            # check the format of the homolog file
-            with open(self.homolog_file, 'r') as f:
-                first_line = f.readline().strip()
-                _n_col = len(first_line.split())
-                if _n_col != 2:
-                    raise ValueError(
-                        f"Invalid homolog file format. Expected 2 columns, first column should be other species gene name, second column should be human gene name. "
-                        f"Got {_n_col} columns in the first line.")
-                else:
-                    first_col_name, second_col_name = first_line.split()
-                    self.species = first_col_name
-                    logger.info(
-                        f"Homolog file provided and will map gene name from column1:{first_col_name} to column2:{second_col_name}")
-        else:
-            logger.info("No homolog file provided. Run in human mode.")
+        verify_homolog_file_format(self)
+
+def verify_homolog_file_format(config):
+    if config.homolog_file is not None:
+        logger.info(f"User provided homolog file to map gene names to human: {config.homolog_file}")
+        # check the format of the homolog file
+        with open(config.homolog_file, 'r') as f:
+            first_line = f.readline().strip()
+            _n_col = len(first_line.split())
+            if _n_col != 2:
+                raise ValueError(
+                    f"Invalid homolog file format. Expected 2 columns, first column should be other species gene name, second column should be human gene name. "
+                    f"Got {_n_col} columns in the first line.")
+            else:
+                first_col_name, second_col_name = first_line.split()
+                config.species = first_col_name
+                logger.info(
+                    f"Homolog file provided and will map gene name from column1:{first_col_name} to column2:{second_col_name}")
+    else:
+        logger.info("No homolog file provided. Run in human mode.")
 
 
 @dataclass

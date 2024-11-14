@@ -14,36 +14,44 @@ from gsMap.config import CreateSliceMeanConfig
 #%% Helper functions
 logger = logging.getLogger(__name__)
 
-def get_common_genes(h5ad_files):
+def get_common_genes(h5ad_files, config: CreateSliceMeanConfig):
     """
     Get common genes from a list of h5ad files.
     """
     common_genes = None
     for file in tqdm(h5ad_files, desc="Finding common genes"):
-        sc_adatas = sc.read(file)
+        adata = sc.read(file)
+        adata.var_names_make_unique()
         if common_genes is None:
-            common_genes = sc_adatas.var_names
+            common_genes = adata.var_names
         else:
-            common_genes = common_genes.intersection(sc_adatas.var_names)
+            common_genes = common_genes.intersection(adata.var_names)
     # sort
+
+    if config.species is not None:
+        homologs = pd.read_csv(config.homolog_file, sep='\t')
+        if homologs.shape[1] < 2:
+            raise ValueError("Homologs file must have at least two columns: one for the species and one for the human gene symbol.")
+        homologs.columns = [config.species, 'HUMAN_GENE_SYM']
+        homologs.set_index(config.species, inplace=True)
+        common_genes = np.intersect1d(common_genes, homologs.index)
+
     common_genes = sorted(list(common_genes))
     return common_genes
 
-def calculate_one_slice_mean(sample_name, file_path: Path, common_genes, zarr_group_path):
+def calculate_one_slice_mean(sample_name, file_path: Path, common_genes, zarr_group_path, ):
     """
     Calculate the geometric mean (using log trick) of gene expressions for a single slice and store it in a Zarr group.
     """
     # file_name = file_path.name
     gmean_zarr_group = zarr.open(zarr_group_path, mode='a')
-    sc_adatas = anndata.read_h5ad(file_path)
-    sc_adatas = sc_adatas[:, common_genes].copy()
-
-    n_cells = sc_adatas.shape[0]
-    log_ranks = np.zeros((n_cells, sc_adatas.n_vars), dtype=np.float32)
-
+    adata = anndata.read_h5ad(file_path)
+    adata = adata[:, common_genes].copy()
+    n_cells = adata.shape[0]
+    log_ranks = np.zeros((n_cells, adata.n_vars), dtype=np.float32)
     # Compute log of ranks to avoid overflow when computing geometric mean
     for i in tqdm(range(n_cells), desc=f"Computing log ranks for {sample_name}"):
-        data = sc_adatas.X[i, :].toarray().flatten()
+        data = adata.X[i, :].toarray().flatten()
         ranks = rankdata(data, method='average')
         log_ranks[i, :] = np.log(ranks + 1e-6)  # Adding small value to avoid log(0)
 
@@ -52,7 +60,7 @@ def calculate_one_slice_mean(sample_name, file_path: Path, common_genes, zarr_gr
 
     # Save to zarr group
     s1_zarr = gmean_zarr_group.array(sample_name, data=gmean, chunks=None, dtype='f4')
-    s1_zarr.attrs['spot_number'] = sc_adatas.shape[0]
+    s1_zarr.attrs['spot_number'] = adata.shape[0]
 
 def merge_zarr_means(zarr_group_path, output_file, common_genes):
     """
@@ -92,10 +100,10 @@ def run_create_slice_mean(config: CreateSliceMeanConfig):
     2. Direct lists of sample names and h5ad files.
     """
     h5ad_files = list(config.h5ad_dict.values())
-    output_dir = config.slice_mean_output_file
 
     # Step 2: Get common genes from the h5ad files
-    common_genes = get_common_genes(h5ad_files)
+    common_genes = get_common_genes(h5ad_files, config)
+    logger.info(f"Found {len(common_genes)} common genes across all files.")
 
     # Step 3: Initialize the Zarr group
     zarr_group_path = config.slice_mean_output_file.with_suffix('.zarr')
@@ -111,7 +119,8 @@ def run_create_slice_mean(config: CreateSliceMeanConfig):
 
         calculate_one_slice_mean(sample_name, h5ad_file, common_genes, zarr_group_path)
 
-
     output_file = config.slice_mean_output_file
     final_mean_df = merge_zarr_means(zarr_group_path, output_file, common_genes)
+
     logger.info(f"Final slice mean saved to {output_file}")
+    return final_mean_df
