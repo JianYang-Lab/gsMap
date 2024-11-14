@@ -62,20 +62,23 @@ def calculate_one_slice_mean(file_path: Path, common_genes, zarr_group_path):
 def merge_zarr_means(zarr_group_path, output_file, common_genes):
     """
     Merge all Zarr arrays into a weighted geometric mean and save to a Parquet file.
+    Instead of calculating the mean, it sums the logs and applies the exponential.
     """
     gmean_zarr_group = zarr.open(zarr_group_path, mode='a')
-    final_mean = None
+    log_sum = None
     total_spot_number = 0
     for key in tqdm(gmean_zarr_group.array_keys(), desc="Merging Zarr arrays"):
         s1 = gmean_zarr_group[key]
         s1_array = s1[:]
         n = s1.attrs['spot_number']
-        if final_mean is None:
-            final_mean = s1_array * n
+        if log_sum is None:
+            log_sum = np.log(s1_array + 1e-6) * n  # Summing logs of values, avoid log(0)
         else:
-            final_mean += s1_array * n
+            log_sum += np.log(s1_array + 1e-6) * n  # Summing logs of values, avoid log(0)
         total_spot_number += n
-    final_mean /= total_spot_number
+
+    # Apply the geometric mean via exponentiation of the averaged logs
+    final_mean = np.exp(log_sum / total_spot_number)
 
     # Save the final mean to a Parquet file
     gene_names = common_genes
