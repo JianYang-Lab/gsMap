@@ -36,12 +36,10 @@ def preprocess_data(adata, params):
     if params.data_layer in adata.layers.keys():
         logger.info(f'Using data layer: {params.data_layer}...')
         adata.X = adata.layers[params.data_layer]
-        sc.pp.filter_genes(adata, min_cells=30)
     elif params.data_layer == 'X':
         logger.info(f'Using data layer: {params.data_layer}...')
         if adata.X.dtype == 'float32' or adata.X.dtype == 'float64':
             logger.warning(f'The data layer should be raw count data')
-        sc.pp.filter_genes(adata, min_cells=30)
     else:
         raise ValueError(f'Invalid data layer: {params.data_layer}, please check the input data.')
 

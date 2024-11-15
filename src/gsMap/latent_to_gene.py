@@ -214,6 +214,7 @@ def run_latent_to_gene(config: LatentToGeneConfig):
     # Compute the fraction of each gene across cells
     adata_X_bool = adata_X.astype(bool)
     frac_whole = np.asarray(adata_X_bool.sum(axis=0)).flatten() / n_cells
+    frac_whole += 1e-12  # Avoid division by zero
     logger.info('Gene expression proportion of each gene across cells computed.')
 
     # Normalize the ranks
