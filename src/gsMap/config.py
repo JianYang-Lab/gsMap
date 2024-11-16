@@ -458,7 +458,7 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
     # output_feather_path: str
     input_hdf5_path: str | Path = None
     no_expression_fraction: bool = False
-    latent_representation: str = 'latent_GVAE'
+    latent_representation: str = None
     num_neighbour: int = 21
     num_neighbour_spatial: int = 101
     homolog_file: str = None
@@ -477,7 +477,10 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
             shutil.copy2(self.input_hdf5_path, self.hdf5_with_latent_path)
 
         if self.latent_representation is not None:
-            logger.info(f"Using the latent representation: {self.latent_representation}")
+            logger.info(f"Using the provided latent representation: {self.latent_representation}")
+        else:
+            self.latent_representation = 'latent_GVAE'
+            logger.info(f"Using default latent representation: {self.latent_representation}")
 
         if self.gM_slices is not None:
             assert Path(self.gM_slices).exists(), f"{self.gM_slices} does not exist."
