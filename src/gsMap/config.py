@@ -100,8 +100,11 @@ def add_latent_to_gene_args(parser):
     add_shared_args(parser)
     parser.add_argument('--annotation', type=str, help='Name of the annotation in adata.obs to use. (optional).')
     parser.add_argument('--no_expression_fraction', action='store_true', help='Skip expression fraction filtering.')
-    parser.add_argument('--latent_representation', type=str, choices=['latent_GVAE', 'latent_PCA'], default='latent_GVAE',
-                        help='Type of latent representation.')
+
+    parser.add_argument('--latent_representation', type=str, default='latent_GVAE',
+                        help='Type of latent representation. This should exist in the h5ad obsm.')
+    parser.add_argument('--gM_slice', type=str, default=None, help='Path to the slice mean file.')
+
     parser.add_argument('--num_neighbour', type=int, default=21, help='Number of neighbors.')
     parser.add_argument('--num_neighbour_spatial', type=int, default=101, help='Number of spatial neighbors.')
     # parser.add_argument('--species', type=str, help='Species name for homolog gene mapping (optional).')
@@ -124,19 +127,6 @@ def add_generate_ldscore_args(parser):
     parser.add_argument('--ld_wind', type=int, default=1, help='LD window size.')
     parser.add_argument('--ld_unit', type=str, choices=['SNP', 'KB', 'CM'], default='CM', help='Unit for LD window.')
     parser.add_argument('--additional_baseline_annotation', type=str, default=None, help='Path of additional baseline annotations')
-
-
-def add_latent_to_gene_args(parser):
-    add_shared_args(parser)
-    parser.add_argument('--annotation', type=str, required=True, help='Name of the annotation layer.')
-    parser.add_argument('--no_expression_fraction', action='store_true', help='Skip expression fraction filtering.')
-    parser.add_argument('--latent_representation', type=str, choices=['latent_GVAE', 'latent_PCA'], default='latent_GVAE',
-                        help='Type of latent representation.')
-    parser.add_argument('--num_neighbour', type=int, default=21, help='Number of neighbors.')
-    parser.add_argument('--num_neighbour_spatial', type=int, default=101, help='Number of spatial neighbors.')
-    # parser.add_argument('--species', type=str, help='Species name for homolog gene mapping (optional).')
-    parser.add_argument('--homolog_file', type=str, help='Path to homologous gene conversion file (optional).')
-
 
 def add_spatial_ldsc_args(parser):
     add_shared_args(parser)
@@ -466,6 +456,7 @@ class FindLatentRepresentationsConfig(ConfigWithAutoPaths):
 class LatentToGeneConfig(ConfigWithAutoPaths):
     # input_hdf5_with_latent_path: str
     # output_feather_path: str
+    input_hdf5_path: str | Path = None
     no_expression_fraction: bool = False
     latent_representation: str = 'latent_GVAE'
     num_neighbour: int = 21
@@ -476,9 +467,26 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
     species: str = None
 
     def __post_init__(self):
+        if self.input_hdf5_path is None:
+            self.input_hdf5_path = self.hdf5_with_latent_path
+            assert self.input_hdf5_path.exists(), f"{self.input_hdf5_path} does not exist. Please run FindLatentRepresentations first."
+        else:
+            assert Path(self.input_hdf5_path).exists(), f"{self.input_hdf5_path} does not exist."
+            # copy to self.hdf5_with_latent_path
+            import shutil
+            shutil.copy2(self.input_hdf5_path, self.hdf5_with_latent_path)
+
+        if self.latent_representation is not None:
+            logger.info(f"Using the latent representation: {self.latent_representation}")
+
+        if self.gM_slices is not None:
+            assert Path(self.gM_slices).exists(), f"{self.gM_slices} does not exist."
+            logger.info(f'Using the provided slice mean file: {self.gM_slices}.')
+
         verify_homolog_file_format(self)
 
 def verify_homolog_file_format(config):
+
     if config.homolog_file is not None:
         logger.info(f"User provided homolog file to map gene names to human: {config.homolog_file}")
         # check the format of the homolog file
@@ -722,6 +730,9 @@ class RunAllModeConfig(ConfigWithAutoPaths):
     annotation: str
     data_layer: str = 'X'
 
+    gM_slices: str = None
+    latent_representation: str = None
+
     # ==GWAS DATA PARAMETERS==
     trait_name: Optional[str] = None
     sumstats_file: Optional[str] = None
@@ -771,6 +782,7 @@ class RunAllModeConfig(ConfigWithAutoPaths):
 
         for sumstats_file in self.sumstats_config_dict.values():
             assert Path(sumstats_file).exists(), f'{sumstats_file} does not exist.'
+
 
 
 @dataclass

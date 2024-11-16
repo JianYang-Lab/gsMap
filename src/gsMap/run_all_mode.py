@@ -34,23 +34,47 @@ def run_pipeline(config: RunAllModeConfig):
 
     logger = logging.getLogger('gsMap.pipeline')
     logger.info("Starting pipeline with configuration: %s", config)
+    pipeline_start_time = time.time()
 
-    find_latent_config = FindLatentRepresentationsConfig(
-        workdir=config.workdir,
-        input_hdf5_path=config.hdf5_path,
-        sample_name=config.sample_name,
-        annotation=config.annotation,
-        data_layer=config.data_layer
-    )
+    # notice if latent_representation not NOne
+    if config.latent_representation is not None:
+        logger.warning(
+            f'Using the provided latent representation: {config.latent_representation} in {config.hdf5_path}. This would skip the Find_latent_representations step.')
+        logger.info('Skipping step 1: Find latent representations, as latent representation is provided.')
+    else:
+        logger.info("No latent representation provided. Will run the Find_latent_representations step.")
+        find_latent_config = FindLatentRepresentationsConfig(
+            workdir=config.workdir,
+            input_hdf5_path=config.hdf5_path,
+            sample_name=config.sample_name,
+            annotation=config.annotation,
+            data_layer=config.data_layer
+        )
+
+        # Step 1: Find latent representations
+        start_time = time.time()
+
+        logger.info("Step 1: Finding latent representations")
+        if Path(find_latent_config.hdf5_with_latent_path).exists():
+            logger.info(
+                f"Find latent representations already done. Results saved at {find_latent_config.hdf5_with_latent_path}. Skipping...")
+        else:
+            run_find_latent_representation(find_latent_config)
+        end_time = time.time()
+        logger.info(f"Step 1 completed in {format_duration(end_time - start_time)}.")
+
+    if config.gM_slices is not None:
+        logger.info(f'Using the provide slice mean file: {config.gM_slices}.')
 
     latent_to_gene_config = LatentToGeneConfig(
         workdir=config.workdir,
         sample_name=config.sample_name,
         annotation=config.annotation,
-        latent_representation='latent_GVAE',
+        latent_representation='latent_GVAE' if config.data_layer is None else config.data_layer,
         num_neighbour=51,
         num_neighbour_spatial=201,
-        homolog_file=config.homolog_file
+        homolog_file=config.homolog_file,
+        gM_slices=config.gM_slices,
     )
 
     ldscore_config = GenerateLDScoreConfig(
@@ -69,18 +93,6 @@ def run_pipeline(config: RunAllModeConfig):
 
     )
 
-    pipeline_start_time = time.time()
-
-    # Step 1: Find latent representations
-    start_time = time.time()
-    logger.info("Step 1: Finding latent representations")
-    if Path(find_latent_config.hdf5_with_latent_path).exists():
-        logger.info(
-            f"Find latent representations already done. Results saved at {find_latent_config.hdf5_with_latent_path}. Skipping...")
-    else:
-        run_find_latent_representation(find_latent_config)
-    end_time = time.time()
-    logger.info(f"Step 1 completed in {format_duration(end_time - start_time)}.")
 
     # Step 2: Latent to gene
     start_time = time.time()
