@@ -21,7 +21,8 @@ def format_duration(seconds):
 
 def run_pipeline(config: RunAllModeConfig):
     # # Set up logging
-    log_file = Path(config.workdir) / config.sample_name / 'gsMap_pipeline.log'
+    _current_datatime = time.strftime("%Y%m%d_%H%M%S")
+    log_file = Path(config.workdir) / config.sample_name / f'gsMap_pipeline_{config.sample_name}_{_current_datatime}.log'
     log_file.parent.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO,
@@ -36,12 +37,14 @@ def run_pipeline(config: RunAllModeConfig):
     logger.info("Starting pipeline with configuration: %s", config)
     pipeline_start_time = time.time()
 
-    # notice if latent_representation not NOne
+    # Step 1: Find latent representations
     if config.latent_representation is not None:
         logger.warning(
             f'Using the provided latent representation: {config.latent_representation} in {config.hdf5_path}. This would skip the Find_latent_representations step.')
         logger.info('Skipping step 1: Find latent representations, as latent representation is provided.')
+        latent_to_gene_input_hdf5_path = config.hdf5_path
     else:
+        latent_to_gene_input_hdf5_path = None
         logger.info("No latent representation provided. Will run the Find_latent_representations step.")
         find_latent_config = FindLatentRepresentationsConfig(
             workdir=config.workdir,
@@ -63,16 +66,14 @@ def run_pipeline(config: RunAllModeConfig):
         end_time = time.time()
         logger.info(f"Step 1 completed in {format_duration(end_time - start_time)}.")
 
-    if config.gM_slices is not None:
-        logger.info(f'Using the provide slice mean file: {config.gM_slices}.')
-
     latent_to_gene_config = LatentToGeneConfig(
+        input_hdf5_path = latent_to_gene_input_hdf5_path,
         workdir=config.workdir,
         sample_name=config.sample_name,
         annotation=config.annotation,
-        latent_representation='latent_GVAE' if config.data_layer is None else config.data_layer,
-        num_neighbour=51,
-        num_neighbour_spatial=201,
+        latent_representation=config.latent_representation,
+        num_neighbour=config.num_neighbour,
+        num_neighbour_spatial=config.num_neighbour_spatial,
         homolog_file=config.homolog_file,
         gM_slices=config.gM_slices,
     )
@@ -81,8 +82,6 @@ def run_pipeline(config: RunAllModeConfig):
         workdir=config.workdir,
         sample_name=config.sample_name,
         chrom='all',
-        # ldscore_save_dir=f"{config.workdir}/{config.sample_name}/generate_ldscore",
-        # mkscore_feather_file=latent_to_gene_config.output_feather_path,
         bfile_root=config.bfile_root,
         keep_snp_root=config.keep_snp_root,
         gtf_annotation_file=config.gtffile,
@@ -90,9 +89,7 @@ def run_pipeline(config: RunAllModeConfig):
         baseline_annotation_dir=config.baseline_annotation_dir,
         SNP_gene_pair_dir=config.SNP_gene_pair_dir,
         ldscore_save_format='quick_mode'
-
     )
-
 
     # Step 2: Latent to gene
     start_time = time.time()
@@ -154,7 +151,6 @@ def run_pipeline(config: RunAllModeConfig):
     # Step 5: Cauchy combination test
     start_time = time.time()
     logger.info("Step 6: Running Cauchy combination test")
-    '/storage/yangjianLab/chenwenhao/projects/202312_GPS/test/20240817_vanilla_pipeline_mouse_embryo_v4/E16.5_E1S1.MOSTA/cauchy_combination/E16.5_E1S1.MOSTA_Depression_2023_NatureMed.Cauchy.csv.gz'
     for trait_name in sumstats_config:
         # check if the cauchy combination has been done
         cauchy_result_file = config.get_cauchy_result_file(trait_name)

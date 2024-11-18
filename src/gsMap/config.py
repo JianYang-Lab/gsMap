@@ -132,10 +132,6 @@ def add_latent_to_gene_args(parser):
         '--annotation', type=str, default=None,
         help='Name of the annotation in adata.obs to use (optional).'
     )
-    parser.add_argument(
-        '--species', type=str, default=None,
-        help='Species name for homolog gene mapping (optional).'
-    )
 
 
 def add_generate_ldscore_args(parser):
@@ -761,8 +757,12 @@ class RunAllModeConfig(ConfigWithAutoPaths):
     annotation: str
     data_layer: str = 'X'
 
+
+    # == latent 2 Gene PARAMETERS ==
     gM_slices: str = None
     latent_representation: str = None
+    num_neighbour: int = 21
+    num_neighbour_spatial: int = 101
 
     # ==GWAS DATA PARAMETERS==
     trait_name: Optional[str] = None
