@@ -282,3 +282,11 @@ gsmap run_latent_to_gene \
     --gM_slices './workdir/sample_slice_mean.parquet' \
     --latent_representation 'latent_GVAE'
 ```
+
+### 8. cauchy combination for multiple samples (optional)
+gsmap run_cauchy_combination \
+    --workdir './workdir' \
+    --sample_name_list 'sample1' 'sample2' 'sample3' \
+    --trait_name 'IQ' \
+    --annotation 'annotation' \
+    --output_file './workdir/multiple_samples_IQ_cauchy_combination.csv.gz'
