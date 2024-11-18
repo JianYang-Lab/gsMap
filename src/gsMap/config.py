@@ -164,11 +164,17 @@ def add_spatial_ldsc_args(parser):
 
 
 def add_Cauchy_combination_args(parser):
-    add_shared_args(parser)
+
+    parser.add_argument('--workdir', type=str, required=True, help='Path to the working directory.')
+    parser.add_argument('--sample_name', type=str, required=True, help='Name of the sample.')
+
     parser.add_argument('--trait_name', type=str, required=True, help='Name of the trait being analyzed.')
     parser.add_argument('--annotation', type=str, required=True, help='Name of the annotation in adata.obs to use.')
-    # parser.add_argument('--meta', type=str, help='Optional meta information.')
-    # parser.add_argument('--slide', type=str, help='Optional slide information.')
+
+    parser.add_argument('--sample_name_list', type=str, nargs='+', required=True,
+                        help='List of sample names to process. Provide as a space-separated list.')
+    parser.add_argument('--output_file', type=str, required=False,
+                        help='Path to save the combined Cauchy results. Required when using multiple samples.')
 
 
 def add_report_args(parser):
@@ -191,13 +197,12 @@ def add_report_args(parser):
                         help='Style of the generated figures.')
 
 def add_create_slice_mean_args(parser):
+    parser.add_argument('--sample_name_list', type=str, nargs='+', required=True,
+                        help='List of sample names to process. Provide as a space-separated list.')
+
     parser.add_argument(
-        '--sample_name_list', type=lambda x: x.split(','), default=None, required=True,
-        help="Comma-separated list of sample names"
-    )
-    parser.add_argument(
-        '--h5ad_list', type=lambda x: x.split(','), default=None, required=True,
-        help="Comma-separated list of h5ad file paths corresponding to the sample names"
+        '--h5ad_list', type=str, nargs='+', required=True,
+        help="List of h5ad file paths corresponding to the sample names. Provide as a space-separated list."
     )
     parser.add_argument(
         '--h5ad_yaml', type=str, default=None,
@@ -407,15 +412,15 @@ class CreateSliceMeanConfig:
             if isinstance(self.h5ad_yaml, str):
                 logger.info(f"Reading h5ad yaml file: {self.h5ad_yaml}")
             h5ad_dict = yaml.safe_load(open(self.h5ad_yaml)) if isinstance(self.h5ad_yaml, str) else self.h5ad_yaml
-        elif self.sample_name_list is not None and self.h5ad_list is not None:
+        elif self.sample_name_list and self.h5ad_list:
             logger.info(f"Reading sample name list and h5ad list")
             h5ad_dict = dict(zip(self.sample_name_list, self.h5ad_list))
         else:
             raise ValueError("Please provide either h5ad_yaml or both sample_name_list and h5ad_list.")
 
         # check if sample names is unique
-        if len(h5ad_dict) != len(set(h5ad_dict)):
-            raise ValueError("Sample names must be unique.")
+        assert len(h5ad_dict) != len(set(h5ad_dict)), "Sample names must be unique."
+        assert len(h5ad_dict) > 1, "At least two samples are required."
 
         logger.info(f'Input h5ad files: {h5ad_dict}')
 
@@ -704,18 +709,22 @@ class SpatialLDSCConfig(ConfigWithAutoPaths):
 class CauchyCombinationConfig(ConfigWithAutoPaths):
     trait_name: str
     annotation: str
-    sample_name_list: list = dataclasses.field(default_factory=list)
-    output_file: str | None = None
-
-    # meta: str = None
-    # slide: str = None
+    sample_name_list: List[str] = dataclasses.field(default_factory=list)
+    output_file: str | Path | None = None
 
     def __post_init__(self):
-        if self.sample_name is not None and len(self.sample_name_list) > 0:
-            raise ValueError('Only one of sample_name and sample_name_list must be provided.')
+        if self.sample_name is not None:
+            if len(self.sample_name_list) > 0:
+                raise ValueError('Only one of sample_name and sample_name_list must be provided.')
+            else:
+                self.sample_name_list = [self.sample_name]
+                self.output_file = self.get_cauchy_result_file(self.trait_name) if self.output_file is None else self.output_file
+        else:
+            assert len(self.sample_name_list) > 0, 'At least one sample name must be provided.'
+            assert self.output_file is not None, 'Output_file must be provided if sample_name_list is provided.'
 
-        if len(self.sample_name_list) > 0:
-            assert self.output_file is not None, 'output_file must be provided if sample_name_list is provided.'
+    def get_hdf5_with_latent_path(self, sample_name):
+        return Path(f'{self.workdir}/{sample_name}/find_latent_representations/{sample_name}_add_latent.h5ad')
 
 
 @dataclass

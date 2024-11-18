@@ -67,75 +67,75 @@ def acat_test(pvalues, weights=None):
     return pval
 
 
-def run_Cauchy_combination(config:CauchyCombinationConfig):
-    # Load the ldsc results
-    logger.info(f'------Loading LDSC results of {config.ldsc_save_dir}...')
-    ldsc_input_file= config.get_ldsc_result_file(config.trait_name)
-    ldsc = pd.read_csv(ldsc_input_file, compression='gzip')
-    ldsc.spot = ldsc.spot.astype(str)
-    ldsc.index = ldsc.spot
-    # if config.meta is None:
-        # Load the spatial data
-        logger.info(f'------Loading ST data of {config.hdf5_with_latent_path}...')
-        spe = sc.read_h5ad(f'{config.hdf5_with_latent_path}')
+def run_Cauchy_combination(config: CauchyCombinationConfig):
+    ldsc_list = []
 
-        common_cell = np.intersect1d(ldsc.index, spe.obs_names)
-        spe = spe[common_cell]
-        ldsc = ldsc.loc[common_cell]
+    for sample_name in config.sample_name_list:
+        # Load the LDSC results for the current sample
+        logger.info(f'------Loading LDSC results for sample {sample_name}...')
+        ldsc_input_file = config.get_ldsc_result_file(trait_name=config.trait_name, sample_name=sample_name)
+        ldsc = pd.read_csv(ldsc_input_file, compression='gzip')
+        ldsc['spot'] = ldsc['spot'].astype(str)
+        ldsc.index = ldsc['spot']
 
-        # Add the annotation
-        ldsc['annotation'] = spe.obs.loc[ldsc.spot][config.annotation].to_list()
-    #
-    # elif config.meta is not None:
-    #     # Or Load the additional annotation (just for the macaque data at this stage: 2023Nov25)
-    #     logger.info(f'------Loading additional annotation...')
-    #     meta = pd.read_csv(config.meta, index_col=0)
-    #     meta = meta.loc[meta.slide == config.slide]
-    #     meta.index = meta.cell_id.astype(str).replace('\.0', '', regex=True)
-    #
-    #     common_cell = np.intersect1d(ldsc.index, meta.index)
-    #     meta = meta.loc[common_cell]
-    #     ldsc = ldsc.loc[common_cell]
-    #
-    #     # Add the annotation
-    #     ldsc['annotation'] = meta.loc[ldsc.spot][config.annotation].to_list()
-    # Perform the Cauchy combination based on the given annotations
+        # Load the spatial transcriptomics (ST) data for the current sample
+        logger.info(f'------Loading ST data for sample {sample_name}...')
+        h5ad_file = config.get_hdf5_with_latent_path(sample_name=sample_name)
+        adata = sc.read_h5ad(h5ad_file)
+
+        # Identify common cells between LDSC results and ST data
+        common_cells = np.intersect1d(ldsc.index, adata.obs_names)
+        adata = adata[common_cells]
+        ldsc = ldsc.loc[common_cells]
+
+        # Add annotations to the LDSC dataframe
+        ldsc['annotation'] = adata.obs.loc[ldsc.spot, config.annotation].to_list()
+        ldsc_list.append(ldsc)
+
+    # Concatenate all LDSC dataframes from different samples
+    ldsc_all = pd.concat(ldsc_list)
+
+    # Run the Cauchy combination
     p_cauchy = []
     p_median = []
-    for ct in np.unique(ldsc.annotation):
-        p_temp = ldsc.loc[ldsc['annotation'] == ct, 'p']
-        
-        # The Cauchy test is sensitive to very small p-values, so extreme outliers should be considered for removal...
-        # to enhance robustness, particularly in cases where spot annotations may be incorrect. 
-        # p_cauchy_temp = acat_test(p_temp[p_temp != np.min(p_temp)])
-        p_temp_log = -np.log10(p_temp)
-        median_log = np.median(p_temp_log)
-        IQR_log = np.percentile(p_temp_log, 75) - np.percentile(p_temp_log, 25)
-        
-        p_use = p_temp[p_temp_log < median_log + 3*IQR_log]
-        n_remove = len(p_temp) - len(p_use)
-        
-        # Outlier: -log10(p) < median + 3IQR && len(outlier set) < 20
-        if (0 < n_remove < 20):
-            logger.info(f'Remove {n_remove}/{len(p_temp)} outliers (median + 3IQR) for {ct}.')
-            p_cauchy_temp = acat_test(p_use)
-        else:
-             p_cauchy_temp = acat_test(p_temp)
-                
-        p_median_temp = np.median(p_temp)
+    annotations = ldsc_all['annotation'].unique()
 
+    for ct in annotations:
+        p_values = ldsc_all.loc[ldsc_all['annotation'] == ct, 'p']
+
+        # Handle extreme outliers to enhance robustness
+        p_values_log = -np.log10(p_values)
+        median_log = np.median(p_values_log)
+        iqr_log = np.percentile(p_values_log, 75) - np.percentile(p_values_log, 25)
+
+        p_values_filtered = p_values[p_values_log < median_log + 3 * iqr_log]
+        n_removed = len(p_values) - len(p_values_filtered)
+
+        # Remove outliers if the number is reasonable
+        if 0 < n_removed < 20:
+            logger.info(f'Removed {n_removed}/{len(p_values)} outliers (median + 3IQR) for {ct}.')
+            p_cauchy_temp = acat_test(p_values_filtered)
+        else:
+            p_cauchy_temp = acat_test(p_values)
+
+        p_median_temp = np.median(p_values)
         p_cauchy.append(p_cauchy_temp)
         p_median.append(p_median_temp)
-    #     p_tissue = pd.DataFrame(p_cauchy,p_median,np.unique(ldsc.annotation))
-    data = {'p_cauchy': p_cauchy, 'p_median': p_median, 'annotation': np.unique(ldsc.annotation)}
-    p_tissue = pd.DataFrame(data)
-    p_tissue.columns = ['p_cauchy', 'p_median', 'annotation']
+
+    # Prepare the results dataframe
+    results = pd.DataFrame({
+        'annotation': annotations,
+        'p_cauchy': p_cauchy,
+        'p_median': p_median
+    })
+
     # Save the results
-    output_dir = Path(config.cauchy_save_dir)
+    output_dir = Path(config.output_file)
     output_dir.mkdir(parents=True, exist_ok=True, mode=0o755)
-    output_file = output_dir / f'{config.sample_name}_{config.trait_name}.Cauchy.csv.gz'
-    p_tissue.to_csv(
+    output_file = Path(config.output_file)
+    results.to_csv(
         output_file,
         compression='gzip',
         index=False,
     )
+    logger.info(f'Cauchy combination results saved at {output_file}.')
