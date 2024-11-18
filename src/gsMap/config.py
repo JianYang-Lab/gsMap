@@ -97,20 +97,6 @@ def get_dataclass_from_parser(args: argparse.Namespace, data_class: dataclass):
 
 
 def add_latent_to_gene_args(parser):
-    add_shared_args(parser)
-    parser.add_argument('--annotation', type=str, help='Name of the annotation in adata.obs to use. (optional).')
-    parser.add_argument('--no_expression_fraction', action='store_true', help='Skip expression fraction filtering.')
-
-    parser.add_argument('--latent_representation', type=str, default='latent_GVAE',
-                        help='Type of latent representation. This should exist in the h5ad obsm.')
-    parser.add_argument('--gM_slice', type=str, default=None, help='Path to the slice mean file.')
-
-    parser.add_argument('--num_neighbour', type=int, default=21, help='Number of neighbors.')
-    parser.add_argument('--num_neighbour_spatial', type=int, default=101, help='Number of spatial neighbors.')
-    # parser.add_argument('--species', type=str, help='Species name for homolog gene mapping (optional).')
-    parser.add_argument('--homolog_file', type=str, help='Path to homologous gene conversion file (optional).')
-
-def add_latent_to_gene_args(parser):
 
     add_shared_args(parser)
 
@@ -414,18 +400,19 @@ class ConfigWithAutoPaths:
 class CreateSliceMeanConfig:
     slice_mean_output_file: str | Path
     h5ad_yaml: str | dict | None = None
-    sample_name_list: str | None = None
-    h5ad_list: str | None = None
+    sample_name_list: list | None = None
+    h5ad_list: list | None = None
     homolog_file: str | None = None
     species: str | None = None
     def __post_init__(self):
 
         if self.h5ad_yaml is not None:
-            logger.info(f"Reading h5ad yaml file: {self.h5ad_yaml}")
+            if isinstance(self.h5ad_yaml, str):
+                logger.info(f"Reading h5ad yaml file: {self.h5ad_yaml}")
             h5ad_dict = yaml.safe_load(open(self.h5ad_yaml)) if isinstance(self.h5ad_yaml, str) else self.h5ad_yaml
         elif self.sample_name_list is not None and self.h5ad_list is not None:
             logger.info(f"Reading sample name list and h5ad list")
-            h5ad_dict = dict(zip(self.sample_name_list.split(','), self.h5ad_list.split(',')))
+            h5ad_dict = dict(zip(self.sample_name_list, self.h5ad_list))
         else:
             raise ValueError("Please provide either h5ad_yaml or both sample_name_list and h5ad_list.")
 
