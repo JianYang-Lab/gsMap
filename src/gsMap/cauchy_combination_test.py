@@ -71,16 +71,18 @@ def run_Cauchy_combination(config: CauchyCombinationConfig):
     ldsc_list = []
 
     for sample_name in config.sample_name_list:
+        config.sample_name = sample_name
+
         # Load the LDSC results for the current sample
         logger.info(f'------Loading LDSC results for sample {sample_name}...')
-        ldsc_input_file = config.get_ldsc_result_file(trait_name=config.trait_name, sample_name=sample_name)
+        ldsc_input_file = config.get_ldsc_result_file(trait_name=config.trait_name,)
         ldsc = pd.read_csv(ldsc_input_file, compression='gzip')
         ldsc['spot'] = ldsc['spot'].astype(str)
         ldsc.index = ldsc['spot']
 
         # Load the spatial transcriptomics (ST) data for the current sample
         logger.info(f'------Loading ST data for sample {sample_name}...')
-        h5ad_file = config.get_hdf5_with_latent_path(sample_name=sample_name)
+        h5ad_file = config.hdf5_with_latent_path
         adata = sc.read_h5ad(h5ad_file)
 
         # Identify common cells between LDSC results and ST data
@@ -130,8 +132,7 @@ def run_Cauchy_combination(config: CauchyCombinationConfig):
     })
 
     # Save the results
-    output_dir = Path(config.output_file)
-    output_dir.mkdir(parents=True, exist_ok=True, mode=0o755)
+    Path(config.output_file).parent.mkdir(parents=True, exist_ok=True, mode=0o755)
     output_file = Path(config.output_file)
     results.to_csv(
         output_file,
@@ -139,3 +140,4 @@ def run_Cauchy_combination(config: CauchyCombinationConfig):
         index=False,
     )
     logger.info(f'Cauchy combination results saved at {output_file}.')
+    return results

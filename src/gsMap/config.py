@@ -419,7 +419,7 @@ class CreateSliceMeanConfig:
             raise ValueError("Please provide either h5ad_yaml or both sample_name_list and h5ad_list.")
 
         # check if sample names is unique
-        assert len(h5ad_dict) != len(set(h5ad_dict)), "Sample names must be unique."
+        assert len(h5ad_dict) == len(set(h5ad_dict)), "Sample names must be unique."
         assert len(h5ad_dict) > 1, "At least two samples are required."
 
         logger.info(f'Input h5ad files: {h5ad_dict}')
@@ -722,9 +722,6 @@ class CauchyCombinationConfig(ConfigWithAutoPaths):
         else:
             assert len(self.sample_name_list) > 0, 'At least one sample name must be provided.'
             assert self.output_file is not None, 'Output_file must be provided if sample_name_list is provided.'
-
-    def get_hdf5_with_latent_path(self, sample_name):
-        return Path(f'{self.workdir}/{sample_name}/find_latent_representations/{sample_name}_add_latent.h5ad')
 
 
 @dataclass
