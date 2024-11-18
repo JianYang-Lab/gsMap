@@ -110,6 +110,47 @@ def add_latent_to_gene_args(parser):
     # parser.add_argument('--species', type=str, help='Species name for homolog gene mapping (optional).')
     parser.add_argument('--homolog_file', type=str, help='Path to homologous gene conversion file (optional).')
 
+def add_latent_to_gene_args(parser):
+
+    add_shared_args(parser)
+
+    parser.add_argument(
+        '--input_hdf5_path', type=str, default=None,
+        help='Path to the input HDF5 file with latent representations, if --latent_representation is specified.'
+    )
+    parser.add_argument(
+        '--no_expression_fraction', action='store_true',
+        help='Skip expression fraction filtering.'
+    )
+    parser.add_argument(
+        '--latent_representation', type=str, default=None,
+        help='Type of latent representation. This should exist in the h5ad obsm.'
+    )
+    parser.add_argument(
+        '--num_neighbour', type=int, default=21,
+        help='Number of neighbors.'
+    )
+    parser.add_argument(
+        '--num_neighbour_spatial', type=int, default=101,
+        help='Number of spatial neighbors.'
+    )
+    parser.add_argument(
+        '--homolog_file', type=str, default=None,
+        help='Path to homologous gene conversion file (optional).'
+    )
+    parser.add_argument(
+        '--gM_slices', type=str, default=None,
+        help='Path to the slice mean file (optional).'
+    )
+    parser.add_argument(
+        '--annotation', type=str, default=None,
+        help='Name of the annotation in adata.obs to use (optional).'
+    )
+    parser.add_argument(
+        '--species', type=str, default=None,
+        help='Species name for homolog gene mapping (optional).'
+    )
+
 
 def add_generate_ldscore_args(parser):
     add_shared_args(parser)
@@ -168,22 +209,21 @@ def add_report_args(parser):
 
 def add_create_slice_mean_args(parser):
     parser.add_argument(
-        '--h5ad_yaml', type=str, default=None,
-        help="Path to the YAML file containing sample names and associated h5ad file paths"
-    )
-    parser.add_argument(
-        '--sample_name_list', type=str, default=None,
+        '--sample_name_list', type=lambda x: x.split(','), default=None, required=True,
         help="Comma-separated list of sample names"
     )
     parser.add_argument(
-        '--h5ad_list', type=str, default=None,
+        '--h5ad_list', type=lambda x: x.split(','), default=None, required=True,
         help="Comma-separated list of h5ad file paths corresponding to the sample names"
+    )
+    parser.add_argument(
+        '--h5ad_yaml', type=str, default=None,
+        help="Path to the YAML file containing sample names and associated h5ad file paths"
     )
     parser.add_argument(
         '--slice_mean_output_file', type=str, required=True,
         help="Path to the output file for the slice mean"
     )
-
     parser.add_argument('--homolog_file', type=str, help='Path to homologous gene conversion file (optional).')
 
 def add_format_sumstats_args(parser):
@@ -299,7 +339,7 @@ def ensure_path_exists(func):
 @dataclass
 class ConfigWithAutoPaths:
     workdir: str
-    sample_name: str
+    sample_name: str | None
 
     def __post_init__(self):
         if self.workdir is None:
@@ -680,6 +720,7 @@ class SpatialLDSCConfig(ConfigWithAutoPaths):
 class CauchyCombinationConfig(ConfigWithAutoPaths):
     trait_name: str
     annotation: str
+    sample_name_list: str | None = None
     meta: str = None
     slide: str = None
 
