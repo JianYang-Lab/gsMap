@@ -67,9 +67,9 @@ gsMap_example_data/
 
 ## Running `gsMap`
 
-### 1. find latent representations
+### 1. find latent representations (optional)
 
-**Objective**: Learn latent representations for spots.
+**Objective**: Learn latent representations for spots. The latent embedding learned from this step will be store in the AnnData object `obsm` field under the key `latent_GVAE`.
 
 ```{note}
 The `--workdir` parameter specifies the working directory for gsMap, where all outputs will be saved.
@@ -88,7 +88,7 @@ gsmap run_find_latent_representations \
 
 ### 2. generate gene specificity scores
 
-**Objective**: Identify homogeneous spots for each spot based on their latent representations, and then generate gene specificity scores (GSS) for each spot by aggregating information from its homogeneous spots.
+**Objective**: Identify homogeneous spots for each spot based on their latent representations specified by `--latent_representation`, and then generate gene specificity scores (GSS) for each spot by aggregating information from its homogeneous spots.
 
 ```{note}
 If your ST data is not from a human species but you want to map human GWAS data to it, please provide a homologous transformation file to convert gene names. The first column should list gene names from the ST data species, and the second column from the GWAS data species.
@@ -261,4 +261,24 @@ do
         --gene_window_size 50000 \
         --additional_baseline_annotation 'gsMap_additional_annotation'
 done
+```
+
+### 8. create slice mean for multiple samples (optional)
+**Objective**: Generate slice mean for multiple samples, and then use this gene expression mean to calculate the GSS. 
+
+```bash
+gsmap create_slice_mean \
+    --workdir './workdir' \
+    --sample_name_list 'sample1' 'sample2' 'sample3' \
+    --h5ad_list 'sample1.h5ad' 'sample2.h5ad' 'sample3.h5ad' \
+    --slice_mean_output_file  './workdir/sample_slice_mean.parquet' \
+    --annotation 'annotation'
+
+# Use the slice mean to calculate the GSS
+gsmap run_latent_to_gene \
+    --workdir './workdir' \
+    --sample_name 'sample1' \
+    --annotation 'annotation' \
+    --gM_slices './workdir/sample_slice_mean.parquet' \
+    --latent_representation 'latent_GVAE'
 ```
