@@ -72,9 +72,9 @@ def run_Cauchy_combination(config:CauchyCombinationConfig):
     logger.info(f'------Loading LDSC results of {config.ldsc_save_dir}...')
     ldsc_input_file= config.get_ldsc_result_file(config.trait_name)
     ldsc = pd.read_csv(ldsc_input_file, compression='gzip')
-    ldsc.spot = ldsc.spot.astype(str).replace('\.0', '', regex=True)
+    ldsc.spot = ldsc.spot.astype(str)
     ldsc.index = ldsc.spot
-    if config.meta is None:
+    # if config.meta is None:
         # Load the spatial data
         logger.info(f'------Loading ST data of {config.hdf5_with_latent_path}...')
         spe = sc.read_h5ad(f'{config.hdf5_with_latent_path}')
@@ -85,20 +85,20 @@ def run_Cauchy_combination(config:CauchyCombinationConfig):
 
         # Add the annotation
         ldsc['annotation'] = spe.obs.loc[ldsc.spot][config.annotation].to_list()
-
-    elif config.meta is not None:
-        # Or Load the additional annotation (just for the macaque data at this stage: 2023Nov25)
-        logger.info(f'------Loading additional annotation...')
-        meta = pd.read_csv(config.meta, index_col=0)
-        meta = meta.loc[meta.slide == config.slide]
-        meta.index = meta.cell_id.astype(str).replace('\.0', '', regex=True)
-
-        common_cell = np.intersect1d(ldsc.index, meta.index)
-        meta = meta.loc[common_cell]
-        ldsc = ldsc.loc[common_cell]
-
-        # Add the annotation
-        ldsc['annotation'] = meta.loc[ldsc.spot][config.annotation].to_list()
+    #
+    # elif config.meta is not None:
+    #     # Or Load the additional annotation (just for the macaque data at this stage: 2023Nov25)
+    #     logger.info(f'------Loading additional annotation...')
+    #     meta = pd.read_csv(config.meta, index_col=0)
+    #     meta = meta.loc[meta.slide == config.slide]
+    #     meta.index = meta.cell_id.astype(str).replace('\.0', '', regex=True)
+    #
+    #     common_cell = np.intersect1d(ldsc.index, meta.index)
+    #     meta = meta.loc[common_cell]
+    #     ldsc = ldsc.loc[common_cell]
+    #
+    #     # Add the annotation
+    #     ldsc['annotation'] = meta.loc[ldsc.spot][config.annotation].to_list()
     # Perform the Cauchy combination based on the given annotations
     p_cauchy = []
     p_median = []

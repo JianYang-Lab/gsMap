@@ -1,3 +1,4 @@
+import dataclasses
 import sys
 import argparse
 import logging
@@ -166,8 +167,8 @@ def add_Cauchy_combination_args(parser):
     add_shared_args(parser)
     parser.add_argument('--trait_name', type=str, required=True, help='Name of the trait being analyzed.')
     parser.add_argument('--annotation', type=str, required=True, help='Name of the annotation in adata.obs to use.')
-    parser.add_argument('--meta', type=str, help='Optional meta information.')
-    parser.add_argument('--slide', type=str, help='Optional slide information.')
+    # parser.add_argument('--meta', type=str, help='Optional meta information.')
+    # parser.add_argument('--slide', type=str, help='Optional slide information.')
 
 
 def add_report_args(parser):
@@ -703,9 +704,18 @@ class SpatialLDSCConfig(ConfigWithAutoPaths):
 class CauchyCombinationConfig(ConfigWithAutoPaths):
     trait_name: str
     annotation: str
-    sample_name_list: str | None = None
-    meta: str = None
-    slide: str = None
+    sample_name_list: list = dataclasses.field(default_factory=list)
+    output_file: str | None = None
+
+    # meta: str = None
+    # slide: str = None
+
+    def __post_init__(self):
+        if self.sample_name is not None and len(self.sample_name_list) > 0:
+            raise ValueError('Only one of sample_name and sample_name_list must be provided.')
+
+        if len(self.sample_name_list) > 0:
+            assert self.output_file is not None, 'output_file must be provided if sample_name_list is provided.'
 
 
 @dataclass
