@@ -166,16 +166,15 @@ def add_spatial_ldsc_args(parser):
 def add_Cauchy_combination_args(parser):
 
     parser.add_argument('--workdir', type=str, required=True, help='Path to the working directory.')
-    parser.add_argument('--sample_name', type=str, required=True, help='Name of the sample.')
+    parser.add_argument('--sample_name', type=str, required=False, help='Name of the sample.')
 
     parser.add_argument('--trait_name', type=str, required=True, help='Name of the trait being analyzed.')
     parser.add_argument('--annotation', type=str, required=True, help='Name of the annotation in adata.obs to use.')
 
-    parser.add_argument('--sample_name_list', type=str, nargs='+', required=True,
+    parser.add_argument('--sample_name_list', type=str, nargs='+', required=False,
                         help='List of sample names to process. Provide as a space-separated list.')
     parser.add_argument('--output_file', type=str, required=False,
                         help='Path to save the combined Cauchy results. Required when using multiple samples.')
-
 
 def add_report_args(parser):
     add_shared_args(parser)
