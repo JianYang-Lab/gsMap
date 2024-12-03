@@ -176,6 +176,7 @@ def run_latent_to_gene(config: LatentToGeneConfig):
 
     # Geometric mean across slices
     gM = None
+    frac_whole = None
     if config.gM_slices is not None:
         logger.info('Geometrical mean across multiple slices is provided.')
         gM_df = pd.read_parquet(config.gM_slices)
@@ -190,6 +191,7 @@ def run_latent_to_gene(config: LatentToGeneConfig):
         common_genes = np.intersect1d(adata.var_names, gM_df.index)
         gM_df = gM_df.loc[common_genes]
         gM = gM_df['G_Mean'].values
+        frac_whole = gM_df['frac'].values
         adata = adata[:, common_genes]
         logger.info(f'{len(common_genes)} common genes retained after loading the cross slice geometric mean.')
 
@@ -211,12 +213,15 @@ def run_latent_to_gene(config: LatentToGeneConfig):
     if gM is None:
         gM = gmean(ranks, axis=0)
 
-    # Compute the fraction of each gene across cells
     adata_X_bool = adata_X.astype(bool)
-    frac_whole = np.asarray(adata_X_bool.sum(axis=0)).flatten() / n_cells
+    if frac_whole is None:
+        # Compute the fraction of each gene across cells
+        frac_whole = np.asarray(adata_X_bool.sum(axis=0)).flatten() / n_cells
+        logger.info('Gene expression proportion of each gene across cells computed.')
+    else:
+        logger.info('Gene expression proportion of each gene across cells in all sections has been provided.')
+    
     frac_whole += 1e-12  # Avoid division by zero
-    logger.info('Gene expression proportion of each gene across cells computed.')
-
     # Normalize the ranks
     ranks /= gM
 
