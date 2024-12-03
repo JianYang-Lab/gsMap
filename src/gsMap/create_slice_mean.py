@@ -39,13 +39,14 @@ def get_common_genes(h5ad_files, config: CreateSliceMeanConfig):
     common_genes = sorted(list(common_genes))
     return common_genes
 
-def calculate_one_slice_mean(sample_name, file_path: Path, common_genes, zarr_group_path, ):
+def calculate_one_slice_mean(sample_name, file_path: Path, common_genes, zarr_group_path, data_layer):
     """
     Calculate the geometric mean (using log trick) of gene expressions for a single slice and store it in a Zarr group.
     """
     # file_name = file_path.name
     gmean_zarr_group = zarr.open(zarr_group_path, mode='a')
     adata = anndata.read_h5ad(file_path)
+    adata.X = adata.layers[data_layer]
     adata = adata[:, common_genes].copy()
     n_cells = adata.shape[0]
     log_ranks = np.zeros((n_cells, adata.n_vars), dtype=np.float32)
@@ -53,13 +54,18 @@ def calculate_one_slice_mean(sample_name, file_path: Path, common_genes, zarr_gr
     for i in tqdm(range(n_cells), desc=f"Computing log ranks for {sample_name}"):
         data = adata.X[i, :].toarray().flatten()
         ranks = rankdata(data, method='average')
-        log_ranks[i, :] = np.log(ranks + 1e-6)  # Adding small value to avoid log(0)
+        log_ranks[i, :] = np.log(ranks)  # Adding small value to avoid log(0)
 
     # Calculate geometric mean via log trick: exp(mean(log(values)))
-    gmean = np.exp(np.mean(log_ranks, axis=0))
+    gmean = (np.exp(np.mean(log_ranks, axis=0))).reshape(-1, 1)
 
+    # Calculate the expression fractio
+    adata_X_bool = adata.X.astype(bool)
+    frac = (np.asarray(adata_X_bool.sum(axis=0)).flatten()).reshape(-1, 1)
+    
     # Save to zarr group
-    s1_zarr = gmean_zarr_group.array(sample_name, data=gmean, chunks=None, dtype='f4')
+    gmean_frac = np.concatenate([gmean, frac], axis=1)
+    s1_zarr = gmean_zarr_group.array(sample_name, data=gmean_frac, chunks=None, dtype='f4')
     s1_zarr.attrs['spot_number'] = adata.shape[0]
 
 def merge_zarr_means(zarr_group_path, output_file, common_genes):
@@ -69,27 +75,33 @@ def merge_zarr_means(zarr_group_path, output_file, common_genes):
     """
     gmean_zarr_group = zarr.open(zarr_group_path, mode='a')
     log_sum = None
+    frac_sum = None
     total_spot_number = 0
     for key in tqdm(gmean_zarr_group.array_keys(), desc="Merging Zarr arrays"):
         s1 = gmean_zarr_group[key]
-        s1_array = s1[:]
+        s1_array_gmean = s1[:][:,0]
+        s1_array_frac = s1[:][:,1]
         n = s1.attrs['spot_number']
+        
         if log_sum is None:
-            log_sum = np.log(s1_array + 1e-6) * n  # Summing logs of values, avoid log(0)
+            log_sum = np.log(s1_array_gmean) * n
+            frac_sum = s1_array_frac
         else:
-            log_sum += np.log(s1_array + 1e-6) * n  # Summing logs of values, avoid log(0)
+            log_sum += np.log(s1_array_gmean) * n
+            frac_sum += s1_array_frac
+            
         total_spot_number += n
 
     # Apply the geometric mean via exponentiation of the averaged logs
     final_mean = np.exp(log_sum / total_spot_number)
-
+    final_frac = frac_sum / total_spot_number
+    
     # Save the final mean to a Parquet file
     gene_names = common_genes
-    final_mean_df = pd.DataFrame({'gene': gene_names, 'G_Mean': final_mean})
-    final_mean_df.set_index('gene', inplace=True)
-    final_mean_df.to_parquet(output_file)
-    print(f"Final mean saved to {output_file}")
-    return final_mean_df
+    final_df = pd.DataFrame({'gene': gene_names, 'G_Mean': final_mean, 'frac':final_frac})
+    final_df.set_index('gene', inplace=True)
+    final_df.to_parquet(output_file)
+    return final_df
 
 
 def run_create_slice_mean(config: CreateSliceMeanConfig):
@@ -117,10 +129,10 @@ def run_create_slice_mean(config: CreateSliceMeanConfig):
                 logger.info(f"Skipping {sample_name}, already processed.")
                 continue
 
-        calculate_one_slice_mean(sample_name, h5ad_file, common_genes, zarr_group_path)
+        calculate_one_slice_mean(sample_name, h5ad_file, common_genes, zarr_group_path, config.data_layer)
 
     output_file = config.slice_mean_output_file
-    final_mean_df = merge_zarr_means(zarr_group_path, output_file, common_genes)
+    final_df = merge_zarr_means(zarr_group_path, output_file, common_genes)
 
-    logger.info(f"Final slice mean saved to {output_file}")
-    return final_mean_df
+    logger.info(f"Final slice mean and expression fraction saved to {output_file}")
+    return final_df

@@ -200,7 +200,7 @@ def add_create_slice_mean_args(parser):
                         help='List of sample names to process. Provide as a space-separated list.')
 
     parser.add_argument(
-        '--h5ad_list', type=str, nargs='+', required=True,
+        '--h5ad_list', type=str, nargs='+',
         help="List of h5ad file paths corresponding to the sample names. Provide as a space-separated list."
     )
     parser.add_argument(
@@ -211,8 +211,15 @@ def add_create_slice_mean_args(parser):
         '--slice_mean_output_file', type=str, required=True,
         help="Path to the output file for the slice mean"
     )
-    parser.add_argument('--homolog_file', type=str, help='Path to homologous gene conversion file (optional).')
-
+    parser.add_argument(
+        '--homolog_file', type=str, 
+        help='Path to homologous gene conversion file (optional).'
+    )
+    parser.add_argument(
+        '--data_layer', type=str, default='counts', required=True,
+        help='Data layer for gene expression (e.g., "count", "counts", "log1p").'
+    )
+    
 def add_format_sumstats_args(parser):
     # Required arguments
     parser.add_argument('--sumstats', required=True, type=str,
@@ -409,8 +416,12 @@ class CreateSliceMeanConfig:
     h5ad_list: list | None = None
     homolog_file: str | None = None
     species: str | None = None
+    data_layer: str = None
+    
     def __post_init__(self):
-
+        
+        if self.h5ad_list is None and self.h5ad_yaml is None:
+            raise ValueError("At least one of --h5ad_list or --h5ad_yaml must be provided.")
         if self.h5ad_yaml is not None:
             if isinstance(self.h5ad_yaml, str):
                 logger.info(f"Reading h5ad yaml file: {self.h5ad_yaml}")
