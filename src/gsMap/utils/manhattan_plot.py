@@ -308,13 +308,21 @@ class _ManhattanPlot:
         self.index = "INDEX"
         self.pos = "POSITION"
 
-        # Fixes the bug where one chromosome is missing by adding a sequential
-        # index column.
-        idx = 0
-        for i in self.data[chrm].unique():
-            idx = idx + 1
-            self.data.loc[self.data[chrm] == i, self.index] = int(idx)
-        # Set the type to be the same as provided for chrm column
+        self.data[self.index] = 0  # Initialize with zeros as default value
+
+        if not self.data.empty and len(self.data[chrm].unique()) > 0:
+            idx = 0
+            for i in self.data[chrm].unique():
+                idx = idx + 1
+                self.data.loc[self.data[chrm] == i, self.index] = int(idx)
+        else:
+            import logging
+
+            logger = logging.getLogger("gsMap.utils.manhattan_plot")
+            logger.warning(
+                "No chromosome data found or empty dataframe when creating Manhattan plot"
+            )
+
         self.data[self.index] = self.data[self.index].astype(self.data[chrm].dtype)
 
         # This section sets up positions and ticks. Ticks should be placed in

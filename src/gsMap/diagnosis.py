@@ -51,8 +51,8 @@ def compute_gene_diagnostic_info(config: DiagnosisConfig):
     mk_score = mk_score.loc[trait_ldsc_result.index]
 
     # Filter out genes with no variation
-    non_zero_std_cols = mk_score.columns[mk_score.std() > 0]
-    mk_score = mk_score.loc[:, non_zero_std_cols]
+    has_variation = (~mk_score.eq(mk_score.iloc[0], axis=1)).any()
+    mk_score = mk_score.loc[:, has_variation]
 
     logger.info("Calculating correlation between gene marker scores and trait logp-values...")
     corr = mk_score.corrwith(trait_ldsc_result["logp"])
@@ -69,10 +69,6 @@ def compute_gene_diagnostic_info(config: DiagnosisConfig):
         }
     )
 
-    # Filter based on median GSS score
-    high_GSS_Gene_annotation_pair = high_GSS_Gene_annotation_pair[
-        high_GSS_Gene_annotation_pair["Median_GSS"] >= 1.0
-    ]
     high_GSS_Gene_annotation_pair = high_GSS_Gene_annotation_pair.merge(
         corr, left_on="Gene", right_index=True
     )
@@ -160,6 +156,20 @@ def generate_manhattan_plot(config: DiagnosisConfig):
         + "Annotation: "
         + gwas_data_to_plot["Annotation"].astype(str)
     )
+
+    # Verify data integrity
+    if gwas_data_with_gene_annotation_sort.empty:
+        logger.error("Filtered GWAS data is empty, cannot create Manhattan plot")
+        return
+
+    if len(gwas_data_to_plot) == 0:
+        logger.error("No SNPs passed filtering criteria for Manhattan plot")
+        return
+
+    # Log some diagnostic information
+    logger.info(f"Creating Manhattan plot with {len(gwas_data_to_plot)} SNPs")
+    logger.info(f"Columns available: {list(gwas_data_to_plot.columns)}")
+    logger.info(f"Chromosome column values: {gwas_data_to_plot['CHR'].unique()}")
 
     fig = ManhattanPlot(
         dataframe=gwas_data_to_plot,
