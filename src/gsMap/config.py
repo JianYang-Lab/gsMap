@@ -38,6 +38,14 @@ def get_gsMap_logger(logger_name):
 logger = get_gsMap_logger("gsMap")
 
 
+def process_cpu_time(proc: psutil.Process):
+    """
+    On MacOS, `psutil.Process.cpu_times()` is not accurate, check activity monitor instead.
+    """
+    cpu_times = proc.cpu_times()
+    return cpu_times.user + cpu_times.system
+
+
 def track_resource_usage(func):
     """
     Decorator to track resource usage during function execution.
@@ -79,7 +87,7 @@ def track_resource_usage(func):
 
         # Get start times
         start_wall_time = time.time()
-        start_cpu_time = process.cpu_times().user + process.cpu_times().system
+        start_cpu_time = process_cpu_time(process)
 
         try:
             # Run the actual function
@@ -92,7 +100,7 @@ def track_resource_usage(func):
 
             # Calculate elapsed times
             end_wall_time = time.time()
-            end_cpu_time = process.cpu_times().user + process.cpu_times().system
+            end_cpu_time = process_cpu_time(process)
 
             wall_time = end_wall_time - start_wall_time
             cpu_time = end_cpu_time - start_cpu_time

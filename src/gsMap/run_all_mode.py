@@ -176,7 +176,7 @@ def run_pipeline(config: RunAllModeConfig):
 
     # Step 5: Cauchy combination test
     start_time = time.time()
-    logger.info("Step 6: Running Cauchy combination test")
+    logger.info("Step 5: Running Cauchy combination test")
     for trait_name in sumstats_config:
         # check if the cauchy combination has been done
         cauchy_result_file = config.get_cauchy_result_file(trait_name)
@@ -196,8 +196,9 @@ def run_pipeline(config: RunAllModeConfig):
     logger.info(f"Step 5 completed in {format_duration(end_time - start_time)}.")
 
     # Step 6: Generate final report
+    start_time = time.time()
     for trait_name in sumstats_config:
-        logger.info("Running final report generation for trait: %s", trait_name)
+        logger.info("Step 6: Running final report generation for trait: %s", trait_name)
         report_config = ReportConfig(
             workdir=config.workdir,
             sample_name=config.sample_name,
@@ -233,5 +234,8 @@ def run_pipeline(config: RunAllModeConfig):
 
         # Pass the run parameter dictionary to the report generation function
         run_report(report_config, run_parameters=run_parameter_dict)
+
+    end_time = time.time()
+    logger.info(f"Step 6 completed in {format_duration(end_time - start_time)}.")
 
     logger.info("Pipeline completed successfully.")

@@ -8,6 +8,8 @@ https://github.com/bulik/ldsc/blob/master/ldsc/ldscore.py
 
 import logging
 
+import torch
+import numba
 import bitarray as ba
 import numpy as np
 import pandas as pd
@@ -17,8 +19,16 @@ from tqdm import tqdm
 # Configure logger
 logger = logging.getLogger("gsMap.utils.plink_ldscore_tool")
 
+def torch_device():
+    if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+        return torch.device("mps")
+    elif torch.cuda.is_available():
+        return torch.device("cuda")
+    else:
+        return torch.device("cpu")
 
-def getBlockLefts(coords, max_dist):
+@numba.njit
+def getBlockLefts(coords: np.ndarray, max_dist: float):
     """
     Converts coordinates + max block length to a list of coordinates of the leftmost
     SNPs to be included in blocks.
@@ -34,19 +44,46 @@ def getBlockLefts(coords, max_dist):
     return block_left
 
 
-def block_left_to_right(block_left):
+@numba.njit
+def normalized_snps(X: np.ndarray, b: int, minorRef, freq, currentSNP):
     """
-    Converts block lefts to block rights.
-    """
-    M = len(block_left)
-    j = 0
-    block_right = np.zeros(M)
-    for i in range(M):
-        while j < M and block_left[j] <= i:
-            j += 1
-        block_right[i] = j
+    Normalize the SNPs and impute the missing ones with the mean
 
-    return block_right
+    Parameters
+    ----------
+    fam_file : str
+        Path to the FAM file
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame containing FAM data
+    """
+    Y = np.zeros(X.shape, dtype="float32")
+
+    for j in range(0, b):
+        newsnp = X[:, j]
+        ii = newsnp != 9
+        avg = np.mean(newsnp[ii])
+        newsnp[np.logical_not(ii)] = avg
+        denom = np.std(newsnp)
+        if denom == 0:
+            denom = 1
+
+        if minorRef is not None and freq[currentSNP + j] > 0.5:
+            denom = denom * -1
+
+        Y[:, j] = (newsnp - avg) / denom
+    return Y
+
+
+def l2_unbiased(x: torch.Tensor, n: int):
+    """
+    Calculate the unbiased estimate of L2.
+    """
+    denom = n - 2 if n > 2 else n  # allow n<2 for testing purposes
+    sq = torch.square(x)
+    return sq - (1 - sq) / denom
 
 
 class PlinkBEDFile:
@@ -464,41 +501,18 @@ class PlinkBEDFile:
         slice = self.geno[2 * c * nru : 2 * (c + b) * nru]
         X = np.array(slice.decode(self._bedcode), dtype="float32").reshape((b, nru)).T
         X = X[0:n, :]
-        Y = np.zeros(X.shape, dtype="float32")
-
-        # Normalize the SNPs and impute the missing ones with the mean
-        for j in range(0, b):
-            newsnp = X[:, j]
-            ii = newsnp != 9
-            avg = np.mean(newsnp[ii])
-            newsnp[np.logical_not(ii)] = avg
-            denom = np.std(newsnp)
-            if denom == 0:
-                denom = 1
-
-            if minorRef is not None and self.freq[self._currentSNP + j] > 0.5:
-                denom = denom * -1
-
-            Y[:, j] = (newsnp - avg) / denom
+        Y = normalized_snps(X, b, minorRef, self.freq, self._currentSNP)
 
         self._currentSNP += b
         return Y
 
-    def _l2_unbiased(self, x, n):
-        """
-        Calculate the unbiased estimate of L2.
-        """
-        denom = n - 2 if n > 2 else n  # allow n<2 for testing purposes
-        sq = np.square(x)
-        return sq - (1 - sq) / denom
-
-    def ldScoreVarBlocks(self, block_left, c, annot=None):
+    def ldScoreVarBlocks(self, block_left: np.ndarray, c, annot=None):
         """
         Computes an unbiased estimate of L2(j) for j=1,..,M.
         """
 
         def func(x):
-            return self._l2_unbiased(x, self.n)
+            return l2_unbiased(x, self.n)
 
         snp_getter = self.nextSNPs
         return self._corSumVarBlocks(block_left, c, func, snp_getter, annot)
@@ -532,17 +546,22 @@ class PlinkBEDFile:
             b = m
 
         l_A = 0  # l_A := index of leftmost SNP in matrix A
-        A = snp_getter(b)  # This now returns float32 data
-        rfuncAB = np.zeros((b, c), dtype="float32")
-        rfuncBB = np.zeros((c, c), dtype="float32")
+
+        device = torch_device()
+        A = torch.from_numpy(snp_getter(b)).to(device)  # This now returns float32 data
+        cor_sum = torch.from_numpy(cor_sum).to(device)
+        annot = torch.from_numpy(annot).to(device)
+        rfuncAB = torch.zeros((b, c), dtype=torch.float32, device=device)
+        rfuncBB = torch.zeros((c, c), dtype=torch.float32, device=device)
+
         # chunk inside of block
         for l_B in np.arange(0, b, c):  # l_B := index of leftmost SNP in matrix B
             B = A[:, l_B : l_B + c]
             # ld matrix
-            np.dot(A.T, B / n, out=rfuncAB)
+            torch.mm(A.T, B / n, out=rfuncAB)
             # ld matrix square
             rfuncAB = func(rfuncAB)
-            cor_sum[l_A : l_A + b, :] += np.dot(rfuncAB, annot[l_B : l_B + c, :])
+            cor_sum[l_A : l_A + b, :] += torch.mm(rfuncAB, annot[l_B : l_B + c, :].float())
 
         # chunk to right of block
         b0 = b
@@ -558,33 +577,39 @@ class PlinkBEDFile:
                 # block_size can't increase more than c
                 # block_size can't be less than c unless it is zero
                 # both of these things make sense
-                A = np.hstack((A[:, old_b - b + c : old_b], B))
+                A = torch.hstack((A[:, old_b - b + c : old_b], B))
                 l_A += old_b - b + c
             elif l_B == b0 and b > 0:
                 A = A[:, b0 - b : b0]
                 l_A = b0 - b
             elif b == 0:  # no SNPs to left in window, e.g., after a sequence gap
-                A = np.array((), dtype="float32").reshape((n, 0))
+                A = torch.zeros((n, 0), dtype=torch.float32, device=device)
                 l_A = l_B
             if l_B == md:
                 c = m - md
-                rfuncAB = np.zeros((b, c), dtype="float32")
-                rfuncBB = np.zeros((c, c), dtype="float32")
+                rfuncAB = torch.zeros((b, c), dtype=torch.float32, device=device)
+                rfuncBB = torch.zeros((c, c), dtype=torch.float32, device=device)
             if b != old_b:
-                rfuncAB = np.zeros((b, c), dtype="float32")
+                rfuncAB = torch.zeros((b, c), dtype=torch.float32, device=device)
 
-            B = snp_getter(c)  # This now returns float32 data
-            p1 = np.all(annot[l_A : l_A + b, :] == 0)
-            p2 = np.all(annot[l_B : l_B + c, :] == 0)
+            B = torch.from_numpy(snp_getter(c)).to(device)  # This now returns float32 data
+
+            annot_l_A = annot[l_A : l_A + b, :].float()
+            annot_l_B = annot[l_B : l_B + c, :].float()
+            p1 = torch.all(annot_l_A == 0)
+            p2 = torch.all(annot_l_B == 0)
             if p1 and p2:
                 continue
 
-            np.dot(A.T, B / n, out=rfuncAB)
-            rfuncAB = func(rfuncAB)
-            cor_sum[l_A : l_A + b, :] += np.dot(rfuncAB, annot[l_B : l_B + c, :])
-            cor_sum[l_B : l_B + c, :] += np.dot(annot[l_A : l_A + b, :].T, rfuncAB).T
-            np.dot(B.T, B / n, out=rfuncBB)
-            rfuncBB = func(rfuncBB)
-            cor_sum[l_B : l_B + c, :] += np.dot(rfuncBB, annot[l_B : l_B + c, :])
+            B_n = B / n
 
-        return cor_sum
+            rfuncAB = func(torch.mm(A.T, B_n))
+            cor_sum[l_A : l_A + b, :] += torch.mm(rfuncAB, annot_l_B)
+            cor_sum[l_B : l_B + c, :] += torch.mm(annot_l_A.T, rfuncAB).T
+
+            rfuncBB = func(torch.mm(B.T, B_n))
+            cor_sum[l_B : l_B + c, :] += torch.mm(rfuncBB, annot_l_B)
+
+        torch.mps.synchronize()
+
+        return cor_sum.cpu().numpy()

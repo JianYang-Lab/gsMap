@@ -49,8 +49,7 @@ def load_gtf(
     logger.info("Loading GTF data from %s", gtf_file)
 
     # Load GTF file
-    gtf = pr.read_gtf(gtf_file)
-    gtf = gtf.df
+    gtf = pr.read_gtf(gtf_file, as_df=True)
 
     # Filter for gene features
     gtf = gtf[gtf["Feature"] == "gene"]
@@ -303,7 +302,7 @@ class LDScoreCalculator:
         ].index.tolist()
 
         # Create a simple unit annotation (all ones) for the filtered SNPs
-        unit_annotation = np.ones((len(keep_snps_indices), 1))
+        unit_annotation = np.ones((len(keep_snps_indices), 1), dtype="float32")
 
         # Calculate LD scores
         w_ld_scores = plink_bed.get_ldscore(
