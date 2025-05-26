@@ -1,13 +1,13 @@
 import argparse
 import dataclasses
+import functools
 import logging
 import os
+import re
+import subprocess
 import sys
 import threading
 import time
-import subprocess
-import re
-import functools
 from collections import OrderedDict, namedtuple
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -55,7 +55,7 @@ def macos_timebase_factor():
             ["ioreg", "-p", "IODeviceTree", "-c", "IOPlatformDevice"],
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
         ioreg_output_lines = result.stdout.splitlines()
     except subprocess.CalledProcessError as e:
