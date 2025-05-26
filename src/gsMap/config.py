@@ -5,6 +5,9 @@ import os
 import sys
 import threading
 import time
+import subprocess
+import re
+import functools
 from collections import OrderedDict, namedtuple
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -36,6 +39,48 @@ def get_gsMap_logger(logger_name):
 
 
 logger = get_gsMap_logger("gsMap")
+
+
+@functools.cache
+def macos_timebase_factor():
+    """
+    On MacOS, `psutil.Process.cpu_times()` is not accurate, check activity monitor instead.
+    see: https://github.com/giampaolo/psutil/issues/2411#issuecomment-2274682289
+    """
+    default_factor = 1
+    ioreg_output_lines = []
+
+    try:
+        result = subprocess.run(
+            ["ioreg", "-p", "IODeviceTree", "-c", "IOPlatformDevice"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        ioreg_output_lines = result.stdout.splitlines()
+    except subprocess.CalledProcessError as e:
+        print(f"Command failed: {e}")
+        return default_factor
+
+    if not ioreg_output_lines:
+        return default_factor
+
+    for line in ioreg_output_lines:
+        if "timebase-frequency" in line:
+            match = re.search(r"<([0-9a-fA-F]+)>", line)
+            if not match:
+                return default_factor
+            byte_data = bytes.fromhex(match.group(1))
+            timebase_freq = int.from_bytes(byte_data, byteorder="little")
+            # Typically, it should be 1000/24.
+            return pow(10, 9) / timebase_freq
+    return default_factor
+
+
+def process_cpu_time(proc: psutil.Process):
+    cpu_times = proc.cpu_times()
+    total = cpu_times.user + cpu_times.system
+    return total
 
 
 def track_resource_usage(func):
@@ -79,7 +124,7 @@ def track_resource_usage(func):
 
         # Get start times
         start_wall_time = time.time()
-        start_cpu_time = process.cpu_times().user + process.cpu_times().system
+        start_cpu_time = process_cpu_time(process)
 
         try:
             # Run the actual function
@@ -92,7 +137,7 @@ def track_resource_usage(func):
 
             # Calculate elapsed times
             end_wall_time = time.time()
-            end_cpu_time = process.cpu_times().user + process.cpu_times().system
+            end_cpu_time = process_cpu_time(process)
 
             wall_time = end_wall_time - start_wall_time
             cpu_time = end_cpu_time - start_cpu_time
@@ -101,6 +146,10 @@ def track_resource_usage(func):
             avg_cpu_percent = (
                 sum(cpu_percent_samples) / len(cpu_percent_samples) if cpu_percent_samples else 0
             )
+
+            if sys.platform == "darwin":
+                cpu_time *= macos_timebase_factor()
+                avg_cpu_percent *= macos_timebase_factor()
 
             # Format memory for display
             if peak_memory < 1024:
