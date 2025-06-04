@@ -292,11 +292,13 @@ def generate_and_save_plots(
 def save_plot(sub_fig, sub_fig_save_dir, sample_name, selected_gene, plot_type):
     """Save the plot to HTML and PNG."""
     save_sub_fig_path = (
-        sub_fig_save_dir / f"{sample_name}_{selected_gene}_{plot_type}_Distribution.html"
+        sub_fig_save_dir / f"{sample_name}_{selected_gene}_{plot_type}_Distribution.png"
     )
     # sub_fig.write_html(str(save_sub_fig_path))
     sub_fig.update_layout(showlegend=False)
-    sub_fig.write_image(str(save_sub_fig_path).replace(".html", ".png"))
+    sub_fig.write_image(save_sub_fig_path)
+    logger.info(f"{plot_type} plot saved to {save_sub_fig_path}.")
+    # sub_fig.write_image(str(save_sub_fig_path).replace(".html", ".png"))
 
 
 def generate_gsMap_plot(config: DiagnosisConfig):
