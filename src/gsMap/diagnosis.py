@@ -297,8 +297,7 @@ def save_plot(sub_fig, sub_fig_save_dir, sample_name, selected_gene, plot_type):
     # sub_fig.write_html(str(save_sub_fig_path))
     sub_fig.update_layout(showlegend=False)
     sub_fig.write_image(save_sub_fig_path)
-    logger.info(f"{plot_type} plot saved to {save_sub_fig_path}.")
-    # sub_fig.write_image(str(save_sub_fig_path).replace(".html", ".png"))
+    assert save_sub_fig_path.exists(), f"Failed to save {plot_type} plot for {selected_gene}."
 
 
 def generate_gsMap_plot(config: DiagnosisConfig):
