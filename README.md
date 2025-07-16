@@ -73,7 +73,8 @@ Nature (2025).
 Please cite the paper and give us a STAR if you find gsMap useful for your research.
 
 ## ✨ Research Highlight
-gsMap was recently highlighted in [Nature Methods](https://www.nature.com/articles/s41592-025-02711-5).
+gsMap was highlighted in [Nature Methods](https://www.nature.com/articles/s41592-025-02711-5).  
+gsMap was highlighted in [Nature Review Genetics](https://www.nature.com/articles/s41576-025-00877-4).
 
 <!-- Badge links -->
 
