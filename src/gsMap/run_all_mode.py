@@ -17,6 +17,7 @@ from gsMap.generate_ldscore import run_generate_ldscore
 from gsMap.latent_to_gene import run_latent_to_gene
 from gsMap.report import run_report
 from gsMap.spatial_ldsc_multiple_sumstats import run_spatial_ldsc
+from gsMap.spatial_ldsc_jax_final import run_spatial_ldsc_jax
 
 
 def format_duration(seconds):
@@ -169,8 +170,16 @@ def run_pipeline(config: RunAllModeConfig):
             num_processes=config.max_processes,
             ldscore_save_format="quick_mode",
             snp_gene_weight_adata_path=config.snp_gene_weight_adata_path,
+            use_jax=config.use_jax,  # Pass the JAX flag from config
         )
-        run_spatial_ldsc(spatial_ldsc_config_trait)
+        
+        # Dispatch to appropriate implementation based on use_jax flag
+        if spatial_ldsc_config_trait.use_jax:
+            logger.info(f"Running JAX-accelerated spatial LDSC for trait {trait_name}")
+            run_spatial_ldsc_jax(spatial_ldsc_config_trait)
+        else:
+            logger.info(f"Running standard spatial LDSC for trait {trait_name}")
+            run_spatial_ldsc(spatial_ldsc_config_trait)
     end_time = time.time()
     logger.info(f"Step 4 completed in {format_duration(end_time - start_time)}.")
 

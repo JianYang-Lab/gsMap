@@ -1462,9 +1462,17 @@ def run_generate_ldscore_from_cli(args: argparse.Namespace):
 )
 def run_spatial_ldsc_from_cli(args: argparse.Namespace):
     from gsMap.spatial_ldsc_multiple_sumstats import run_spatial_ldsc
+    from gsMap.spatial_ldsc_jax_final import run_spatial_ldsc_jax
 
     config = get_dataclass_from_parser(args, SpatialLDSCConfig)
-    run_spatial_ldsc(config)
+    
+    # Dispatch to appropriate implementation based on use_jax flag
+    if config.use_jax:
+        logger.info("Using JAX-accelerated spatial LDSC implementation")
+        run_spatial_ldsc_jax(config)
+    else:
+        logger.info("Using standard spatial LDSC implementation")
+        run_spatial_ldsc(config)
 
 
 @register_cli(
