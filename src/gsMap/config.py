@@ -435,6 +435,14 @@ def add_spatial_ldsc_args(parser):
         default=True,
         help="Use additional baseline annotations when provided",
     )
+    parser.add_argument(
+        "--use_jax",
+        type=bool,
+        nargs="?",
+        const=True,
+        default=True,
+        help="Use JAX-accelerated implementation (default: True). Set to False to use standard implementation.",
+    )
 
 
 def add_Cauchy_combination_args(parser):
@@ -736,6 +744,14 @@ def add_run_all_mode_args(parser):
     )
     parser.add_argument(
         "--pearson_residuals", action="store_true", help="Using the pearson residuals."
+    )
+    parser.add_argument(
+        "--use_jax",
+        type=bool,
+        nargs="?",
+        const=True,
+        default=True,
+        help="Use JAX-accelerated spatial LDSC implementation (default: True). Set to False to use standard implementation.",
     )
 
 
@@ -1125,6 +1141,9 @@ class SpatialLDSCConfig(ConfigWithAutoPaths):
 
     spots_per_chunk_quick_mode: int = 1_000
     snp_gene_weight_adata_path: str | None = None
+    
+    # JAX acceleration option
+    use_jax: bool = True  # Use JAX-accelerated implementation by default
 
     def __post_init__(self):
         super().__post_init__()
@@ -1171,6 +1190,12 @@ class SpatialLDSCConfig(ConfigWithAutoPaths):
                 )
         else:
             logger.info(f"Using provided weights file: {self.w_file}")
+        
+        # Log the implementation choice
+        if self.use_jax:
+            logger.info("Using JAX-accelerated spatial LDSC implementation")
+        else:
+            logger.info("Using standard spatial LDSC implementation")
 
         if self.use_additional_baseline_annotation:
             self.process_additional_baseline_annotation()
@@ -1298,6 +1323,9 @@ class RunAllModeConfig(ConfigWithAutoPaths):
     homolog_file: str | None = None
 
     max_processes: int = 10
+    
+    # === spatial LDSC implementation ===
+    use_jax: bool = True  # Use JAX-accelerated implementation by default
 
     def __post_init__(self):
         super().__post_init__()
