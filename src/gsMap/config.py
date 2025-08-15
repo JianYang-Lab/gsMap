@@ -399,7 +399,8 @@ def add_latent_to_gene_args(parser):
         help="Path to the input HDF5 file with latent representations."
     )
     parser.add_argument(
-        "--annotation", type=str, default=None, help="Annotation in adata.obs to use."
+        "--annotation", type=str, default=None, 
+        help="Annotation in adata.obs to use."
     )
     parser.add_argument(
         "--no_expression_fraction", action="store_true",
@@ -418,18 +419,28 @@ def add_latent_to_gene_args(parser):
         help="Spatial key in adata.obsm storing spatial coordinates."
     )
     parser.add_argument(
-        "--num_anchor", type=int, default=51, help="Number of anchor points."
+        "--num_anchor", type=int, default=51, 
+        help="Number of anchor points."
     )
     parser.add_argument(
-        "--num_neighbour", type=int, default=21, help="Number of neighbors."
+        "--num_neighbour", type=int, default=21, 
+        help="Number of neighbors."
     )
     parser.add_argument(
         "--num_neighbour_spatial", type=int, default=201,
         help="Number of spatial neighbors."
     )
     parser.add_argument(
-        "--use_w", action="store_true", default=False,
+        "--use_w", action="store_true",
         help="Using section specific weights to account for across section batch effect."
+    )
+    parser.add_argument(
+        "--gM_slices", type=str, default=None, 
+        help="Path to the slice mean file (optional)."
+    )
+    parser.add_argument(
+        "--homolog_file", type=str, default=None,
+        help="Path to homologous gene conversion file (optional)."
     )
     
     # GNN smoothing parameters
@@ -438,68 +449,16 @@ def add_latent_to_gene_args(parser):
         help="Enable GCN smoothing in latent to gene."
     )
     parser.add_argument(
-        "--gcn_K", type=int, default=1, help="Number of GCN hops for smoothing."
+        "--gcn_K", type=int, default=1, 
+        help="Number of GCN hops for smoothing."
     )
     parser.add_argument(
         "--n_neighbors_gcn", type=int, default=10,
         help="Number of neighbors for GCN smoothing."
     )
     parser.add_argument(
-        "--homolog_file",
-        type=str,
-        default=None,
-        help="Path to homologous gene conversion file (optional).",
-    )
-    parser.add_argument(
-        "--gM_slices", type=str, default=None, help="Path to the slice mean file (optional)."
-    )
-    parser.add_argument(
-        "--annotation",
-        type=str,
-        default=None,
-        help="Name of the annotation in adata.obs to use (optional).",
-    )
-    # GNN-specific arguments
-    parser.add_argument(
-        "--use_gcn_smoothing",
-        action="store_true",
-        help="Enable GCN smoothing for latent representations.",
-    )
-    parser.add_argument(
-        "--gcn_K",
-        type=int,
-        default=1,
-        help="Number of GCN propagation steps (default: 1).",
-    )
-    parser.add_argument(
-        "--n_neighbors_gcn",
-        type=int,
-        default=10,
-        help="Number of neighbors for GCN graph construction (default: 10).",
-    )
-    parser.add_argument(
-        "--latent_representation_indv",
-        type=str,
-        default=None,
-        help="Individual latent representation key in obsm (optional).",
-    )
-    parser.add_argument(
-        "--num_anchor",
-        type=int,
-        default=51,
-        help="Number of anchor points for regional computation (default: 51).",
-    )
-    parser.add_argument(
-        "--spatial_key",
-        type=str,
-        default="spatial",
-        help="Key in obsm containing spatial coordinates (default: 'spatial').",
-    )
-    parser.add_argument(
-        "--zarr_group_path",
-        type=str,
-        default=None,
-        help="Path to zarr group for slice mean storage (optional).",
+        "--zarr_group_path", type=str, default=None,
+        help="Path to zarr group for slice mean storage (optional)."
     )
 
 
@@ -1076,7 +1035,7 @@ class FindLatentRepresentationsConfig(ConfigWithAutoPaths):
     embedding_size: int = 32
 
     # Transformer module parameters
-    use_tf: bool = True
+    use_tf: bool = False  # Changed to match args parser default (action="store_true" defaults to False)
     module_dim: int = 30
     hidden_gmf: int = 128
     n_modules: int = 16
@@ -1108,9 +1067,13 @@ class FindLatentRepresentationsConfig(ConfigWithAutoPaths):
 
 @dataclass
 class LatentToGeneConfig(ConfigWithAutoPaths):
+    # Required by parent class
+    input_hdf5_path: str = None
+    
+    # Core parameters
     no_expression_fraction: bool = False
-    latent_representation: str = "emb"
-    latent_representation_indv: str = "emb_gcn"
+    latent_representation: str = "emb_gcn"  # Changed to match args parser default
+    latent_representation_indv: str = "emb"  # Changed to match args parser default
     spatial_key: str = 'spatial'
     num_neighbour: int = 21
     num_anchor: int = 51
@@ -1118,9 +1081,18 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
     gM_slices: str = None
     annotation: str = None
     use_w: bool = False
+    homolog_file: str = None
+    species: str = None
+    
+    # GNN smoothing parameters
+    use_gcn_smoothing: bool = False
+    gcn_K: int = 1
+    n_neighbors_gcn: int = 10
+    zarr_group_path: str = None
 
     def __post_init__(self):
         super().__post_init__()
+        verify_homolog_file_format(self)
 
 
 def verify_homolog_file_format(config):
@@ -1145,6 +1117,17 @@ def verify_homolog_file_format(config):
                 )
     else:
         logger.info("No homolog file provided. Run in human mode.")
+
+
+@dataclass
+class MaxPoolingConfig(ConfigWithAutoPaths):
+    spe_file_list: str
+    spatial_key: str = 'spatial'
+    annotation: str = None
+    sim_thresh: float = 0.5
+
+    def __post_init__(self):
+        super().__post_init__()
 
 
 @dataclass
