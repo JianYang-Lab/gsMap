@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
 from pprint import pprint
-from typing import Literal
+from typing import Literal, Optional
 
 import psutil
 import pyfiglet
@@ -1128,6 +1128,114 @@ class MaxPoolingConfig(ConfigWithAutoPaths):
 
     def __post_init__(self):
         super().__post_init__()
+
+
+@dataclass
+class ThreeDCombineConfig():
+    workdir: str
+    trait_name: str = None
+    adata_3d: str = None
+    project_name: str = None
+    st_id: str = None
+    annotation: str = None
+    spatial_key: str = 'spatial'
+    cmap: str = None
+    point_size: float = 0.01
+    background_color: str = 'white'
+    n_snapshot: int = 200
+    show_outline: bool = False
+    save_mp4: bool = False
+    save_gif: bool = False
+
+    def __post_init__(self):
+        if self.workdir is None:
+            raise ValueError('workdir must be provided.')
+        work_dir = Path(self.workdir)
+        if self.project_name is not None:
+            self.project_dir = work_dir / self.project_name
+        else:
+            self.project_dir = work_dir
+
+
+@dataclass
+class RunLinkModeConfig(ConfigWithAutoPaths):
+    gsMap3D_resource_dir: str
+
+    # == ST DATA PARAMETERS ==
+    annotation: str = None
+    spatial_key: str = 'spatial'
+
+    # ==GWAS DATA PARAMETERS==
+    trait_name: Optional[str] = None
+    sumstats_file: Optional[str] = None
+    sumstats_config_file: Optional[str] = None
+    max_processes: int = 10
+    use_pooling: bool = False
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.gtffile = f"{
+        self.gsMap3D_resource_dir}/genome_annotation/gtf/gencode.v46lift37.basic.annotation.gtf"
+        self.bfile_root = f"{
+        self.gsMap3D_resource_dir}/LD_Reference_Panel/1000G_EUR_Phase3_plink/1000G.EUR.QC"
+        self.keep_snp_root = (
+            f"{self.gsMap3D_resource_dir}/LDSC_resource/hapmap3_snps/hm"
+        )
+        self.w_file = (
+            f"{self.gsMap3D_resource_dir}/LDSC_resource/weights_hm3_no_hla/weights."
+        )
+        self.snp_gene_weight_adata_path = (
+            f"{self.gsMap3D_resource_dir}/quick_mode/snp_gene_weight_matrix.h5ad"
+        )
+        self.baseline_annotation_dir = Path(
+            f"{self.gsMap3D_resource_dir}/quick_mode/baseline"
+        ).resolve()
+        self.SNP_gene_pair_dir = Path(
+            f"{self.gsMap3D_resource_dir}/quick_mode/SNP_gene_pair"
+        ).resolve()
+        # check the existence of the input files and resources files
+        for file in [self.gtffile]:
+            if not Path(file).exists():
+                raise FileNotFoundError(f"File {file} does not exist.")
+
+        if self.sumstats_file is None and self.sumstats_config_file is None:
+            raise ValueError(
+                "One of sumstats_file and sumstats_config_file must be provided."
+            )
+        if self.sumstats_file is not None and self.sumstats_config_file is not None:
+            raise ValueError(
+                "Only one of sumstats_file and sumstats_config_file must be provided."
+            )
+        if self.sumstats_file is not None and self.trait_name is None:
+            raise ValueError(
+                "trait_name must be provided if sumstats_file is provided."
+            )
+        if self.sumstats_config_file is not None and self.trait_name is not None:
+            raise ValueError(
+                "trait_name must not be provided if sumstats_config_file is provided."
+            )
+        self.sumstats_config_dict = {}
+        # load the sumstats config file
+        if self.sumstats_config_file is not None:
+            import yaml
+
+            with open(self.sumstats_config_file) as f:
+                config = yaml.load(f, Loader=yaml.FullLoader)
+            for trait_name, sumstats_file in config.items():
+                assert Path(sumstats_file).exists(
+                ), f"{sumstats_file} does not exist."
+                self.sumstats_config_dict[trait_name] = sumstats_file
+        # load the sumstats file
+        elif self.sumstats_file is not None and self.trait_name is not None:
+            self.sumstats_config_dict[self.trait_name] = self.sumstats_file
+        else:
+            raise ValueError(
+                "One of sumstats_file and sumstats_config_file must be provided."
+            )
+
+        for sumstats_file in self.sumstats_config_dict.values():
+            assert Path(sumstats_file).exists(
+            ), f"{sumstats_file} does not exist."
 
 
 @dataclass
