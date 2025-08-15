@@ -228,35 +228,50 @@ def str_or_float(value):
     except ValueError:
         return value
 
-
 def add_shared_args(parser):
-    parser.add_argument(
-        "--workdir", type=str, required=True, help="Path to the working directory."
-    )
-    parser.add_argument("--sample_name", type=str, required=True, help="Name of the sample.")
+    parser.add_argument('--workdir', type=str, required=True,
+                        help='Path to the working directory.')
+    parser.add_argument('--sample_name', type=str,
+                        required=True, help='Name of the sample.')
+    parser.add_argument('--project_name', type=str,
+                        required=False, help='Project name')
 
+
+def add_qc_stdata_args(parser):
+    add_shared_args(parser)
+    parser.add_argument('--spe_file_list', required=True,
+                        type=str, help='List of input ST (.h5ad) files.')
+    parser.add_argument('--data_layer', type=str,
+                        default='count', help='Gene expression data layer.')
 
 def add_find_latent_representations_args(parser):
     add_shared_args(parser)
-    
+
     # File paths and general settings
     parser.add_argument(
-        "--input_hdf5_path", type=str, help="Path to single input HDF5 file."
+        "--spe_file_list",
+        required=True,
+        type=str,
+        help="List of input ST (.h5ad) files."
     )
-    parser.add_argument(
-        "--spe_file_list", type=str, help="List of input ST (.h5ad) files for multi-file mode."
-    )
+    # parser.add_argument('--workdir', required=True, type=str, help='Working directory of gsMap3D.')
     parser.add_argument(
         "--data_layer", type=str, default="count", help="Gene expression data layer."
     )
     parser.add_argument(
-        "--spatial_key", type=str, default="spatial",
-        help="Spatial key in adata.obsm storing spatial coordinates."
+        "--spatial_key",
+        type=str,
+        default="spatial",
+        required=False,
+        help="spatial key in adata.obsm storing spatial coordinats."
     )
     parser.add_argument(
-        "--annotation", type=str, default=None, help="Annotation in adata.obs to use."
+        "--annotation",
+        type=str,
+        default=None,
+        help="Annotation in adata.obs to use."
     )
-    
+
     # Feature extraction parameters (LGCN)
     parser.add_argument(
         "--n_neighbors", type=int, default=10, help="Number of neighbors for LGCN."
@@ -265,38 +280,44 @@ def add_find_latent_representations_args(parser):
         "--K", type=int, default=3, help="Graph convolution depth for LGCN."
     )
     parser.add_argument(
-        "--feat_cell", type=int, default=2000,
-        help="Number of top variable features to retain."
+        "--feat_cell",
+        type=int,
+        default=2000,
+        help="Number of top variable features to retain.",
     )
     parser.add_argument(
         "--pearson_residual", action="store_true", help="Take the residuals of the input data."
     )
-    parser.add_argument(
-        "--pearson_residuals", action="store_true", help="Take the residuals of the input data (alias)."
-    )
-    
+
     # Model dimension parameters
     parser.add_argument(
-        "--hidden_size", type=int, default=128, help="Units in the first hidden layer."
+        "--hidden_size",
+        type=int,
+        default=128,
+        help="Units in the first hidden layer.",
     )
     parser.add_argument(
-        "--embedding_size", type=int, default=32, help="Size of the latent embedding layer."
+        "--embedding_size",
+        type=int,
+        default=32,
+        help="Size of the latent embedding layer.",
     )
-    parser.add_argument(
-        "--batch_embedding_size", type=int, default=32, help="Size of batch embedding."
-    )
-    
+
     # Transformer module parameters
     parser.add_argument(
         "--use_tf", action="store_true", help="Enable transformer module."
     )
     parser.add_argument(
-        "--module_dim", type=int, default=30,
-        help="Dimensionality of transformer modules."
+        "--module_dim",
+        type=int,
+        default=30,
+        help="Dimensionality of transformer modules.",
     )
     parser.add_argument(
-        "--hidden_gmf", type=int, default=128,
-        help="Hidden units for global mean feature extractor."
+        "--hidden_gmf",
+        type=int,
+        default=128,
+        help="Hidden units for global mean feature extractor.",
     )
     parser.add_argument(
         "--n_modules", type=int, default=16, help="Number of transformer modules."
@@ -305,65 +326,56 @@ def add_find_latent_representations_args(parser):
         "--nhead", type=int, default=4, help="Number of attention heads in transformer."
     )
     parser.add_argument(
-        "--n_enc_layer", type=int, default=2, help="Number of transformer encoder layers."
+        "--n_enc_layer",
+        type=int,
+        default=2,
+        help="Number of transformer encoder layers.",
     )
-    
+
     # Training parameters
     parser.add_argument(
-        "--distribution", type=str, choices=["nb", "zinb", "gaussian"], default="nb",
-        help='Distribution type for loss calculation.'
+        "--distribution",
+        type=str,
+        choices=["nb", "zinb", "gaussian"],
+        default="nb",
+        help='Distribution type for loss calculation (e.g., "nb").',
     )
     parser.add_argument(
-        "--n_cell_training", type=int, default=100000,
-        help="Number of cells used for training."
+        "--n_cell_training",
+        type=int,
+        default=100000,
+        help="Number of cells used for training.",
     )
     parser.add_argument(
         "--batch_size", type=int, default=1024, help="Batch size for training."
     )
     parser.add_argument(
-        "--itermax", type=int, default=100, help="Maximum number of training iterations."
+        "--itermax",
+        type=int,
+        default=100,
+        help="Maximum number of training iterations.",
     )
     parser.add_argument(
         "--patience", type=int, default=10, help="Early stopping patience."
     )
     parser.add_argument(
-        "--two_stage", type=bool, default=True,
-        help="Tune the cell embeddings based on the provided annotation"
+        "--two_stage",
+        type=bool,
+        default=True,
+        help="Tune the cell embeddings based on the provided annotation",
     )
     parser.add_argument(
-        "--do_sampling", type=bool, default=True, help="Down-sampling cells in training."
+        "--do_sampling",
+        type=bool,
+        default=True,
+        help="Donw-sampling cells in training.",
     )
-    parser.add_argument(
-        "--lr", type=float, default=1e-3, help="Learning rate."
-    )
-    
+
     # Homologs transformation
     parser.add_argument(
-        "--homolog_file", type=str, help="Path to homologous gene conversion file (optional)."
+        '--homolog_file', type=str,
+        help='Path to homologous gene conversion file (optional).'
     )
-    parser.add_argument(
-        "--species", type=str, help="Species name for homolog conversion."
-    )
-    
-    # Zarr storage
-    parser.add_argument(
-        "--zarr_group_path", type=str, help="Path to zarr group for cross-slice storage."
-    )
-    
-    # Legacy parameters (kept for backward compatibility)
-    parser.add_argument("--epochs", type=int, help="Legacy: Number of training epochs.")
-    parser.add_argument("--feat_hidden1", type=int, help="Legacy: Neurons in first hidden layer.")
-    parser.add_argument("--feat_hidden2", type=int, help="Legacy: Neurons in second hidden layer.")
-    parser.add_argument("--gat_hidden1", type=int, help="Legacy: Units in first GAT hidden layer.")
-    parser.add_argument("--gat_hidden2", type=int, help="Legacy: Units in second GAT hidden layer.")
-    parser.add_argument("--p_drop", type=float, help="Legacy: Dropout rate.")
-    parser.add_argument("--gat_lr", type=float, help="Legacy: Learning rate for GAT.")
-    parser.add_argument("--n_comps", type=int, help="Legacy: Number of principal components.")
-    parser.add_argument("--weighted_adj", action="store_true", help="Legacy: Use weighted adjacency.")
-    parser.add_argument("--convergence_threshold", type=float, help="Legacy: Threshold for convergence.")
-    parser.add_argument("--hierarchically", action="store_true", help="Legacy: Enable hierarchical mode.")
-    parser.add_argument("--input_pca", action="store_true", help="Legacy: Use PCA as input.")
-    parser.add_argument("--gcn_decay", type=float, help="Legacy: GCN decay.")
 
 
 def chrom_choice(value):
@@ -393,72 +405,70 @@ def get_dataclass_from_parser(args: argparse.Namespace, data_class: dataclass):
 
 def add_latent_to_gene_args(parser):
     add_shared_args(parser)
-    
     parser.add_argument(
-        "--input_hdf5_path", type=str, default=None,
-        help="Path to the input HDF5 file with latent representations."
-    )
-    parser.add_argument(
-        "--annotation", type=str, default=None, 
+        "--annotation",
+        type=str,
+        default=None,
         help="Annotation in adata.obs to use."
     )
     parser.add_argument(
-        "--no_expression_fraction", action="store_true",
-        help="Skip expression fraction filtering."
+        "--no_expression_fraction",
+        action="store_true",
+        help="Skip expression fraction filtering.",
     )
     parser.add_argument(
-        "--latent_representation", type=str, default="emb_gcn",
-        help="Type of latent representation."
+        "--latent_representation",
+        type=str,
+        default="emb_gcn",
+        required=False,
+        help="Type of latent representation.",
     )
     parser.add_argument(
-        "--latent_representation_indv", type=str, default="emb",
-        help="Type of individual latent representation."
+        "--latent_representation_indv",
+        type=str,
+        default="emb",
+        required=False,
+        help="Type of latent representation.",
     )
     parser.add_argument(
-        "--spatial_key", type=str, default="spatial",
-        help="Spatial key in adata.obsm storing spatial coordinates."
+        "--spatial_key",
+        type=str,
+        default="spatial",
+        required=False,
+        help="spatial key in adata.obsm storing spatial coordinats.",
     )
     parser.add_argument(
-        "--num_anchor", type=int, default=51, 
-        help="Number of anchor points."
+        "--num_anchor", type=int, default=51, help="Number of neighbors."
     )
     parser.add_argument(
-        "--num_neighbour", type=int, default=21, 
-        help="Number of neighbors."
+        "--num_neighbour", type=int, default=21, help="Number of neighbors."
     )
     parser.add_argument(
-        "--num_neighbour_spatial", type=int, default=201,
-        help="Number of spatial neighbors."
+        "--num_neighbour_spatial",
+        type=int,
+        default=201,
+        help="Number of spatial neighbors.",
     )
     parser.add_argument(
-        "--use_w", action="store_true",
-        help="Using section specific weights to account for across section batch effect."
+        "--use_w",
+        action="store_true",
+        default=False,
+        help="Using section specific weights to acount for across section batch effect.",
+    )
+
+def add_max_pooling_args(parser):
+    add_shared_args(parser)
+    parser.add_argument(
+        "--spe_file_list",required=True,type=str,help="List of input ST (.h5ad) files."
     )
     parser.add_argument(
-        "--gM_slices", type=str, default=None, 
-        help="Path to the slice mean file (optional)."
+        "--annotation", type=str, default=None,help="Annotation in adata.obs to use."
     )
     parser.add_argument(
-        "--homolog_file", type=str, default=None,
-        help="Path to homologous gene conversion file (optional)."
-    )
-    
-    # GNN smoothing parameters
-    parser.add_argument(
-        "--use_gcn_smoothing", action="store_true",
-        help="Enable GCN smoothing in latent to gene."
+        "--spatial_key",type=str, default="spatial", help="spatial key in adata.obsm storing spatial coordinats."
     )
     parser.add_argument(
-        "--gcn_K", type=int, default=1, 
-        help="Number of GCN hops for smoothing."
-    )
-    parser.add_argument(
-        "--n_neighbors_gcn", type=int, default=10,
-        help="Number of neighbors for GCN smoothing."
-    )
-    parser.add_argument(
-        "--zarr_group_path", type=str, default=None,
-        help="Path to zarr group for slice mean storage (optional)."
+        "--sim_thresh",type=float, default=0.85,help="Similarity threshold for MNN matching.",
     )
 
 
@@ -881,62 +891,113 @@ def ensure_path_exists(func):
     return wrapper
 
 
+class PostInitMeta(type):
+    def __new__(cls, name, bases, namespace):
+        original_post_init = namespace.get("__post_init__", None)
+
+        def wrapped_post_init(self):
+            # Execute base class's __post_init__ if it exists
+            for base in bases:
+                if hasattr(base, "__post_init__"):
+                    base.__post_init__(self)
+
+            # Execute core logic
+            if self.workdir is None:
+                raise ValueError("workdir must be provided.")
+
+            work_dir = Path(self.workdir)
+            if self.project_name is not None:
+                self.project_dir = work_dir / self.project_name
+            else:
+                self.project_dir = work_dir
+
+            # Call the class's original __post_init__ if it exists
+            if original_post_init:
+                original_post_init(self)
+
+        namespace["__post_init__"] = wrapped_post_init
+        return super().__new__(cls, name, bases, namespace)
+
 @dataclass
-class ConfigWithAutoPaths:
+class ConfigWithAutoPaths(metaclass=PostInitMeta):
     workdir: str
-    sample_name: str | None
+    project_name: str
+    sample_name: str
 
     def __post_init__(self):
         if self.workdir is None:
-            raise ValueError("workdir must be provided.")
+            raise ValueError('workdir must be provided.')
+        work_dir = Path(self.workdir)
+        if self.project_name is not None:
+            self.project_dir = work_dir / self.project_name
+        else:
+            self.project_dir = work_dir
+
+    @property
+    @ensure_path_exists
+    def latent_dir(self) -> Path:
+        return self.project_dir / "find_latent_representations"
+
+    @property
+    @ensure_path_exists
+    def zarr_group_path(self) -> Path:
+        return self.project_dir / "slice_mean.zarr"
+
+    @property
+    @ensure_path_exists
+    def model_path(self) -> Path:
+        return Path(f'{self.project_dir}/LGCN_model/gsMap3D_LGCN_.pt')
 
     @property
     @ensure_path_exists
     def hdf5_with_latent_path(self) -> Path:
         return Path(
-            f"{self.workdir}/{self.sample_name}/find_latent_representations/{self.sample_name}_add_latent.h5ad"
+            f"{self.project_dir}/find_latent_representations/{self.sample_name}_add_latent.h5ad"
         )
 
     @property
     @ensure_path_exists
     def mkscore_feather_path(self) -> Path:
-        return Path(
-            f"{self.workdir}/{self.sample_name}/latent_to_gene/{self.sample_name}_gene_marker_score.feather"
-        )
+        return Path(f'{self.project_dir}/latent_to_gene/mk_score/{self.sample_name}_gene_marker_score.feather')
+
+    @property
+    @ensure_path_exists
+    def tuned_mkscore_feather_path(self) -> Path:
+        return Path(f'{self.project_dir}/latent_to_gene/mk_score_pooling/{self.sample_name}_gene_marker_score.feather')
 
     @property
     @ensure_path_exists
     def ldscore_save_dir(self) -> Path:
-        return Path(f"{self.workdir}/{self.sample_name}/generate_ldscore")
+        return Path(f'{self.project_dir}/generate_ldscore/{self.sample_name}')
 
     @property
     @ensure_path_exists
     def ldsc_save_dir(self) -> Path:
-        return Path(f"{self.workdir}/{self.sample_name}/spatial_ldsc")
+        return Path(f'{self.project_dir}/spatial_ldsc/{self.sample_name}')
 
     @property
     @ensure_path_exists
     def cauchy_save_dir(self) -> Path:
-        return Path(f"{self.workdir}/{self.sample_name}/cauchy_combination")
+        return Path(f'{self.project_dir}/cauchy_combination/{self.sample_name}')
 
     @ensure_path_exists
     def get_report_dir(self, trait_name: str) -> Path:
-        return Path(f"{self.workdir}/{self.sample_name}/report/{trait_name}")
+        return Path(f'{self.project_dir}/report/{self.sample_name}/{trait_name}')
 
-    def get_gsMap_report_file(self, trait_name: str) -> Path:
+    def get_gsMap3D_report_file(self, trait_name: str) -> Path:
         return (
-            self.get_report_dir(trait_name) / f"{self.sample_name}_{trait_name}_gsMap_Report.html"
+                self.get_report_dir(trait_name)
+                / f"{self.sample_name}_{trait_name}_gsMap3D_Report.html"
         )
 
     @ensure_path_exists
     def get_manhattan_html_plot_path(self, trait_name: str) -> Path:
         return Path(
-            f"{self.workdir}/{self.sample_name}/report/{trait_name}/manhattan_plot/{self.sample_name}_{trait_name}_Diagnostic_Manhattan_Plot.html"
-        )
+            f'{self.project_dir}/report/{self.sample_name}/{trait_name}/manhattan_plot/{self.sample_name}_{trait_name}_Diagnostic_Manhattan_Plot.html')
 
     @ensure_path_exists
     def get_GSS_plot_dir(self, trait_name: str) -> Path:
-        return Path(f"{self.workdir}/{self.sample_name}/report/{trait_name}/GSS_plot")
+        return Path(f'{self.project_dir}/report/{self.sample_name}/{trait_name}/GSS_plot')
 
     def get_GSS_plot_select_gene_file(self, trait_name: str) -> Path:
         return self.get_GSS_plot_dir(trait_name) / "plot_genes.csv"
@@ -947,22 +1008,23 @@ class ConfigWithAutoPaths:
 
     @ensure_path_exists
     def get_cauchy_result_file(self, trait_name: str) -> Path:
-        return Path(f"{self.cauchy_save_dir}/{self.sample_name}_{trait_name}.Cauchy.csv.gz")
+        return Path(
+            f"{self.cauchy_save_dir}/{self.sample_name}_{trait_name}.Cauchy.csv.gz"
+        )
 
     @ensure_path_exists
     def get_gene_diagnostic_info_save_path(self, trait_name: str) -> Path:
         return Path(
-            f"{self.workdir}/{self.sample_name}/report/{trait_name}/{self.sample_name}_{trait_name}_Gene_Diagnostic_Info.csv"
-        )
+            f'{self.project_dir}/report/{self.sample_name}/{trait_name}/{self.sample_name}_{trait_name}_Gene_Diagnostic_Info.csv')
 
     @ensure_path_exists
-    def get_gsMap_plot_save_dir(self, trait_name: str) -> Path:
-        return Path(f"{self.workdir}/{self.sample_name}/report/{trait_name}/gsMap_plot")
+    def get_gsMap3D_plot_save_dir(self, trait_name: str) -> Path:
+        return Path(f'{self.project_dir}/report/{self.sample_name}/{trait_name}/gsMap3D_plot')
 
-    def get_gsMap_html_plot_save_path(self, trait_name: str) -> Path:
+    def get_gsMap3D_html_plot_save_path(self, trait_name: str) -> Path:
         return (
-            self.get_gsMap_plot_save_dir(trait_name)
-            / f"{self.sample_name}_{trait_name}_gsMap_plot.html"
+                self.get_gsMap3D_plot_save_dir(trait_name)
+                / f"{self.sample_name}_{trait_name}_gsMap3D_plot.html"
         )
 
 
@@ -1651,7 +1713,7 @@ def run_all_mode_from_cli(args: argparse.Namespace):
 )
 def run_find_latent_representation_from_cli(args: argparse.Namespace):
     # Use the GNN implementation by default (gsMap version)
-    from gsMap.find_latent_representation_gnn import run_find_latent_representation_gnn
+    from gsMap.find_latent_representation import run_find_latent_representation
 
     config = get_dataclass_from_parser(args, FindLatentRepresentationsConfig)
     
@@ -1659,24 +1721,31 @@ def run_find_latent_representation_from_cli(args: argparse.Namespace):
     if not config.input_hdf5_path and not config.spe_file_list:
         raise ValueError("Either --input_hdf5_path or --spe_file_list must be provided")
     
-    run_find_latent_representation_gnn(config)
+    run_find_latent_representation(config)
 
 
 @register_cli(
     name="run_latent_to_gene",
-    description="Run Latent_to_gene \nEstimate gene marker gene scores for each spot by using latent representations from nearby spots",
+    description="Run Latent_to_gene \nEstimate gene marker scores for each spot by using latent representations from nearby spots",
     add_args_function=add_latent_to_gene_args,
 )
 def run_latent_to_gene_from_cli(args: argparse.Namespace):
+    from gsMap3D.latent_to_gene import run_latent_to_gene
+
     config = get_dataclass_from_parser(args, LatentToGeneConfig)
-    
-    # Use GNN-enhanced version if GCN smoothing is enabled
-    if config.use_gcn_smoothing:
-        from gsMap.latent_to_gene_gnn import run_latent_to_gene_gnn
-        run_latent_to_gene_gnn(config)
-    else:
-        from gsMap.latent_to_gene import run_latent_to_gene
-        run_latent_to_gene(config)
+    run_latent_to_gene(config)
+
+
+@register_cli(
+    name="run_max_pooling",
+    description="Run Max_pooling \nAdjust gene marker scores for each spot by using max pooling",
+    add_args_function=add_max_pooling_args,
+)
+def run_gene_padding_from_cli(args: argparse.Namespace):
+    from gsMap3D.max_pooling import run_max_pooling
+
+    config = get_dataclass_from_parser(args, MaxPoolingConfig)
+    run_max_pooling(config)
 
 
 @register_cli(
