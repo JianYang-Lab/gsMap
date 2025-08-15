@@ -98,6 +98,110 @@ def log_nb_positive(x: torch.Tensor, mu: torch.Tensor, theta: torch.Tensor, eps=
     return res
 
 
+def log_mixture_nb(
+    x: torch.Tensor,
+    mu_1: torch.Tensor,
+    mu_2: torch.Tensor,
+    theta_1: torch.Tensor,
+    theta_2: torch.Tensor,
+    pi_logits: torch.Tensor,
+    eps=1e-8,
+):
+    """
+    From scVI.
+    Log likelihood (scalar) of a minibatch according to a mixture nb model.
+
+    pi_logits is the probability (logits) to be in the first component.
+    For totalVI, the first component should be background.
+
+    Parameters
+    ----------
+    x
+        Observed data
+    mu_1
+        Mean of the first negative binomial component (has to be positive support) (shape: minibatch x features)
+    mu_2
+        Mean of the second negative binomial (has to be positive support) (shape: minibatch x features)
+    theta_1
+        First inverse dispersion parameter (has to be positive support) (shape: minibatch x features)
+    theta_2
+        Second inverse dispersion parameter (has to be positive support) (shape: minibatch x features)
+        If None, assume one shared inverse dispersion parameter.
+    pi_logits
+        Probability of belonging to mixture component 1 (logits scale)
+    eps
+        Numerical stability constant
+    """
+    if theta_2 is not None:
+        log_nb_1 = log_nb_positive(x, mu_1, theta_1)
+        log_nb_2 = log_nb_positive(x, mu_2, theta_2)
+    # this is intended to reduce repeated computations
+    else:
+        theta = theta_1
+        if theta.ndimension() == 1:
+            theta = theta.view(
+                1, theta.size(0)
+            )  # In this case, we reshape theta for broadcasting
+
+        log_theta_mu_1_eps = torch.log(theta + mu_1 + eps)
+        log_theta_mu_2_eps = torch.log(theta + mu_2 + eps)
+        lgamma_x_theta = torch.lgamma(x + theta)
+        lgamma_theta = torch.lgamma(theta)
+        lgamma_x_plus_1 = torch.lgamma(x + 1)
+
+        log_nb_1 = (
+            theta * (torch.log(theta + eps) - log_theta_mu_1_eps)
+            + x * (torch.log(mu_1 + eps) - log_theta_mu_1_eps)
+            + lgamma_x_theta
+            - lgamma_theta
+            - lgamma_x_plus_1
+        )
+        log_nb_2 = (
+            theta * (torch.log(theta + eps) - log_theta_mu_2_eps)
+            + x * (torch.log(mu_2 + eps) - log_theta_mu_2_eps)
+            + lgamma_x_theta
+            - lgamma_theta
+            - lgamma_x_plus_1
+        )
+
+    logsumexp = torch.logsumexp(torch.stack(
+        (log_nb_1, log_nb_2 - pi_logits)), dim=0)
+    softplus_pi = F.softplus(-pi_logits)
+
+    log_mixture_nb = logsumexp - softplus_pi
+
+    return log_mixture_nb
+
+
+def _convert_mean_disp_to_counts_logits(mu, theta, eps=1e-6):
+    r"""
+    From scVI.
+    NB parameterizations conversion.
+
+    Parameters
+    ----------
+    mu
+        mean of the NB distribution.
+    theta
+        inverse overdispersion.
+    eps
+        constant used for numerical log stability. (Default value = 1e-6)
+
+    Returns
+    -------
+    type
+        the number of failures until the experiment is stopped
+        and the success probability.
+    """
+    if not (mu is None) == (theta is None):
+        raise ValueError(
+            "If using the mu/theta NB parameterization, both parameters must be specified"
+        )
+    logits = (mu + eps).log() - (theta + eps).log()
+    total_count = theta
+    return total_count, logits
+
+
 def _convert_counts_logits_to_mean_disp(total_count, logits):
     """
     From scVI.
@@ -225,6 +329,11 @@ class NegativeBinomial(Distribution):
         counts = Poisson(l_train).sample()
         return counts
 
+    @torch.inference_mode()
+    def rsample(self, sample_shape: Optional[Union[torch.Size, Tuple]] = None):
+        """Sample from the distribution."""
+        return self.sample(sample_shape=sample_shape)
+
     def log_prob(self, value: torch.Tensor) -> torch.Tensor:  # noqa: D102
         if self._validate_args:
             try:
@@ -240,6 +349,24 @@ class NegativeBinomial(Distribution):
     def _gamma(self):
         return _gamma(self.theta, self.mu)
 
+    def pearson_residuals(self, x: torch.Tensor) -> torch.Tensor:
+        r"""
+        Compute the Pearson residuals.
+
+        Parameters
+        ----------
+        x
+            Observed data.
+
+        Returns
+        -------
+        type
+            Pearson residuals.
+        """
+        mean = self.mean
+        variance = self.variance
+        return (x - mean) / torch.sqrt(variance)
+
 
 class ZeroInflatedNegativeBinomial(NegativeBinomial):
     r"""
@@ -252,6 +379,11 @@ class ZeroInflatedNegativeBinomial(NegativeBinomial):
     the experiment is stopped and `probs` the success probability. (2), (`mu`, `theta`)
     parameterization, which is the one used by scvi-tools. These parameters respectively
     control the mean and inverse dispersion of the distribution.
+
+    In the (`mu`, `theta`) parameterization, samples from the negative binomial are generated as follows:
+
+    1. :math:`w \sim \textrm{Gamma}(\underbrace{\theta}_{\text{shape}}, \underbrace{\theta/\mu}_{\text{rate}})`
+    2. :math:`x \sim \textrm{Poisson}(w)`
 
     Parameters
     ----------
@@ -334,6 +466,19 @@ class ZeroInflatedNegativeBinomial(NegativeBinomial):
         samp_ = torch.where(
             is_zero, torch.tensor(0.0, dtype=torch.float32).cuda(), samp
         )
+        return samp_
+
+    @torch.inference_mode()
+    def rsample(  # type: ignore
+        self,
+        sample_shape: Optional[Union[torch.Size, Tuple]] = None,
+    ) -> torch.Tensor:
+        """Sample from the distribution."""
+        sample_shape = sample_shape or torch.Size()
+        samp = super().rsample(sample_shape=sample_shape)
+        is_zero = torch.rand_like(samp) <= self.zi_probs
+        samp_ = torch.where(is_zero, torch.tensor(
+            0.0, dtype=torch.float32), samp)
         return samp_
 
     def log_prob(self, value: torch.Tensor) -> torch.Tensor:

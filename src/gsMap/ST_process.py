@@ -1,5 +1,6 @@
 import torch
 import scanpy as sc
+import sys
 import torch.nn.functional as F
 import numpy as np
 import pandas as pd
@@ -13,6 +14,8 @@ from gsMap.GNN.GCN import GCN, build_spatial_graph
 
 logger = logging.getLogger(__name__)
 
+# sys.path.append("/storage/yangjianLab/songliyang/SpatialData/gsMap_software/gsMap_V2/GNN")
+# from GCN import GCN, build_spatial_graph
 
 def find_common_hvg(spe_file_list, params):
     """
@@ -31,12 +34,14 @@ def find_common_hvg(spe_file_list, params):
     logger.info("Finding highly variable genes (HVGs)...")
     for st_file in tqdm(spe_file_list, desc="Finding common genes"):
         adata_temp = sc.read_h5ad(st_file)
+        # sc.pp.filter_genes(adata_temp, min_counts=1)
         
         # Filter out mitochondrial and hemoglobin genes
         gene_keep = ~adata_temp.var_names.str.match(re.compile(r'^(HB.-|MT-)', re.IGNORECASE))
         adata_temp = adata_temp[:,gene_keep].copy()
         
         # Set data layer
+        # print(params.data_layer)
         if params.data_layer not in adata_temp.layers:
             if adata_temp.X is not None and np.issubdtype(
                 adata_temp.X.dtype,
@@ -113,6 +118,7 @@ def find_common_hvg(spe_file_list, params):
         )
     
     hvg = df.iloc[: params.feat_cell,].index.tolist()
+    # df.to_parquet('/storage/yangjianLab/songliyang/SpatialData/gsMap_analysis/MouseEmbryo_spateo/E11.5/E11_heart_hvg.parquet')
     
     # Find the number of sampling cells for each batch
     total_cell = np.sum(cell_number)
@@ -142,12 +148,14 @@ def find_common_hvg(spe_file_list, params):
             raise ValueError("Homologs file must have at least two columns: one for the species and one for the human gene symbol.")
         homologs.columns = [params.species, 'HUMAN_GENE_SYM']
         homologs.set_index(params.species, inplace=True)
-        hvg = [gene for gene in hvg if gene in homologs.index]
-        logger.info(f"Retained {len(hvg)} HVGs after homolog filtering.")
+        common_genes = np.intersect1d(common_genes, homologs.index)
+        gene_name_dict = dict(zip(common_genes,homologs.loc[common_genes].HUMAN_GENE_SYM.values))
+    else:
+        gene_name_dict = dict(zip(common_genes,common_genes))
+    return hvg, n_cell_used, percent_annotation, gene_name_dict
 
-    return hvg, n_cell_used, percent_annotation
 
-
+# prepare the trainning data
 class TrainingData(object):
     """
     Managing and processing training data for graph-based models.
@@ -299,9 +307,10 @@ class InferenceData(object):
     def infer_embedding_single(self, st_id, st_file) -> Path:
         st_name = (Path(st_file).name).split(".h5ad")[0]
         logger.info(f"Infering cell embeddings for {st_name}...")
-        
-        # Load data
+
+        # Load the ST data
         adata = sc.read_h5ad(st_file)
+        # sc.pp.filter_genes(adata, min_counts=1)
         
         # Set data layers
         if not hasattr(adata, 'layers') or self.params.data_layer not in adata.layers:
@@ -314,60 +323,61 @@ class InferenceData(object):
         else:
             adata.X = adata.layers[self.params.data_layer]
         
-        # Get expression array and apply GCN
-        if self.params.species is not None:
-            homologs = pd.read_csv(self.params.homolog_file, sep='\t')
-            if homologs.shape[1] < 2:
-                raise ValueError("Homologs file must have at least two columns.")
-            homologs.columns = [self.params.species, 'HUMAN_GENE_SYM']
-            homologs.set_index(self.params.species, inplace=True)
-            hvg_filtered = [gene for gene in self.hvg if gene in adata.var_names and gene in homologs.index]
-        else:
-            hvg_filtered = [gene for gene in self.hvg if gene in adata.var_names]
-        
-        expression_array = torch.Tensor(adata[:, hvg_filtered].X.toarray())
+        # print(adata.shape)
+        # Convert expression data to torch.Tensor
+        expression_array = torch.Tensor(adata[:, self.hvg].X.toarray())
+
+        # Graph convolution of expression array
         edge, _ = build_spatial_graph(
             adata,
             self.params.n_neighbors,
-            self.params.spatial_key,
+            self.params.spatial_key
         )
         expression_array_gcn = self.gcov(expression_array, edge)
-        
-        # Create batch tensor
-        batch_tensor = torch.full((adata.n_obs,), st_id).long()
-        
-        # Create dataset and dataloader
-        dataset = TensorDataset(expression_array, expression_array_gcn, batch_tensor)
-        dataloader = DataLoader(dataset, batch_size=256, shuffle=False)
-        
-        # Inference
-        self.model.eval()
-        latent_list = []
-        latent_indv_list = []
-        
-        with torch.no_grad():
-            for batch in dataloader:
-                expr, expr_gcn, batch_ids = batch
-                expr = expr.to(self.device)
-                expr_gcn = expr_gcn.to(self.device)
-                batch_ids = batch_ids.to(self.device)
+
+        # Build batch vector as one-hot encoding
+        n_cell = adata.n_obs
+        batch_indices = torch.full((n_cell,), st_id, dtype=torch.long)
+
+        # Prepare the evaluation DataLoader
+        dataset = TensorDataset(expression_array_gcn,expression_array, batch_indices)
+        Inference_loader = DataLoader(dataset=dataset, batch_size=512, shuffle=False)
+
+        # Inference process
+        emb, emb_gcn, class_prob = [], [], []
+
+        for (
+            expression_gcn_focal,
+            expression_focal,
+            batch_indices_fcocal,
+        ) in Inference_loader:
+            expression_gcn_focal = expression_gcn_focal.to(self.device)
+            expression_focal = expression_focal.to(self.device)
+            batch_indices_fcocal = batch_indices_fcocal.to(self.device)
+
+            self.model.eval()
+            with torch.no_grad():
+                mu_focal = self.model.encode(
+                    [expression_focal, expression_gcn_focal], batch_indices_fcocal
+                )
+                _,x_class, _, _ = self.model(
+                    [expression_focal, expression_gcn_focal], batch_indices_fcocal
+                )
                 
-                # Get embeddings from model
-                z, z_indv = self.model.encode([expr, expr_gcn], batch_ids)
-                latent_list.append(z.cpu().numpy())
-                latent_indv_list.append(z_indv.cpu().numpy())
+                class_prob.append(x_class.cpu().numpy())
+                emb.append(mu_focal[0].cpu().numpy())
+                emb_gcn.append(mu_focal[1].cpu().numpy())
+
+        # Concatenate results and store embeddings in adata
+        emb = np.concatenate(emb, axis=0)
+        emb_gcn = np.concatenate(emb_gcn, axis=0)
+        class_prob = np.concatenate(class_prob, axis=0)
         
-        # Concatenate results
-        latent = np.vstack(latent_list)
-        latent_indv = np.vstack(latent_indv_list)
+        # if self.label_name is not None:
+        #     class_prob = pd.DataFrame(softmax(class_prob,axis=1), columns=self.label_name,index=adata.obs_names)
+        #     adata.obsm["class_prob"] = class_prob
+            
+        adata.obsm["emb"] = emb
+        adata.obsm["emb_gcn"] = emb_gcn
         
-        # Save embeddings to adata
-        adata.obsm['latent_GVAE'] = latent
-        adata.obsm['latent_GVAE_indv'] = latent_indv
-        
-        # Save the updated adata
-        output_path = self.params.latent_dir / f"{st_name}_with_latent.h5ad"
-        adata.write(output_path)
-        
-        logger.info(f"Saved embeddings for {st_name} to {output_path}")
-        return output_path
+        return adata

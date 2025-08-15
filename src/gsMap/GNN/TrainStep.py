@@ -5,11 +5,14 @@ import torch.nn.functional as F
 
 from gsMap.GNN.Loss import rec_loss, ce_loss
 
+# import sys
+# sys.path.append("/storage/yangjianLab/songliyang/SpatialData/gsMap_software/gsMap_V2/GNN")
+# from Loss import rec_loss, ce_loss
 
 class EarlyStopping:
     """Early stops the training if validation loss doesn't improve after a given patience."""
 
-    def __init__(self, patience=7, delta=0, path=None):
+    def __init__(self, patience=7,delta=0, path=None):
 
         self.patience = patience
         self.counter = 0
@@ -68,11 +71,11 @@ class ModelTrain(object):
         self.train_loader = train_loader
         self.val_loader = val_loader
 
-    def compute_loss(self, x_hat, x, log_theata, zi_logit, x_class, labels):
+    def compute_loss(self,x_hat,x,log_theata,zi_logit,x_class,labels):
         if self.mode == 'reconstruction':
             loss = 0
             for id in range(len(x_hat)):
-                loss_rec = rec_loss(x_hat[id], x, log_theata, zi_logit[id], self.distribution)
+                loss_rec = rec_loss(x_hat[id],x,log_theata,zi_logit[id],self.distribution)
                 loss_kld = self.model.encoder[id].kl_loss()
                 loss = loss + loss_rec + loss_kld
                 
@@ -83,38 +86,38 @@ class ModelTrain(object):
 
     def _make_train_step_fn(self):
         # Builds function that performs a step in the train loop
-        def perform_train_step_fn(x_gcn, ST_batches, x, labels):
+        def perform_train_step_fn(x_gcn,ST_batches, x, labels):
 
             self.model.train()
 
-            x_hat, x_class, zi_logit, _ = self.model([x, x_gcn], ST_batches)
+            x_hat, x_class, zi_logit, _ = self.model([x,x_gcn], ST_batches)
             log_theata = self.model.logtheta[ST_batches]
-            loss = self.compute_loss(x_hat, x, log_theata, zi_logit, x_class, labels)
+            loss = self.compute_loss(x_hat,x, log_theata, zi_logit,x_class,labels)
             
             loss.backward()
             self.optimizer.step()
             self.optimizer.zero_grad()
 
             return loss.item()
-
+                
         return perform_train_step_fn
-
+    
     def _make_val_step_fn(self):
         # Builds function that performs a step in the validation loop
-        def perform_val_step_fn(x_gcn, ST_batches, x, labels):
+        def perform_val_step_fn(x_gcn,ST_batches, x, labels):
             
             self.model.eval()
-            
-            with torch.no_grad():
-                x_hat, x_class, zi_logit, _ = self.model([x, x_gcn], ST_batches)
-                log_theata = self.model.logtheta[ST_batches]
-                loss = self.compute_loss(x_hat, x, log_theata, zi_logit, x_class, labels)
+
+            x_hat, x_class, zi_logit, _ = self.model([x,x_gcn], ST_batches)
+            log_theata = self.model.logtheta[ST_batches]
+            loss = self.compute_loss(x_hat,x, log_theata, zi_logit,x_class,labels)
 
             return loss.item()
 
         return perform_val_step_fn
-
-    def _mini_batch(self, validation=False):
+            
+    def _mini_batch(self, epoch_idx, n_epochs, validation=False):
+        # The mini-batch can be used with both loaders
         if validation:
             data_loader = self.val_loader
             step_fn = self.val_step_fn
@@ -122,54 +125,57 @@ class ModelTrain(object):
             data_loader = self.train_loader
             step_fn = self.train_step_fn
 
-        if data_loader is None:
-            return None
-
+        # mini-batch loop
         mini_batch_losses = []
-        for x_gcn, ST_batches, x, labels in data_loader:
+        batch_iter = len(self.train_loader)    
+
+        for batch_idx, (x_gcn,ST_batches,x,labels) in enumerate(data_loader):
+            # p = float(batch_idx + epoch_idx * batch_iter) / (n_epochs * batch_iter)
+            # grl_lambda = 2. / (1. + np.exp(-10 *p)) -1
+
             x_gcn = x_gcn.to(self.device)
-            ST_batches = ST_batches.to(self.device).long()
+            ST_batches = ST_batches.long().to(self.device)
             x = x.to(self.device)
-            labels = labels.to(self.device).long()
+            labels = labels.to(self.device)
 
-            mini_batch_loss = step_fn(x_gcn, ST_batches, x, labels)
+            mini_batch_loss = step_fn(x_gcn,ST_batches,x,labels)
             mini_batch_losses.append(mini_batch_loss)
+            # mini_batch_lossses_rgl.append(mini_batch_loss_rgl)
 
-        loss = np.mean(mini_batch_losses)
-        return loss
+        return np.mean(mini_batch_losses)
 
-    def set_seed(self, seed=42):
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
-        torch.manual_seed(seed)
-        np.random.seed(seed)
 
-    def train(self, n_epochs, patience=10, seed=42):
-        self.set_seed(seed)
-        early_stopping = EarlyStopping(patience=patience, path=self.model_path)
+    def _set_requires_grad(self, module_group, mode):
+        for name, param_group in module_group.items():
+            requires_grad = (mode == name)
+            for param in param_group.parameters():
+                param.requires_grad = requires_grad
+    
+    
+    def train(self, n_epochs,patience):
+        loss_track = EarlyStopping(patience)
         
-        for epoch in tqdm(range(n_epochs), desc='Training'):
-            self.losses.append(self._mini_batch(validation=False))
+        self._set_requires_grad(self.model.decoder, self.mode)
 
+        pbar = tqdm(range(n_epochs), desc=f'LGCN train ({self.mode})', total=n_epochs)
+        for epoch in pbar:
+
+            # Performs training
+            train_loss = self._mini_batch(epoch,n_epochs,validation=False)
+
+            # Performs evaluation
             with torch.no_grad():
-                self.val_losses.append(self._mini_batch(validation=True))
-                
-            if (epoch + 1) % 100 == 0:
-                print(f'Epoch {epoch+1}/{n_epochs}, Loss: {self.losses[-1]:.4f}, Val Loss: {self.val_losses[-1]:.4f}')
-                
-            # Early stopping
-            early_stopping(self.val_losses[-1])
-            if early_stopping.early_stop:
-                print(f"Early stopping at epoch {epoch+1}")
-                break
-                
-            # Save best model
-            if self.val_losses[-1] <= min(self.val_losses):
-                torch.save(self.model.state_dict(), self.model_path)
+                val_loss = self._mini_batch(epoch,n_epochs,validation=True)
 
-    def predict(self, x):
-        self.model.eval()
-        with torch.no_grad():
-            self.model.to(self.device)
-            output = self.model(x.to(self.device))
-        return output
+            # Save the best model
+            if loss_track.best_score < -val_loss:
+                torch.save(self.model.state_dict(),self.model_path)
+
+            # Update validation loss
+            loss_track(val_loss)
+            if loss_track.early_stop:
+                print(f'Stop training, as {self.mode} validation loss has not decreased for {patience} consecutive steps.')
+                break
+
+            pbar.set_postfix({'train loss': f'{train_loss.item():.4f}',
+                            'validation loss': f'{val_loss.item():.4f}'})

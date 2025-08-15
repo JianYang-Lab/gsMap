@@ -58,11 +58,9 @@ class StEmbeding(nn.Module):
         # Build encoders for each modality
         self.encoder = nn.ModuleList()
         for eid in range(self.z_num): 
-            # Use indexed hidden_size if it's a list, otherwise use the same value
-            h_size = hidden_size[eid] if isinstance(hidden_size, list) and len(hidden_size) > eid else hidden_size
             self.encoder.append(
                 Encoder(self.input_size[eid],
-                        h_size,
+                        hidden_size,
                         embedding_size,
                         self.batch_embedding_size,
                         module_dim,
@@ -76,11 +74,9 @@ class StEmbeding(nn.Module):
 
         # Build decoders for reconstruction and classification
         self.decoder = nn.ModuleDict()
-        # Use first hidden_size if it's a list
-        h_size_decoder = hidden_size[0] if isinstance(hidden_size, list) else hidden_size
         for decoder_type in ['reconstruction', 'classification']:
             self.decoder[decoder_type] = Decoder(out_put_size,
-                                                 h_size_decoder,
+                                                 hidden_size,
                                                  embedding_size,
                                                  self.batch_embedding_size,
                                                  class_size,
@@ -121,15 +117,9 @@ class StEmbeding(nn.Module):
         return self.decoder['classification'](z, batch)
 
     def encode(self, x_list, batch):
-        """Get latent representations"""
         batch = self._process_batch(batch)
         z_list = []
         for eid in range(self.z_num):  
             z = self.encoder[eid](x_list[eid], batch)
             z_list.append(z)
-        
-        # Return both concatenated and individual representations
-        z_concat = torch.cat(z_list, dim=1)
-        z_indv = z_list[0] if len(z_list) == 1 else z_list[1]  # Use expression encoder output
-        
-        return z_concat, z_indv
+        return z_list

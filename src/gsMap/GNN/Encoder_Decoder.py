@@ -7,6 +7,10 @@ from torch.distributions import kl_divergence as kl
 from gsMap.GNN.GeneFormer import GeneModuleFormer
 from gsMap.GNN.GCN import full_block
 
+# sys.path.append("/storage/yangjianLab/songliyang/SpatialData/gsMap_software/gsMap_V2/GNN")
+# from GeneFormer import GeneModuleFormer
+# from GCN import full_block
+
 
 class transform(nn.Module):
     """

@@ -238,52 +238,132 @@ def add_shared_args(parser):
 
 def add_find_latent_representations_args(parser):
     add_shared_args(parser)
+    
+    # File paths and general settings
     parser.add_argument(
-        "--input_hdf5_path", required=True, type=str, help="Path to the input HDF5 file."
+        "--input_hdf5_path", type=str, help="Path to single input HDF5 file."
     )
     parser.add_argument(
-        "--data_layer",
-        type=str,
-        default="counts",
-        required=True,
-        help='Data layer for gene expression (e.g., "count", "counts", "log1p").',
+        "--spe_file_list", type=str, help="List of input ST (.h5ad) files for multi-file mode."
     )
     parser.add_argument(
-        "--annotation", type=str, default=None, help="Name of the annotation in adata.obs to use."
-    )
-    parser.add_argument("--epochs", type=int, default=300, help="Number of training epochs.")
-    parser.add_argument(
-        "--feat_hidden1", type=int, default=256, help="Neurons in the first hidden layer."
+        "--data_layer", type=str, default="count", help="Gene expression data layer."
     )
     parser.add_argument(
-        "--feat_hidden2", type=int, default=128, help="Neurons in the second hidden layer."
+        "--spatial_key", type=str, default="spatial",
+        help="Spatial key in adata.obsm storing spatial coordinates."
     )
     parser.add_argument(
-        "--gat_hidden1", type=int, default=64, help="Units in the first GAT hidden layer."
+        "--annotation", type=str, default=None, help="Annotation in adata.obs to use."
+    )
+    
+    # Feature extraction parameters (LGCN)
+    parser.add_argument(
+        "--n_neighbors", type=int, default=10, help="Number of neighbors for LGCN."
     )
     parser.add_argument(
-        "--gat_hidden2", type=int, default=30, help="Units in the second GAT hidden layer."
-    )
-    parser.add_argument("--p_drop", type=float, default=0.1, help="Dropout rate.")
-    parser.add_argument("--gat_lr", type=float, default=0.001, help="Learning rate for the GAT.")
-    parser.add_argument("--n_neighbors", type=int, default=11, help="Number of neighbors for GAT.")
-    parser.add_argument(
-        "--n_comps", type=int, default=300, help="Number of principal components for PCA."
+        "--K", type=int, default=3, help="Graph convolution depth for LGCN."
     )
     parser.add_argument(
-        "--weighted_adj", action="store_true", help="Use weighted adjacency in GAT."
+        "--feat_cell", type=int, default=2000,
+        help="Number of top variable features to retain."
     )
     parser.add_argument(
-        "--convergence_threshold", type=float, default=1e-4, help="Threshold for convergence."
+        "--pearson_residual", action="store_true", help="Take the residuals of the input data."
     )
     parser.add_argument(
-        "--hierarchically",
-        action="store_true",
-        help="Enable hierarchical latent representation finding.",
+        "--pearson_residuals", action="store_true", help="Take the residuals of the input data (alias)."
+    )
+    
+    # Model dimension parameters
+    parser.add_argument(
+        "--hidden_size", type=int, default=128, help="Units in the first hidden layer."
     )
     parser.add_argument(
-        "--pearson_residuals", action="store_true", help="Using the pearson residuals."
+        "--embedding_size", type=int, default=32, help="Size of the latent embedding layer."
     )
+    parser.add_argument(
+        "--batch_embedding_size", type=int, default=32, help="Size of batch embedding."
+    )
+    
+    # Transformer module parameters
+    parser.add_argument(
+        "--use_tf", action="store_true", help="Enable transformer module."
+    )
+    parser.add_argument(
+        "--module_dim", type=int, default=30,
+        help="Dimensionality of transformer modules."
+    )
+    parser.add_argument(
+        "--hidden_gmf", type=int, default=128,
+        help="Hidden units for global mean feature extractor."
+    )
+    parser.add_argument(
+        "--n_modules", type=int, default=16, help="Number of transformer modules."
+    )
+    parser.add_argument(
+        "--nhead", type=int, default=4, help="Number of attention heads in transformer."
+    )
+    parser.add_argument(
+        "--n_enc_layer", type=int, default=2, help="Number of transformer encoder layers."
+    )
+    
+    # Training parameters
+    parser.add_argument(
+        "--distribution", type=str, choices=["nb", "zinb", "gaussian"], default="nb",
+        help='Distribution type for loss calculation.'
+    )
+    parser.add_argument(
+        "--n_cell_training", type=int, default=100000,
+        help="Number of cells used for training."
+    )
+    parser.add_argument(
+        "--batch_size", type=int, default=1024, help="Batch size for training."
+    )
+    parser.add_argument(
+        "--itermax", type=int, default=100, help="Maximum number of training iterations."
+    )
+    parser.add_argument(
+        "--patience", type=int, default=10, help="Early stopping patience."
+    )
+    parser.add_argument(
+        "--two_stage", type=bool, default=True,
+        help="Tune the cell embeddings based on the provided annotation"
+    )
+    parser.add_argument(
+        "--do_sampling", type=bool, default=True, help="Down-sampling cells in training."
+    )
+    parser.add_argument(
+        "--lr", type=float, default=1e-3, help="Learning rate."
+    )
+    
+    # Homologs transformation
+    parser.add_argument(
+        "--homolog_file", type=str, help="Path to homologous gene conversion file (optional)."
+    )
+    parser.add_argument(
+        "--species", type=str, help="Species name for homolog conversion."
+    )
+    
+    # Zarr storage
+    parser.add_argument(
+        "--zarr_group_path", type=str, help="Path to zarr group for cross-slice storage."
+    )
+    
+    # Legacy parameters (kept for backward compatibility)
+    parser.add_argument("--epochs", type=int, help="Legacy: Number of training epochs.")
+    parser.add_argument("--feat_hidden1", type=int, help="Legacy: Neurons in first hidden layer.")
+    parser.add_argument("--feat_hidden2", type=int, help="Legacy: Neurons in second hidden layer.")
+    parser.add_argument("--gat_hidden1", type=int, help="Legacy: Units in first GAT hidden layer.")
+    parser.add_argument("--gat_hidden2", type=int, help="Legacy: Units in second GAT hidden layer.")
+    parser.add_argument("--p_drop", type=float, help="Legacy: Dropout rate.")
+    parser.add_argument("--gat_lr", type=float, help="Legacy: Learning rate for GAT.")
+    parser.add_argument("--n_comps", type=int, help="Legacy: Number of principal components.")
+    parser.add_argument("--weighted_adj", action="store_true", help="Legacy: Use weighted adjacency.")
+    parser.add_argument("--convergence_threshold", type=float, help="Legacy: Threshold for convergence.")
+    parser.add_argument("--hierarchically", action="store_true", help="Legacy: Enable hierarchical mode.")
+    parser.add_argument("--input_pca", action="store_true", help="Legacy: Use PCA as input.")
+    parser.add_argument("--gcn_decay", type=float, help="Legacy: GCN decay.")
 
 
 def chrom_choice(value):
@@ -313,25 +393,56 @@ def get_dataclass_from_parser(args: argparse.Namespace, data_class: dataclass):
 
 def add_latent_to_gene_args(parser):
     add_shared_args(parser)
-
+    
     parser.add_argument(
-        "--input_hdf5_path",
-        type=str,
-        default=None,
-        help="Path to the input HDF5 file with latent representations, if --latent_representation is specified.",
+        "--input_hdf5_path", type=str, default=None,
+        help="Path to the input HDF5 file with latent representations."
     )
     parser.add_argument(
-        "--no_expression_fraction", action="store_true", help="Skip expression fraction filtering."
+        "--annotation", type=str, default=None, help="Annotation in adata.obs to use."
     )
     parser.add_argument(
-        "--latent_representation",
-        type=str,
-        default=None,
-        help="Type of latent representation. This should exist in the h5ad obsm.",
+        "--no_expression_fraction", action="store_true",
+        help="Skip expression fraction filtering."
     )
-    parser.add_argument("--num_neighbour", type=int, default=21, help="Number of neighbors.")
     parser.add_argument(
-        "--num_neighbour_spatial", type=int, default=101, help="Number of spatial neighbors."
+        "--latent_representation", type=str, default="emb_gcn",
+        help="Type of latent representation."
+    )
+    parser.add_argument(
+        "--latent_representation_indv", type=str, default="emb",
+        help="Type of individual latent representation."
+    )
+    parser.add_argument(
+        "--spatial_key", type=str, default="spatial",
+        help="Spatial key in adata.obsm storing spatial coordinates."
+    )
+    parser.add_argument(
+        "--num_anchor", type=int, default=51, help="Number of anchor points."
+    )
+    parser.add_argument(
+        "--num_neighbour", type=int, default=21, help="Number of neighbors."
+    )
+    parser.add_argument(
+        "--num_neighbour_spatial", type=int, default=201,
+        help="Number of spatial neighbors."
+    )
+    parser.add_argument(
+        "--use_w", action="store_true", default=False,
+        help="Using section specific weights to account for across section batch effect."
+    )
+    
+    # GNN smoothing parameters
+    parser.add_argument(
+        "--use_gcn_smoothing", action="store_true",
+        help="Enable GCN smoothing in latent to gene."
+    )
+    parser.add_argument(
+        "--gcn_K", type=int, default=1, help="Number of GCN hops for smoothing."
+    )
+    parser.add_argument(
+        "--n_neighbors_gcn", type=int, default=10,
+        help="Number of neighbors for GCN smoothing."
     )
     parser.add_argument(
         "--homolog_file",
@@ -947,152 +1058,69 @@ class CreateSliceMeanConfig:
 
 @dataclass
 class FindLatentRepresentationsConfig(ConfigWithAutoPaths):
-    # Input paths
-    input_hdf5_path: str = None
-    spe_file_list: str | list = None  # Can be a file path, directory, or list
-    
-    # Basic parameters
-    annotation: str = None
+    # File paths and general settings
+    spe_file_list: str
+    workdir: str
     data_layer: str = "count"
+    annotation: str = None
     spatial_key: str = "spatial"
-    
-    # GNN model architecture (from gsMap3D)
-    hidden_size: list = None  # Default [512, 256]
-    embedding_size: int = 64
-    batch_embedding_size: int = 64
-    module_dim: int = 8
-    hidden_gmf: int = 256
+
+    # Feature extraction parameters (LGCN)
+    n_neighbors: int = 10
+    K: int = 3
+    feat_cell: int = 2000
+    pearson_residual: bool = False
+
+    # Model dimension parameters
+    hidden_size: int = 128
+    embedding_size: int = 32
+
+    # Transformer module parameters
+    use_tf: bool = True
+    module_dim: int = 30
+    hidden_gmf: int = 128
     n_modules: int = 16
-    nhead: int = 8
-    n_enc_layer: int = 3
-    
+    nhead: int = 4
+    n_enc_layer: int = 2
+
     # Training parameters
-    itermax: int = 5000
-    patience: int = 100
-    batch_size: int = 256
-    lr: float = 1e-3
-    
-    # Data processing
+    distribution: str = "nb"
     n_cell_training: int = 100000
-    feat_cell: int = 3000
+    batch_size: int = 1024
+    itermax: int = 100
+    patience: int = 10
+    two_stage: bool = True
     do_sampling: bool = True
-    
-    # GNN specific
-    K: int = 1  # Number of GCN hops
-    n_neighbors: int = 15  # For spatial graph
-    
-    # Distribution and model settings
-    distribution: str = "nb"  # nb, zinb, or gaussian
-    use_tf: bool = False  # Use transformer
-    two_stage: bool = False  # Two-stage training
-    
-    # Species conversion
     homolog_file: str = None
-    species: str = None
-    
-    # Zarr storage
-    zarr_group_path: str | Path = None
-    
-    # Legacy parameters (kept for compatibility)
-    epochs: int = 300
-    feat_hidden1: int = 256
-    feat_hidden2: int = 128
-    gat_hidden1: int = 64
-    gat_hidden2: int = 30
-    p_drop: float = 0.1
-    gat_lr: float = 0.001
-    gcn_decay: float = 0.01
-    label_w: float = 1
-    rec_w: float = 1
-    input_pca: bool = True
-    n_comps: int = 300
-    weighted_adj: bool = False
-    nheads: int = 3
-    var: bool = False
-    convergence_threshold: float = 1e-4
-    hierarchically: bool = False
-    pearson_residuals: bool = False
 
     def __post_init__(self):
-        # Set default hidden size if not provided
-        if self.hidden_size is None:
-            self.hidden_size = [512, 256]
-        
-        # Handle zarr path
-        if self.zarr_group_path:
-            self.zarr_group_path = Path(self.zarr_group_path)
-        
-        # Validate input
-        if not self.input_hdf5_path and not self.spe_file_list:
-            # Try to use default path from ConfigWithAutoPaths
-            if hasattr(self, 'hdf5_path') and self.hdf5_path:
-                self.input_hdf5_path = self.hdf5_path
-            else:
-                raise ValueError("Either input_hdf5_path or spe_file_list must be provided")
-        
-        # Legacy compatibility for hierarchical mode
-        if self.hierarchically:
-            if self.annotation is None:
-                raise ValueError("annotation must be provided if hierarchically is True.")
+        super().__post_init__()
+        verify_homolog_file_format(self)
+        if self.annotation and self.two_stage:
             logger.info(
-                "------Hierarchical mode is enabled. This will find the latent representations within each annotation."
-            )
-
-        # remind for not providing annotation
-        if self.annotation is None:
-            logger.warning(
-                "annotation is not provided. This will find the latent representations for the whole dataset."
+                f"------Finding cell embeddings with reconstruction loss, followed by tuning based on annotation: {
+                    self.annotation}."
             )
         else:
-            logger.info(f"------Find latent representations for {self.annotation}...")
-
+            logger.info(
+                f"------Finding cell embeddings using only reconstruction loss."
+            )
 
 @dataclass
 class LatentToGeneConfig(ConfigWithAutoPaths):
-    # input_hdf5_with_latent_path: str
-    # output_feather_path: str
-    input_hdf5_path: str | Path = None
     no_expression_fraction: bool = False
-    latent_representation: str = None
+    latent_representation: str = "emb"
+    latent_representation_indv: str = "emb_gcn"
+    spatial_key: str = 'spatial'
     num_neighbour: int = 21
-    num_neighbour_spatial: int = 101
-    homolog_file: str = None
+    num_anchor: int = 51
+    num_neighbour_spatial: int = 201
     gM_slices: str = None
     annotation: str = None
-    species: str = None
-    # GNN-specific parameters
-    use_gcn_smoothing: bool = False
-    gcn_K: int = 1
-    n_neighbors_gcn: int = 10
-    latent_representation_indv: str = None
-    num_anchor: int = 51
-    spatial_key: str = 'spatial'
-    zarr_group_path: str | Path = None
+    use_w: bool = False
 
     def __post_init__(self):
-        if self.input_hdf5_path is None:
-            self.input_hdf5_path = self.hdf5_with_latent_path
-            assert self.input_hdf5_path.exists(), (
-                f"{self.input_hdf5_path} does not exist. Please run FindLatentRepresentations first."
-            )
-        else:
-            assert Path(self.input_hdf5_path).exists(), f"{self.input_hdf5_path} does not exist."
-            # copy to self.hdf5_with_latent_path
-            import shutil
-
-            shutil.copy2(self.input_hdf5_path, self.hdf5_with_latent_path)
-
-        if self.latent_representation is not None:
-            logger.info(f"Using the provided latent representation: {self.latent_representation}")
-        else:
-            self.latent_representation = "latent_GVAE"
-            logger.info(f"Using default latent representation: {self.latent_representation}")
-
-        if self.gM_slices is not None:
-            assert Path(self.gM_slices).exists(), f"{self.gM_slices} does not exist."
-            logger.info(f"Using the provided slice mean file: {self.gM_slices}.")
-
-        verify_homolog_file_format(self)
+        super().__post_init__()
 
 
 def verify_homolog_file_format(config):
@@ -1531,10 +1559,16 @@ def run_all_mode_from_cli(args: argparse.Namespace):
     add_args_function=add_find_latent_representations_args,
 )
 def run_find_latent_representation_from_cli(args: argparse.Namespace):
-    from gsMap.find_latent_representation import run_find_latent_representation
+    # Use the GNN implementation by default (gsMap version)
+    from gsMap.find_latent_representation_gnn import run_find_latent_representation_gnn
 
     config = get_dataclass_from_parser(args, FindLatentRepresentationsConfig)
-    run_find_latent_representation(config)
+    
+    # Ensure at least one input is provided
+    if not config.input_hdf5_path and not config.spe_file_list:
+        raise ValueError("Either --input_hdf5_path or --spe_file_list must be provided")
+    
+    run_find_latent_representation_gnn(config)
 
 
 @register_cli(

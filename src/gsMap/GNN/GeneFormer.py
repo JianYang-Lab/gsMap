@@ -102,7 +102,7 @@ class PositionalEncoding(nn.Module):
         # x is N, L, D
         # pe is 1, maxlen, D
         scaled_x = x * np.sqrt(self.d_model)
-        encoded = scaled_x + self.pe[:, :x.size(1), :]
+        encoded = scaled_x + self.pe[:, x.size(1), :]
         return encoded
     
 
