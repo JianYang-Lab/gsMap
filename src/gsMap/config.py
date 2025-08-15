@@ -348,6 +348,48 @@ def add_latent_to_gene_args(parser):
         default=None,
         help="Name of the annotation in adata.obs to use (optional).",
     )
+    # GNN-specific arguments
+    parser.add_argument(
+        "--use_gcn_smoothing",
+        action="store_true",
+        help="Enable GCN smoothing for latent representations.",
+    )
+    parser.add_argument(
+        "--gcn_K",
+        type=int,
+        default=1,
+        help="Number of GCN propagation steps (default: 1).",
+    )
+    parser.add_argument(
+        "--n_neighbors_gcn",
+        type=int,
+        default=10,
+        help="Number of neighbors for GCN graph construction (default: 10).",
+    )
+    parser.add_argument(
+        "--latent_representation_indv",
+        type=str,
+        default=None,
+        help="Individual latent representation key in obsm (optional).",
+    )
+    parser.add_argument(
+        "--num_anchor",
+        type=int,
+        default=51,
+        help="Number of anchor points for regional computation (default: 51).",
+    )
+    parser.add_argument(
+        "--spatial_key",
+        type=str,
+        default="spatial",
+        help="Key in obsm containing spatial coordinates (default: 'spatial').",
+    )
+    parser.add_argument(
+        "--zarr_group_path",
+        type=str,
+        default=None,
+        help="Path to zarr group for slice mean storage (optional).",
+    )
 
 
 def add_generate_ldscore_args(parser):
@@ -905,21 +947,61 @@ class CreateSliceMeanConfig:
 
 @dataclass
 class FindLatentRepresentationsConfig(ConfigWithAutoPaths):
-    input_hdf5_path: str
-    # output_hdf5_path: str
+    # Input paths
+    input_hdf5_path: str = None
+    spe_file_list: str | list = None  # Can be a file path, directory, or list
+    
+    # Basic parameters
     annotation: str = None
-    data_layer: str = None
-
+    data_layer: str = "count"
+    spatial_key: str = "spatial"
+    
+    # GNN model architecture (from gsMap3D)
+    hidden_size: list = None  # Default [512, 256]
+    embedding_size: int = 64
+    batch_embedding_size: int = 64
+    module_dim: int = 8
+    hidden_gmf: int = 256
+    n_modules: int = 16
+    nhead: int = 8
+    n_enc_layer: int = 3
+    
+    # Training parameters
+    itermax: int = 5000
+    patience: int = 100
+    batch_size: int = 256
+    lr: float = 1e-3
+    
+    # Data processing
+    n_cell_training: int = 100000
+    feat_cell: int = 3000
+    do_sampling: bool = True
+    
+    # GNN specific
+    K: int = 1  # Number of GCN hops
+    n_neighbors: int = 15  # For spatial graph
+    
+    # Distribution and model settings
+    distribution: str = "nb"  # nb, zinb, or gaussian
+    use_tf: bool = False  # Use transformer
+    two_stage: bool = False  # Two-stage training
+    
+    # Species conversion
+    homolog_file: str = None
+    species: str = None
+    
+    # Zarr storage
+    zarr_group_path: str | Path = None
+    
+    # Legacy parameters (kept for compatibility)
     epochs: int = 300
     feat_hidden1: int = 256
     feat_hidden2: int = 128
-    feat_cell: int = 3000
     gat_hidden1: int = 64
     gat_hidden2: int = 30
     p_drop: float = 0.1
     gat_lr: float = 0.001
     gcn_decay: float = 0.01
-    n_neighbors: int = 11
     label_w: float = 1
     rec_w: float = 1
     input_pca: bool = True
@@ -932,7 +1014,23 @@ class FindLatentRepresentationsConfig(ConfigWithAutoPaths):
     pearson_residuals: bool = False
 
     def __post_init__(self):
-        # self.output_hdf5_path = self.hdf5_with_latent_path
+        # Set default hidden size if not provided
+        if self.hidden_size is None:
+            self.hidden_size = [512, 256]
+        
+        # Handle zarr path
+        if self.zarr_group_path:
+            self.zarr_group_path = Path(self.zarr_group_path)
+        
+        # Validate input
+        if not self.input_hdf5_path and not self.spe_file_list:
+            # Try to use default path from ConfigWithAutoPaths
+            if hasattr(self, 'hdf5_path') and self.hdf5_path:
+                self.input_hdf5_path = self.hdf5_path
+            else:
+                raise ValueError("Either input_hdf5_path or spe_file_list must be provided")
+        
+        # Legacy compatibility for hierarchical mode
         if self.hierarchically:
             if self.annotation is None:
                 raise ValueError("annotation must be provided if hierarchically is True.")
@@ -962,6 +1060,14 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
     gM_slices: str = None
     annotation: str = None
     species: str = None
+    # GNN-specific parameters
+    use_gcn_smoothing: bool = False
+    gcn_K: int = 1
+    n_neighbors_gcn: int = 10
+    latent_representation_indv: str = None
+    num_anchor: int = 51
+    spatial_key: str = 'spatial'
+    zarr_group_path: str | Path = None
 
     def __post_init__(self):
         if self.input_hdf5_path is None:
@@ -1437,10 +1543,15 @@ def run_find_latent_representation_from_cli(args: argparse.Namespace):
     add_args_function=add_latent_to_gene_args,
 )
 def run_latent_to_gene_from_cli(args: argparse.Namespace):
-    from gsMap.latent_to_gene import run_latent_to_gene
-
     config = get_dataclass_from_parser(args, LatentToGeneConfig)
-    run_latent_to_gene(config)
+    
+    # Use GNN-enhanced version if GCN smoothing is enabled
+    if config.use_gcn_smoothing:
+        from gsMap.latent_to_gene_gnn import run_latent_to_gene_gnn
+        run_latent_to_gene_gnn(config)
+    else:
+        from gsMap.latent_to_gene import run_latent_to_gene
+        run_latent_to_gene(config)
 
 
 @register_cli(
