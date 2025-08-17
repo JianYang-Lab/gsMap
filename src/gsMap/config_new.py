@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Literal, Optional, Union, Any, Dict
 import json
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator, ValidationError
 from pydantic_settings import (
     BaseSettings, 
     SettingsConfigDict, 
@@ -23,18 +23,18 @@ from gsMap import __version__
 
 
 # ============================================================================
-# Base Settings Classes
+# Mixin Classes (without BaseModel inheritance to avoid MRO issues)
 # ============================================================================
 
-class BaseConfigMixin(BaseModel):
+class ConfigFileMixin:
     """Mixin for YAML configuration management."""
     
     config_file: Optional[Path] = Field(
-        None,
+        default=None,
         description="Path to YAML configuration file to load settings from"
     )
     save_config: Optional[Path] = Field(
-        None,
+        default=None,
         description="Path to save current configuration to YAML file"
     )
     
@@ -53,10 +53,10 @@ class BaseConfigMixin(BaseModel):
         with open(path, 'w') as f:
             yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False)
         
-        print(f"Configuration saved to: {path}")
+        print(f"✓ Configuration saved to: {path}")
     
     @classmethod
-    def load_from_yaml(cls, path: Path, **overrides) -> 'BaseConfigMixin':
+    def load_from_yaml(cls, path: Path, **overrides):
         """Load configuration from YAML file with optional overrides."""
         path = Path(path)
         if not path.exists():
@@ -69,10 +69,51 @@ class BaseConfigMixin(BaseModel):
         config_dict.update(overrides)
         
         return cls(**config_dict)
+    
+    @classmethod
+    def create_template(cls, path: Path) -> None:
+        """Create a template configuration file with example values."""
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Get field info and create example dict
+        example_dict = {}
+        for field_name, field_info in cls.model_fields.items():
+            # Skip config management fields
+            if field_name in ['config_file', 'save_config', 'project_dir']:
+                continue
+                
+            if field_info.is_required():
+                # Add placeholder for required fields
+                if 'Path' in str(field_info.annotation):
+                    example_dict[field_name] = f"/path/to/{field_name}"
+                elif 'str' in str(field_info.annotation):
+                    example_dict[field_name] = f"example_{field_name}"
+                elif 'int' in str(field_info.annotation):
+                    example_dict[field_name] = 100
+                elif 'float' in str(field_info.annotation):
+                    example_dict[field_name] = 0.5
+                elif 'bool' in str(field_info.annotation):
+                    example_dict[field_name] = False
+                elif 'list' in str(field_info.annotation):
+                    example_dict[field_name] = ["example1", "example2"]
+                else:
+                    example_dict[field_name] = "REQUIRED"
+            else:
+                # Add default values for optional fields
+                default = field_info.get_default()
+                if default is not None and default != ...:
+                    example_dict[field_name] = default
+        
+        with open(path, 'w') as f:
+            yaml.dump(example_dict, f, default_flow_style=False, sort_keys=False)
+        
+        print(f"✓ Template configuration created: {path}")
+        print(f"  Edit this file and use with --config-file {path}")
 
 
-class WorkdirMixin(BaseModel):
-    """Mixin for settings that require workdir and sample paths."""
+class WorkdirFieldsMixin:
+    """Mixin for workdir-related fields and properties."""
     
     workdir: Path = Field(
         ...,
@@ -83,15 +124,15 @@ class WorkdirMixin(BaseModel):
         description="Name of the sample"
     )
     project_name: Optional[str] = Field(
-        None,
+        default=None,
         description="Project name (optional)"
     )
     
-    # Computed paths
+    # Will be set in validator
     project_dir: Optional[Path] = None
     
     @model_validator(mode='after')
-    def setup_paths(self) -> 'WorkdirMixin':
+    def setup_paths(self):
         """Setup project directory based on workdir and project_name."""
         if self.project_name:
             self.project_dir = self.workdir / self.project_name
@@ -132,10 +173,50 @@ class WorkdirMixin(BaseModel):
 
 
 # ============================================================================
+# Base Command Class
+# ============================================================================
+
+class BaseCommand(BaseModel, ConfigFileMixin):
+    """Base class for all commands with config file support."""
+    
+    def cli_cmd(self) -> None:
+        """Default CLI command handler."""
+        # If save_config is specified, just save template
+        if self.save_config:
+            self.save_to_yaml(self.save_config)
+            return
+        
+        # Otherwise, execute the command
+        self.execute()
+    
+    def execute(self):
+        """Execute the actual command. Override in subclasses."""
+        raise NotImplementedError("Subclasses must implement execute()")
+
+
+class BaseWorkdirCommand(BaseModel, ConfigFileMixin, WorkdirFieldsMixin):
+    """Base class for commands that require workdir."""
+    
+    def cli_cmd(self) -> None:
+        """Default CLI command handler."""
+        # If save_config is specified, just save template
+        if self.save_config:
+            self.save_to_yaml(self.save_config)
+            return
+        
+        # Otherwise, execute the command
+        self.execute()
+    
+    def execute(self):
+        """Execute the actual command. Override in subclasses."""
+        raise NotImplementedError("Subclasses must implement execute()")
+
+
+# ============================================================================
 # Subcommand Models
 # ============================================================================
 
-class FindLatentCommand(BaseModel, BaseConfigMixin, WorkdirMixin):
+class FindLatentCommand(BaseWorkdirCommand):
     """Find latent representations of each spot using GNN."""
     
     # Input files
@@ -246,17 +327,13 @@ class FindLatentCommand(BaseModel, BaseConfigMixin, WorkdirMixin):
         description="Path to homologous gene conversion file (optional)"
     )
     
-    def cli_cmd(self) -> None:
+    def execute(self) -> None:
         """Execute the find latent representations command."""
-        if self.save_config:
-            self.save_to_yaml(self.save_config)
-            return
-        
         from gsMap.find_latent_representation import run_find_latent_representation
         run_find_latent_representation(self)
 
 
-class LatentToGeneCommand(BaseModel, BaseConfigMixin, WorkdirMixin):
+class LatentToGeneCommand(BaseWorkdirCommand):
     """Estimate gene marker scores for each spot using latent representations."""
     
     annotation: Optional[str] = Field(
@@ -296,17 +373,13 @@ class LatentToGeneCommand(BaseModel, BaseConfigMixin, WorkdirMixin):
         description="Use section-specific weights to account for across-section batch effects"
     )
     
-    def cli_cmd(self) -> None:
+    def execute(self) -> None:
         """Execute the latent to gene command."""
-        if self.save_config:
-            self.save_to_yaml(self.save_config)
-            return
-            
         from gsMap.latent_to_gene import run_latent_to_gene
         run_latent_to_gene(self)
 
 
-class GenerateLDScoreCommand(BaseModel, BaseConfigMixin, WorkdirMixin):
+class GenerateLDScoreCommand(BaseWorkdirCommand):
     """Generate LD scores for each spot."""
     
     chrom: Union[int, Literal["all"]] = Field(
@@ -371,17 +444,13 @@ class GenerateLDScoreCommand(BaseModel, BaseConfigMixin, WorkdirMixin):
             return v
         raise ValueError(f"Invalid chromosome value: {v}. Must be 1-22 or 'all'")
     
-    def cli_cmd(self) -> None:
+    def execute(self) -> None:
         """Execute the generate LD score command."""
-        if self.save_config:
-            self.save_to_yaml(self.save_config)
-            return
-            
         from gsMap.generate_ldscore import run_generate_ldscore
         run_generate_ldscore(self)
 
 
-class SpatialLDSCCommand(BaseModel, BaseConfigMixin, WorkdirMixin):
+class SpatialLDSCCommand(BaseWorkdirCommand):
     """Run spatial LDSC for each spot."""
     
     sumstats_file: Path = Field(
@@ -418,7 +487,7 @@ class SpatialLDSCCommand(BaseModel, BaseConfigMixin, WorkdirMixin):
     )
     
     @model_validator(mode='after')
-    def setup_w_file(self) -> 'SpatialLDSCCommand':
+    def setup_w_file(self):
         """Setup w_file if not provided."""
         if self.w_file is None:
             w_ld_dir = self.ldscore_save_dir / "w_ld"
@@ -426,12 +495,8 @@ class SpatialLDSCCommand(BaseModel, BaseConfigMixin, WorkdirMixin):
                 self.w_file = w_ld_dir / "weights."
         return self
     
-    def cli_cmd(self) -> None:
+    def execute(self) -> None:
         """Execute the spatial LDSC command."""
-        if self.save_config:
-            self.save_to_yaml(self.save_config)
-            return
-            
         if self.use_jax:
             from gsMap.spatial_ldsc_jax_final import run_spatial_ldsc_jax
             run_spatial_ldsc_jax(self)
@@ -440,7 +505,7 @@ class SpatialLDSCCommand(BaseModel, BaseConfigMixin, WorkdirMixin):
             run_spatial_ldsc(self)
 
 
-class CauchyCommand(BaseModel, BaseConfigMixin, WorkdirMixin):
+class CauchyCommand(BaseWorkdirCommand):
     """Run Cauchy combination for each annotation."""
     
     trait_name: str = Field(
@@ -460,17 +525,13 @@ class CauchyCommand(BaseModel, BaseConfigMixin, WorkdirMixin):
         description="Path to save the combined Cauchy results"
     )
     
-    def cli_cmd(self) -> None:
+    def execute(self) -> None:
         """Execute the Cauchy combination command."""
-        if self.save_config:
-            self.save_to_yaml(self.save_config)
-            return
-            
         from gsMap.cauchy_combination_test import run_Cauchy_combination
         run_Cauchy_combination(self)
 
 
-class ReportCommand(BaseModel, BaseConfigMixin, WorkdirMixin):
+class ReportCommand(BaseWorkdirCommand):
     """Generate diagnostic plots and tables."""
     
     trait_name: str = Field(
@@ -510,17 +571,13 @@ class ReportCommand(BaseModel, BaseConfigMixin, WorkdirMixin):
         description="Style of the generated figures"
     )
     
-    def cli_cmd(self) -> None:
+    def execute(self) -> None:
         """Execute the report generation command."""
-        if self.save_config:
-            self.save_to_yaml(self.save_config)
-            return
-            
         from gsMap.report import run_report
         run_report(self)
 
 
-class FormatSumstatsCommand(BaseModel, BaseConfigMixin):
+class FormatSumstatsCommand(BaseCommand):
     """Format GWAS summary statistics."""
     
     sumstats: Path = Field(
@@ -558,17 +615,13 @@ class FormatSumstatsCommand(BaseModel, BaseConfigMixin):
     maf_min: float = Field(default=0.01, description="Minimum MAF")
     keep_chr_pos: bool = Field(default=False, description="Keep SNP chromosome and position columns in the output data")
     
-    def cli_cmd(self) -> None:
+    def execute(self) -> None:
         """Execute the format sumstats command."""
-        if self.save_config:
-            self.save_to_yaml(self.save_config)
-            return
-            
         from gsMap.format_sumstats import gwas_format
         gwas_format(self)
 
 
-class QuickModeCommand(BaseModel, BaseConfigMixin, WorkdirMixin):
+class QuickModeCommand(BaseWorkdirCommand):
     """Run the entire gsMap pipeline in quick mode."""
     
     gsMap_resource_dir: Path = Field(
@@ -633,8 +686,12 @@ class QuickModeCommand(BaseModel, BaseConfigMixin, WorkdirMixin):
     )
     
     @model_validator(mode='after')
-    def validate_sumstats(self) -> 'QuickModeCommand':
+    def validate_sumstats(self):
         """Validate summary statistics configuration."""
+        # Skip validation if we're just saving config
+        if hasattr(self, 'save_config') and self.save_config:
+            return self
+            
         if self.sumstats_file is None and self.sumstats_config_file is None:
             raise ValueError("Either sumstats_file or sumstats_config_file is required")
         if self.sumstats_file is not None and self.sumstats_config_file is not None:
@@ -643,17 +700,13 @@ class QuickModeCommand(BaseModel, BaseConfigMixin, WorkdirMixin):
             raise ValueError("trait_name is required when sumstats_file is provided")
         return self
     
-    def cli_cmd(self) -> None:
+    def execute(self) -> None:
         """Execute the quick mode pipeline."""
-        if self.save_config:
-            self.save_to_yaml(self.save_config)
-            return
-            
         from gsMap.run_all_mode import run_pipeline
         run_pipeline(self)
 
 
-class CreateSliceMeanCommand(BaseModel, BaseConfigMixin):
+class CreateSliceMeanCommand(BaseCommand):
     """Create slice mean from multiple h5ad files."""
     
     sample_name_list: list[str] = Field(
@@ -682,8 +735,12 @@ class CreateSliceMeanCommand(BaseModel, BaseConfigMixin):
     )
     
     @model_validator(mode='after')
-    def validate_inputs(self) -> 'CreateSliceMeanCommand':
+    def validate_inputs(self):
         """Validate input configuration."""
+        # Skip validation if we're just saving config
+        if hasattr(self, 'save_config') and self.save_config:
+            return self
+            
         if self.h5ad_list is None and self.h5ad_yaml is None:
             raise ValueError("Either h5ad_list or h5ad_yaml must be provided")
         if self.h5ad_yaml is not None:
@@ -696,12 +753,8 @@ class CreateSliceMeanCommand(BaseModel, BaseConfigMixin):
                 raise ValueError("At least two samples are required")
         return self
     
-    def cli_cmd(self) -> None:
+    def execute(self) -> None:
         """Execute the create slice mean command."""
-        if self.save_config:
-            self.save_to_yaml(self.save_config)
-            return
-            
         from gsMap.create_slice_mean import run_create_slice_mean
         run_create_slice_mean(self)
 
@@ -822,11 +875,11 @@ class GsMapCLI(BaseSettings):
         cli_parse_args=True,
         cli_prog_name="gsMap",
         cli_use_class_docs_for_groups=True,
-        cli_exit_on_error=True,
+        cli_exit_on_error=False,  # We'll handle errors ourselves
         cli_hide_none_type=True,
         cli_avoid_json=True,
         cli_implicit_flags=True,
-        cli_kebab_case=True
+        cli_kebab_case=False
     )
     
     # Subcommands (required fields - no default values)
@@ -856,20 +909,25 @@ class GsMapCLI(BaseSettings):
         try:
             subcommand = get_subcommand(self)
             if subcommand:
-                CliApp.run_subcommand(self)
+                # Check if this is just a save-config operation
+                if hasattr(subcommand, 'save_config') and subcommand.save_config:
+                    # Create template instead of failing validation
+                    subcommand.__class__.create_template(subcommand.save_config)
+                else:
+                    CliApp.run_subcommand(self)
         except SettingsError as e:
             # No subcommand selected
             print("\nNo subcommand selected. Use --help to see available commands.")
             print("\nAvailable commands:")
-            print("  quick-mode         - Run the entire pipeline in quick mode")
-            print("  find-latent        - Find latent representations using GNN")
-            print("  latent-to-gene     - Convert latent representations to gene scores")
-            print("  generate-ldscore   - Generate LD scores")
-            print("  spatial-ldsc       - Run spatial LDSC analysis")
+            print("  quick_mode         - Run the entire pipeline in quick mode")
+            print("  find_latent        - Find latent representations using GNN")
+            print("  latent_to_gene     - Convert latent representations to gene scores")
+            print("  generate_ldscore   - Generate LD scores")
+            print("  spatial_ldsc       - Run spatial LDSC analysis")
             print("  cauchy             - Run Cauchy combination")
             print("  report             - Generate diagnostic reports")
-            print("  format-sumstats    - Format GWAS summary statistics")
-            print("  create-slice-mean  - Create slice mean from multiple samples")
+            print("  format_sumstats    - Format GWAS summary statistics")
+            print("  create_slice_mean  - Create slice mean from multiple samples")
             print("  config             - Manage configuration files")
             sys.exit(1)
 
@@ -908,36 +966,9 @@ def create_template_config(command: str, output_path: Path) -> None:
     if command not in templates:
         raise ValueError(f"Unknown command: {command}. Available: {list(set(templates.keys()))}")
     
-    # Create instance with example values
+    # Use the class's create_template method
     model_class = templates[command]
-    
-    # Get field info and create example dict
-    example_dict = {}
-    for field_name, field_info in model_class.model_fields.items():
-        if field_info.is_required():
-            # Add placeholder for required fields
-            if 'Path' in str(field_info.annotation):
-                example_dict[field_name] = f"/path/to/{field_name}"
-            elif 'str' in str(field_info.annotation):
-                example_dict[field_name] = f"example_{field_name}"
-            elif 'int' in str(field_info.annotation):
-                example_dict[field_name] = 100
-            elif 'float' in str(field_info.annotation):
-                example_dict[field_name] = 0.5
-            elif 'bool' in str(field_info.annotation):
-                example_dict[field_name] = False
-            elif 'list' in str(field_info.annotation):
-                example_dict[field_name] = ["example1", "example2"]
-    
-    # Save template
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    with open(output_path, 'w') as f:
-        yaml.dump(example_dict, f, default_flow_style=False, sort_keys=False)
-    
-    print(f"Template configuration created: {output_path}")
-    print(f"Edit this file and run: gsMap {command} --config-file {output_path}")
+    model_class.create_template(output_path)
 
 
 # ============================================================================
@@ -963,9 +994,50 @@ CreateSliceMean = CreateSliceMeanCommand
 def main():
     """Main entry point for the gsMap CLI."""
     try:
+        # Special handling for save-config
+        if '--save_config' in sys.argv or '--save-config' in sys.argv:
+            # Extract command and save_config path
+            import argparse
+            parser = argparse.ArgumentParser(add_help=False)
+            parser.add_argument('command', nargs='?')
+            parser.add_argument('--save_config', '--save-config', type=str)
+            args, _ = parser.parse_known_args()
+            
+            if args.command and args.save_config:
+                # Map command to class
+                command_map = {
+                    'quick_mode': QuickModeCommand,
+                    'find_latent': FindLatentCommand,
+                    'latent_to_gene': LatentToGeneCommand,
+                    'generate_ldscore': GenerateLDScoreCommand,
+                    'spatial_ldsc': SpatialLDSCCommand,
+                    'cauchy': CauchyCommand,
+                    'report': ReportCommand,
+                    'format_sumstats': FormatSumstatsCommand,
+                    'create_slice_mean': CreateSliceMeanCommand,
+                }
+                
+                if args.command in command_map:
+                    # Create template directly
+                    command_class = command_map[args.command]
+                    command_class.create_template(Path(args.save_config))
+                    sys.exit(0)
+        
+        # Normal CLI execution
         CliApp.run(GsMapCLI)
+        
+    except ValidationError as e:
+        # Handle validation errors more gracefully
+        print("\n❌ Configuration Error:", file=sys.stderr)
+        for error in e.errors():
+            field_path = " → ".join(str(x) for x in error['loc'])
+            print(f"  • {field_path}: {error['msg']}", file=sys.stderr)
+        print("\n💡 Tip: Use --save_config <file.yaml> to create a configuration template", file=sys.stderr)
+        print("  Example: gsMap format_sumstats --save_config config.yaml", file=sys.stderr)
+        sys.exit(1)
+        
     except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
+        print(f"\n❌ Error: {e}", file=sys.stderr)
         sys.exit(1)
 
 
