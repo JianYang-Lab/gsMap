@@ -254,7 +254,7 @@ def add_find_latent_representations_args(parser):
         type=str,
         help="List of input ST (.h5ad) files."
     )
-    # parser.add_argument('--workdir', required=True, type=str, help='Working directory of gsMap3D.')
+    # parser.add_argument('--workdir', required=True, type=str, help='Working directory of gsMap.')
     parser.add_argument(
         "--data_layer", type=str, default="count", help="Gene expression data layer."
     )
@@ -946,7 +946,7 @@ class ConfigWithAutoPaths(metaclass=PostInitMeta):
     @property
     @ensure_path_exists
     def model_path(self) -> Path:
-        return Path(f'{self.project_dir}/LGCN_model/gsMap3D_LGCN_.pt')
+        return Path(f'{self.project_dir}/LGCN_model/gsMap_LGCN_.pt')
 
     @property
     @ensure_path_exists
@@ -984,10 +984,10 @@ class ConfigWithAutoPaths(metaclass=PostInitMeta):
     def get_report_dir(self, trait_name: str) -> Path:
         return Path(f'{self.project_dir}/report/{self.sample_name}/{trait_name}')
 
-    def get_gsMap3D_report_file(self, trait_name: str) -> Path:
+    def get_gsMap_report_file(self, trait_name: str) -> Path:
         return (
                 self.get_report_dir(trait_name)
-                / f"{self.sample_name}_{trait_name}_gsMap3D_Report.html"
+                / f"{self.sample_name}_{trait_name}_gsMap_Report.html"
         )
 
     @ensure_path_exists
@@ -1018,13 +1018,13 @@ class ConfigWithAutoPaths(metaclass=PostInitMeta):
             f'{self.project_dir}/report/{self.sample_name}/{trait_name}/{self.sample_name}_{trait_name}_Gene_Diagnostic_Info.csv')
 
     @ensure_path_exists
-    def get_gsMap3D_plot_save_dir(self, trait_name: str) -> Path:
-        return Path(f'{self.project_dir}/report/{self.sample_name}/{trait_name}/gsMap3D_plot')
+    def get_gsMap_plot_save_dir(self, trait_name: str) -> Path:
+        return Path(f'{self.project_dir}/report/{self.sample_name}/{trait_name}/gsMap_plot')
 
-    def get_gsMap3D_html_plot_save_path(self, trait_name: str) -> Path:
+    def get_gsMap_html_plot_save_path(self, trait_name: str) -> Path:
         return (
-                self.get_gsMap3D_plot_save_dir(trait_name)
-                / f"{self.sample_name}_{trait_name}_gsMap3D_plot.html"
+                self.get_gsMap_plot_save_dir(trait_name)
+                / f"{self.sample_name}_{trait_name}_gsMap_plot.html"
         )
 
 
@@ -1221,7 +1221,7 @@ class ThreeDCombineConfig():
 
 @dataclass
 class RunLinkModeConfig(ConfigWithAutoPaths):
-    gsMap3D_resource_dir: str
+    gsMap_resource_dir: str
 
     # == ST DATA PARAMETERS ==
     annotation: str = None
@@ -1237,23 +1237,23 @@ class RunLinkModeConfig(ConfigWithAutoPaths):
     def __post_init__(self):
         super().__post_init__()
         self.gtffile = f"{
-        self.gsMap3D_resource_dir}/genome_annotation/gtf/gencode.v46lift37.basic.annotation.gtf"
+        self.gsMap_resource_dir}/genome_annotation/gtf/gencode.v46lift37.basic.annotation.gtf"
         self.bfile_root = f"{
-        self.gsMap3D_resource_dir}/LD_Reference_Panel/1000G_EUR_Phase3_plink/1000G.EUR.QC"
+        self.gsMap_resource_dir}/LD_Reference_Panel/1000G_EUR_Phase3_plink/1000G.EUR.QC"
         self.keep_snp_root = (
-            f"{self.gsMap3D_resource_dir}/LDSC_resource/hapmap3_snps/hm"
+            f"{self.gsMap_resource_dir}/LDSC_resource/hapmap3_snps/hm"
         )
         self.w_file = (
-            f"{self.gsMap3D_resource_dir}/LDSC_resource/weights_hm3_no_hla/weights."
+            f"{self.gsMap_resource_dir}/LDSC_resource/weights_hm3_no_hla/weights."
         )
         self.snp_gene_weight_adata_path = (
-            f"{self.gsMap3D_resource_dir}/quick_mode/snp_gene_weight_matrix.h5ad"
+            f"{self.gsMap_resource_dir}/quick_mode/snp_gene_weight_matrix.h5ad"
         )
         self.baseline_annotation_dir = Path(
-            f"{self.gsMap3D_resource_dir}/quick_mode/baseline"
+            f"{self.gsMap_resource_dir}/quick_mode/baseline"
         ).resolve()
         self.SNP_gene_pair_dir = Path(
-            f"{self.gsMap3D_resource_dir}/quick_mode/SNP_gene_pair"
+            f"{self.gsMap_resource_dir}/quick_mode/SNP_gene_pair"
         ).resolve()
         # check the existence of the input files and resources files
         for file in [self.gtffile]:
@@ -1730,7 +1730,7 @@ def run_find_latent_representation_from_cli(args: argparse.Namespace):
     add_args_function=add_latent_to_gene_args,
 )
 def run_latent_to_gene_from_cli(args: argparse.Namespace):
-    from gsMap3D.latent_to_gene import run_latent_to_gene
+    from gsMap.latent_to_gene import run_latent_to_gene
 
     config = get_dataclass_from_parser(args, LatentToGeneConfig)
     run_latent_to_gene(config)
@@ -1742,7 +1742,7 @@ def run_latent_to_gene_from_cli(args: argparse.Namespace):
     add_args_function=add_max_pooling_args,
 )
 def run_gene_padding_from_cli(args: argparse.Namespace):
-    from gsMap3D.max_pooling import run_max_pooling
+    from gsMap.max_pooling import run_max_pooling
 
     config = get_dataclass_from_parser(args, MaxPoolingConfig)
     run_max_pooling(config)

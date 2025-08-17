@@ -20,7 +20,7 @@ classifiers = [
 ]
 dynamic = ["version", "description"]
 dependencies = [
-    "numpy < 2.0.0",
+    "numpy",
     "pandas",
     "scipy",
     "scikit-learn",
@@ -41,6 +41,7 @@ dependencies = [
     'pyarrow',
     'scikit-misc',
     'numba'
+    'jax[cuda]'
 ]
 
 [project.optional-dependencies]

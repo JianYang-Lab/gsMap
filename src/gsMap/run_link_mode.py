@@ -4,11 +4,11 @@ from pathlib import Path
 import scanpy as sc
 import pandas as pd
 
-from gsMap3D.cauchy_combination_test import run_Cauchy_combination
-from gsMap3D.config import GenerateLDScoreConfig, SpatialLDSCConfig, CauchyCombinationConfig, RunLinkModeConfig, ReportConfig
-from gsMap3D.generate_ldscore import run_generate_ldscore
-from gsMap3D.report import run_report
-from gsMap3D.spatial_ldsc_multiple_sumstats import run_spatial_ldsc
+from gsMap.cauchy_combination_test import run_Cauchy_combination
+from gsMap.config import GenerateLDScoreConfig, SpatialLDSCConfig, CauchyCombinationConfig, RunLinkModeConfig, ReportConfig
+from gsMap.generate_ldscore import run_generate_ldscore
+from gsMap.report import run_report
+from gsMap.spatial_ldsc_multiple_sumstats import run_spatial_ldsc
 
 def check_file(filepath):
     try:
@@ -45,7 +45,7 @@ def run_pipeline_link(config: RunLinkModeConfig):
         style='{'
     )
 
-    logger = logging.getLogger('gsMap3D.pipeline.linking')
+    logger = logging.getLogger('gsMap.pipeline.linking')
     logger.info("Starting pipeline with configuration: %s", config)
 
         
@@ -163,7 +163,7 @@ def run_pipeline_link(config: RunLinkModeConfig):
     #         "Spatial LDSC Save Directory": config.ldsc_save_dir,
     #         "Cauchy Directory": config.cauchy_save_dir,
     #         "Report Directory": config.get_report_dir(trait_name),
-    #         "gsMap Report File": config.get_gsMap3D_report_file(trait_name),
+    #         "gsMap Report File": config.get_gsMap_report_file(trait_name),
     #         "Gene Diagnostic Info File": config.get_gene_diagnostic_info_save_path(trait_name),
     #         "Spending Time": format_duration(time.time() - pipeline_start_time),
     #     }

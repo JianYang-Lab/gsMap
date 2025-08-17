@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Simplified Python script for local debugging of gsMap3D pipeline.
-This directly calls the Python functions from gsMap3D modules.
+Simplified Python script for local debugging of gsMap pipeline.
+This directly calls the Python functions from gsMap modules.
 """
 
 import sys
@@ -12,9 +12,9 @@ from typing import List, Optional
 import argparse
 import yaml
 
-# Add gsMap3D to path
-sys.path.append('/mnt/d/01_Project/01_Research/202312_gsMap/src/gsMap3D_develop/src')
-sys.path.append('/storage/yangjianLab/chenwenhao/01_Project/01_Research/202312_gsMap/src/gsMap3D_develop/src')
+# Add gsMap to path
+sys.path.append('/mnt/d/01_Project/01_Research/202312_gsMap/src/gsMap_develop/src')
+sys.path.append('/storage/yangjianLab/chenwenhao/01_Project/01_Research/202312_gsMap/src/gsMap_develop/src')
 
 from gsMap.config import (
     FindLatentRepresentationsConfig,
@@ -52,7 +52,7 @@ class PipelineConfig:
     homolog_file: str = "/mnt/d/01_Project/01_Research/202312_gsMap/data/gsMap_dev_data/online_resource/gsMap_resource/homologs/mouse_human_homologs.txt"
 
     # 3D visualization
-    adata_3d: str = "/storage/yangjianLab/songliyang/SpatialData/gsMap3D_analysis/MouseBrain_StereoSeq/MouseBrain_StereoSeq.meta.parquet"
+    adata_3d: str = "/storage/yangjianLab/songliyang/SpatialData/gsMap_analysis/MouseBrain_StereoSeq/MouseBrain_StereoSeq.meta.parquet"
     background_color: str = "white"
     spatial_key_3d: str = "3d_align_spatial"
     st_id: str = "st_id"
@@ -222,7 +222,7 @@ def step4_spatial_ldsc(config: PipelineConfig, sample_name: Optional[str] = None
                     sample_name=sample,
                     spatial_key=config.spatial_key,
                     annotation=config.annotation,
-                    gsMap3D_resource_dir=config.gsmap_resource,
+                    gsMap_resource_dir=config.gsmap_resource,
                     trait_name=gwas_file,
                     sumstats_file=sumstats_path,
                     max_processes=config.max_processes

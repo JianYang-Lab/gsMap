@@ -9,9 +9,9 @@ import pyvista as pv
 
 from pathlib import Path
 from scipy.stats import fisher_exact
-from gsMap3D.three_d_plot.three_d_plots import three_d_plot, three_d_plot_save
-from gsMap3D.cauchy_combination_test import acat_test
-from gsMap3D.config import ThreeDCombineConfig
+from gsMap.three_d_plot.three_d_plots import three_d_plot, three_d_plot_save
+from gsMap.cauchy_combination_test import acat_test
+from gsMap.config import ThreeDCombineConfig
 from pandas.core.frame import DataFrame
 
 pv.start_xvfb()
