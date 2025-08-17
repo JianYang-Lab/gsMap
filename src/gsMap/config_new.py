@@ -1,13 +1,22 @@
 """
 Refactored configuration system using Pydantic Settings with CLI support.
+Includes subcommand support and YAML configuration management.
 """
 import sys
 from pathlib import Path
-from typing import Literal, Optional, Union, Any
-from dataclasses import field
+from typing import Literal, Optional, Union, Any, Dict
+import json
 
 from pydantic import BaseModel, Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict, CliApp
+from pydantic_settings import (
+    BaseSettings, 
+    SettingsConfigDict, 
+    CliApp,
+    CliSubCommand,
+    CliPositionalArg,
+    get_subcommand,
+    SettingsError
+)
 import yaml
 
 from gsMap import __version__
@@ -17,25 +26,49 @@ from gsMap import __version__
 # Base Settings Classes
 # ============================================================================
 
-class GsMapBaseSettings(BaseSettings):
-    """Base settings class with common configuration."""
+class BaseConfigMixin(BaseModel):
+    """Mixin for YAML configuration management."""
     
-    model_config = SettingsConfigDict(
-        cli_parse_args=True,
-        cli_prog_name="gsMap",
-        cli_use_class_docs_for_groups=True,
-        cli_hide_none_type=True,
-        cli_avoid_json=True,
-        cli_enforce_required=True,
-        cli_implicit_flags=True,
-        cli_kebab_case=True,
-        env_prefix="GSMAP_",
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-        validate_default=True,
-        extra="forbid"
+    config_file: Optional[Path] = Field(
+        None,
+        description="Path to YAML configuration file to load settings from"
     )
+    save_config: Optional[Path] = Field(
+        None,
+        description="Path to save current configuration to YAML file"
+    )
+    
+    def save_to_yaml(self, path: Path) -> None:
+        """Save current configuration to YAML file."""
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Get model dump excluding None values and computed fields
+        config_dict = self.model_dump(
+            exclude_none=True,
+            exclude={'config_file', 'save_config', 'project_dir'},
+            mode='json'  # Ensures Path objects are converted to strings
+        )
+        
+        with open(path, 'w') as f:
+            yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False)
+        
+        print(f"Configuration saved to: {path}")
+    
+    @classmethod
+    def load_from_yaml(cls, path: Path, **overrides) -> 'BaseConfigMixin':
+        """Load configuration from YAML file with optional overrides."""
+        path = Path(path)
+        if not path.exists():
+            raise FileNotFoundError(f"Configuration file not found: {path}")
+        
+        with open(path, 'r') as f:
+            config_dict = yaml.safe_load(f)
+        
+        # Merge with overrides
+        config_dict.update(overrides)
+        
+        return cls(**config_dict)
 
 
 class WorkdirMixin(BaseModel):
@@ -43,18 +76,15 @@ class WorkdirMixin(BaseModel):
     
     workdir: Path = Field(
         ...,
-        description="Path to the working directory",
-        validation_alias="workdir"
+        description="Path to the working directory"
     )
     sample_name: str = Field(
         ...,
-        description="Name of the sample",
-        validation_alias="sample_name"
+        description="Name of the sample"
     )
     project_name: Optional[str] = Field(
         None,
-        description="Project name (optional)",
-        validation_alias="project_name"
+        description="Project name (optional)"
     )
     
     # Computed paths
@@ -102,267 +132,230 @@ class WorkdirMixin(BaseModel):
 
 
 # ============================================================================
-# Command-specific Settings
+# Subcommand Models
 # ============================================================================
 
-class FindLatentRepresentationsSettings(GsMapBaseSettings, WorkdirMixin):
-    """Settings for finding latent representations using GNN."""
+class FindLatentCommand(BaseModel, BaseConfigMixin, WorkdirMixin):
+    """Find latent representations of each spot using GNN."""
     
     # Input files
     spe_file_list: str = Field(
         ...,
-        description="List of input ST (.h5ad) files",
-        validation_alias="spe_file_list"
+        description="List of input ST (.h5ad) files"
     )
     data_layer: str = Field(
-        "count",
-        description="Gene expression data layer",
-        validation_alias="data_layer"
+        default="count",
+        description="Gene expression data layer"
     )
     spatial_key: str = Field(
-        "spatial",
-        description="Spatial key in adata.obsm storing spatial coordinates",
-        validation_alias="spatial_key"
+        default="spatial",
+        description="Spatial key in adata.obsm storing spatial coordinates"
     )
     annotation: Optional[str] = Field(
-        None,
-        description="Annotation in adata.obs to use",
-        validation_alias="annotation"
+        default=None,
+        description="Annotation in adata.obs to use"
     )
     
     # Feature extraction parameters (LGCN)
     n_neighbors: int = Field(
-        10,
-        description="Number of neighbors for LGCN",
-        validation_alias="n_neighbors"
+        default=10,
+        description="Number of neighbors for LGCN"
     )
     K: int = Field(
-        3,
-        description="Graph convolution depth for LGCN",
-        validation_alias="K"
+        default=3,
+        description="Graph convolution depth for LGCN"
     )
     feat_cell: int = Field(
-        2000,
-        description="Number of top variable features to retain",
-        validation_alias="feat_cell"
+        default=2000,
+        description="Number of top variable features to retain"
     )
     pearson_residual: bool = Field(
-        False,
-        description="Take the residuals of the input data",
-        validation_alias="pearson_residual"
+        default=False,
+        description="Take the residuals of the input data"
     )
     
     # Model dimension parameters
     hidden_size: int = Field(
-        128,
-        description="Units in the first hidden layer",
-        validation_alias="hidden_size"
+        default=128,
+        description="Units in the first hidden layer"
     )
     embedding_size: int = Field(
-        32,
-        description="Size of the latent embedding layer",
-        validation_alias="embedding_size"
+        default=32,
+        description="Size of the latent embedding layer"
     )
     
     # Transformer module parameters
     use_tf: bool = Field(
-        False,
-        description="Enable transformer module",
-        validation_alias="use_tf"
+        default=False,
+        description="Enable transformer module"
     )
     module_dim: int = Field(
-        30,
-        description="Dimensionality of transformer modules",
-        validation_alias="module_dim"
+        default=30,
+        description="Dimensionality of transformer modules"
     )
     hidden_gmf: int = Field(
-        128,
-        description="Hidden units for global mean feature extractor",
-        validation_alias="hidden_gmf"
+        default=128,
+        description="Hidden units for global mean feature extractor"
     )
     n_modules: int = Field(
-        16,
-        description="Number of transformer modules",
-        validation_alias="n_modules"
+        default=16,
+        description="Number of transformer modules"
     )
     nhead: int = Field(
-        4,
-        description="Number of attention heads in transformer",
-        validation_alias="nhead"
+        default=4,
+        description="Number of attention heads in transformer"
     )
     n_enc_layer: int = Field(
-        2,
-        description="Number of transformer encoder layers",
-        validation_alias="n_enc_layer"
+        default=2,
+        description="Number of transformer encoder layers"
     )
     
     # Training parameters
     distribution: Literal["nb", "zinb", "gaussian"] = Field(
-        "nb",
-        description="Distribution type for loss calculation",
-        validation_alias="distribution"
+        default="nb",
+        description="Distribution type for loss calculation"
     )
     n_cell_training: int = Field(
-        100000,
-        description="Number of cells used for training",
-        validation_alias="n_cell_training"
+        default=100000,
+        description="Number of cells used for training"
     )
     batch_size: int = Field(
-        1024,
-        description="Batch size for training",
-        validation_alias="batch_size"
+        default=1024,
+        description="Batch size for training"
     )
     itermax: int = Field(
-        100,
-        description="Maximum number of training iterations",
-        validation_alias="itermax"
+        default=100,
+        description="Maximum number of training iterations"
     )
     patience: int = Field(
-        10,
-        description="Early stopping patience",
-        validation_alias="patience"
+        default=10,
+        description="Early stopping patience"
     )
     two_stage: bool = Field(
-        True,
-        description="Tune the cell embeddings based on the provided annotation",
-        validation_alias="two_stage"
+        default=True,
+        description="Tune the cell embeddings based on the provided annotation"
     )
     do_sampling: bool = Field(
-        True,
-        description="Down-sampling cells in training",
-        validation_alias="do_sampling"
+        default=True,
+        description="Down-sampling cells in training"
     )
     
     # Homolog transformation
     homolog_file: Optional[Path] = Field(
-        None,
-        description="Path to homologous gene conversion file (optional)",
-        validation_alias="homolog_file"
+        default=None,
+        description="Path to homologous gene conversion file (optional)"
     )
     
     def cli_cmd(self) -> None:
         """Execute the find latent representations command."""
+        if self.save_config:
+            self.save_to_yaml(self.save_config)
+            return
+        
         from gsMap.find_latent_representation import run_find_latent_representation
         run_find_latent_representation(self)
 
 
-class LatentToGeneSettings(GsMapBaseSettings, WorkdirMixin):
-    """Settings for converting latent representations to gene scores."""
+class LatentToGeneCommand(BaseModel, BaseConfigMixin, WorkdirMixin):
+    """Estimate gene marker scores for each spot using latent representations."""
     
     annotation: Optional[str] = Field(
-        None,
-        description="Annotation in adata.obs to use",
-        validation_alias="annotation"
+        default=None,
+        description="Annotation in adata.obs to use"
     )
     no_expression_fraction: bool = Field(
-        False,
-        description="Skip expression fraction filtering",
-        validation_alias="no_expression_fraction"
+        default=False,
+        description="Skip expression fraction filtering"
     )
     latent_representation: str = Field(
-        "emb_gcn",
-        description="Type of latent representation",
-        validation_alias="latent_representation"
+        default="emb_gcn",
+        description="Type of latent representation"
     )
     latent_representation_indv: str = Field(
-        "emb",
-        description="Type of individual latent representation",
-        validation_alias="latent_representation_indv"
+        default="emb",
+        description="Type of individual latent representation"
     )
     spatial_key: str = Field(
-        "spatial",
-        description="Spatial key in adata.obsm storing spatial coordinates",
-        validation_alias="spatial_key"
+        default="spatial",
+        description="Spatial key in adata.obsm storing spatial coordinates"
     )
     num_anchor: int = Field(
-        51,
-        description="Number of anchor points",
-        validation_alias="num_anchor"
+        default=51,
+        description="Number of anchor points"
     )
     num_neighbour: int = Field(
-        21,
-        description="Number of neighbors",
-        validation_alias="num_neighbour"
+        default=21,
+        description="Number of neighbors"
     )
     num_neighbour_spatial: int = Field(
-        201,
-        description="Number of spatial neighbors",
-        validation_alias="num_neighbour_spatial"
+        default=201,
+        description="Number of spatial neighbors"
     )
     use_w: bool = Field(
-        False,
-        description="Use section-specific weights to account for across-section batch effects",
-        validation_alias="use_w"
+        default=False,
+        description="Use section-specific weights to account for across-section batch effects"
     )
     
     def cli_cmd(self) -> None:
         """Execute the latent to gene command."""
+        if self.save_config:
+            self.save_to_yaml(self.save_config)
+            return
+            
         from gsMap.latent_to_gene import run_latent_to_gene
         run_latent_to_gene(self)
 
 
-class GenerateLDScoreSettings(GsMapBaseSettings, WorkdirMixin):
-    """Settings for generating LD scores."""
+class GenerateLDScoreCommand(BaseModel, BaseConfigMixin, WorkdirMixin):
+    """Generate LD scores for each spot."""
     
     chrom: Union[int, Literal["all"]] = Field(
         ...,
-        description='Chromosome id (1-22) or "all"',
-        validation_alias="chrom"
+        description='Chromosome id (1-22) or "all"'
     )
     bfile_root: Path = Field(
         ...,
-        description="Root path for genotype plink bfiles (.bim, .bed, .fam)",
-        validation_alias="bfile_root"
+        description="Root path for genotype plink bfiles (.bim, .bed, .fam)"
     )
     keep_snp_root: Optional[Path] = Field(
-        None,
-        description="Root path for SNP files",
-        validation_alias="keep_snp_root"
+        default=None,
+        description="Root path for SNP files"
     )
     gtf_annotation_file: Path = Field(
         ...,
-        description="Path to GTF annotation file",
-        validation_alias="gtf_annotation_file"
+        description="Path to GTF annotation file"
     )
     gene_window_size: int = Field(
-        50000,
-        description="Gene window size in base pairs",
-        validation_alias="gene_window_size"
+        default=50000,
+        description="Gene window size in base pairs"
     )
     enhancer_annotation_file: Optional[Path] = Field(
-        None,
-        description="Path to enhancer annotation file (optional)",
-        validation_alias="enhancer_annotation_file"
+        default=None,
+        description="Path to enhancer annotation file (optional)"
     )
     snp_multiple_enhancer_strategy: Literal["max_mkscore", "nearest_TSS"] = Field(
-        "max_mkscore",
-        description="Strategy for handling multiple enhancers per SNP",
-        validation_alias="snp_multiple_enhancer_strategy"
+        default="max_mkscore",
+        description="Strategy for handling multiple enhancers per SNP"
     )
     gene_window_enhancer_priority: Optional[Literal["gene_window_first", "enhancer_first", "enhancer_only"]] = Field(
-        None,
-        description="Priority between gene window and enhancer annotations",
-        validation_alias="gene_window_enhancer_priority"
+        default=None,
+        description="Priority between gene window and enhancer annotations"
     )
     spots_per_chunk: int = Field(
-        1000,
-        description="Number of spots per chunk",
-        validation_alias="spots_per_chunk"
+        default=1000,
+        description="Number of spots per chunk"
     )
     ld_wind: int = Field(
-        1,
-        description="LD window size",
-        validation_alias="ld_wind"
+        default=1,
+        description="LD window size"
     )
     ld_unit: Literal["SNP", "KB", "CM"] = Field(
-        "CM",
-        description="Unit for LD window",
-        validation_alias="ld_unit"
+        default="CM",
+        description="Unit for LD window"
     )
     additional_baseline_annotation: Optional[Path] = Field(
-        None,
-        description="Path of additional baseline annotations",
-        validation_alias="additional_baseline_annotation"
+        default=None,
+        description="Path of additional baseline annotations"
     )
     
     @field_validator('chrom')
@@ -380,70 +373,65 @@ class GenerateLDScoreSettings(GsMapBaseSettings, WorkdirMixin):
     
     def cli_cmd(self) -> None:
         """Execute the generate LD score command."""
+        if self.save_config:
+            self.save_to_yaml(self.save_config)
+            return
+            
         from gsMap.generate_ldscore import run_generate_ldscore
         run_generate_ldscore(self)
 
 
-class SpatialLDSCSettings(GsMapBaseSettings, WorkdirMixin):
-    """Settings for spatial LDSC analysis."""
+class SpatialLDSCCommand(BaseModel, BaseConfigMixin, WorkdirMixin):
+    """Run spatial LDSC for each spot."""
     
     sumstats_file: Path = Field(
         ...,
-        description="Path to GWAS summary statistics file",
-        validation_alias="sumstats_file"
+        description="Path to GWAS summary statistics file"
     )
     w_file: Optional[Path] = Field(
-        None,
-        description="Path to regression weight file",
-        validation_alias="w_file"
+        default=None,
+        description="Path to regression weight file"
     )
     trait_name: str = Field(
         ...,
-        description="Name of the trait being analyzed",
-        validation_alias="trait_name"
+        description="Name of the trait being analyzed"
     )
     n_blocks: int = Field(
-        200,
-        description="Number of blocks for jackknife resampling",
-        validation_alias="n_blocks"
+        default=200,
+        description="Number of blocks for jackknife resampling"
     )
     chisq_max: Optional[int] = Field(
-        None,
-        description="Maximum chi-square value for filtering SNPs",
-        validation_alias="chisq_max"
+        default=None,
+        description="Maximum chi-square value for filtering SNPs"
     )
     num_processes: int = Field(
-        4,
-        description="Number of processes for parallel computing",
-        validation_alias="num_processes"
+        default=4,
+        description="Number of processes for parallel computing"
     )
     use_additional_baseline_annotation: bool = Field(
-        True,
-        description="Use additional baseline annotations when provided",
-        validation_alias="use_additional_baseline_annotation"
+        default=True,
+        description="Use additional baseline annotations when provided"
     )
     use_jax: bool = Field(
-        True,
-        description="Use JAX-accelerated implementation",
-        validation_alias="use_jax"
+        default=True,
+        description="Use JAX-accelerated implementation"
     )
     
     @model_validator(mode='after')
-    def setup_w_file(self) -> 'SpatialLDSCSettings':
+    def setup_w_file(self) -> 'SpatialLDSCCommand':
         """Setup w_file if not provided."""
         if self.w_file is None:
             w_ld_dir = self.ldscore_save_dir / "w_ld"
             if w_ld_dir.exists():
                 self.w_file = w_ld_dir / "weights."
-            else:
-                raise ValueError(
-                    "No w_file provided and no weights found in generate_ldscore output. "
-                    "Either provide --w-file or run generate_ldscore first."
-                )
         return self
     
     def cli_cmd(self) -> None:
         """Execute the spatial LDSC command."""
+        if self.save_config:
+            self.save_to_yaml(self.save_config)
+            return
+            
         if self.use_jax:
             from gsMap.spatial_ldsc_jax_final import run_spatial_ldsc_jax
             run_spatial_ldsc_jax(self)
@@ -452,298 +440,200 @@ class SpatialLDSCSettings(GsMapBaseSettings, WorkdirMixin):
             run_spatial_ldsc(self)
 
 
-class CauchyCombinationSettings(GsMapBaseSettings, WorkdirMixin):
-    """Settings for Cauchy combination analysis."""
+class CauchyCommand(BaseModel, BaseConfigMixin, WorkdirMixin):
+    """Run Cauchy combination for each annotation."""
     
     trait_name: str = Field(
         ...,
-        description="Name of the trait being analyzed",
-        validation_alias="trait_name"
+        description="Name of the trait being analyzed"
     )
     annotation: str = Field(
         ...,
-        description="Name of the annotation in adata.obs to use",
-        validation_alias="annotation"
+        description="Name of the annotation in adata.obs to use"
     )
     sample_name_list: Optional[list[str]] = Field(
-        None,
-        description="List of sample names to process",
-        validation_alias="sample_name_list"
+        default=None,
+        description="List of sample names to process"
     )
     output_file: Optional[Path] = Field(
-        None,
-        description="Path to save the combined Cauchy results",
-        validation_alias="output_file"
+        default=None,
+        description="Path to save the combined Cauchy results"
     )
     
     def cli_cmd(self) -> None:
         """Execute the Cauchy combination command."""
+        if self.save_config:
+            self.save_to_yaml(self.save_config)
+            return
+            
         from gsMap.cauchy_combination_test import run_Cauchy_combination
         run_Cauchy_combination(self)
 
 
-class ReportSettings(GsMapBaseSettings, WorkdirMixin):
-    """Settings for generating reports."""
+class ReportCommand(BaseModel, BaseConfigMixin, WorkdirMixin):
+    """Generate diagnostic plots and tables."""
     
     trait_name: str = Field(
         ...,
-        description="Name of the trait to generate the report for",
-        validation_alias="trait_name"
+        description="Name of the trait to generate the report for"
     )
     annotation: str = Field(
         ...,
-        description="Annotation layer name",
-        validation_alias="annotation"
+        description="Annotation layer name"
     )
     top_corr_genes: int = Field(
-        50,
-        description="Number of top correlated genes to display",
-        validation_alias="top_corr_genes"
+        default=50,
+        description="Number of top correlated genes to display"
     )
     selected_genes: Optional[list[str]] = Field(
-        None,
-        description="List of specific genes to include in the report",
-        validation_alias="selected_genes"
+        default=None,
+        description="List of specific genes to include in the report"
     )
     sumstats_file: Path = Field(
         ...,
-        description="Path to GWAS summary statistics file",
-        validation_alias="sumstats_file"
+        description="Path to GWAS summary statistics file"
     )
     fig_width: Optional[int] = Field(
-        None,
-        description="Width of the generated figures in pixels",
-        validation_alias="fig_width"
+        default=None,
+        description="Width of the generated figures in pixels"
     )
     fig_height: Optional[int] = Field(
-        None,
-        description="Height of the generated figures in pixels",
-        validation_alias="fig_height"
+        default=None,
+        description="Height of the generated figures in pixels"
     )
     point_size: Optional[int] = Field(
-        None,
-        description="Point size for the figures",
-        validation_alias="point_size"
+        default=None,
+        description="Point size for the figures"
     )
     fig_style: Literal["dark", "light"] = Field(
-        "light",
-        description="Style of the generated figures",
-        validation_alias="fig_style"
+        default="light",
+        description="Style of the generated figures"
     )
     
     def cli_cmd(self) -> None:
         """Execute the report generation command."""
+        if self.save_config:
+            self.save_to_yaml(self.save_config)
+            return
+            
         from gsMap.report import run_report
         run_report(self)
 
 
-class FormatSumstatsSettings(GsMapBaseSettings):
-    """Settings for formatting GWAS summary statistics."""
+class FormatSumstatsCommand(BaseModel, BaseConfigMixin):
+    """Format GWAS summary statistics."""
     
     sumstats: Path = Field(
         ...,
-        description="Path to GWAS summary data",
-        validation_alias="sumstats"
+        description="Path to GWAS summary data"
     )
     out: Path = Field(
         ...,
-        description="Path to save the formatted GWAS data",
-        validation_alias="out"
+        description="Path to save the formatted GWAS data"
     )
     
     # Column name specifications
-    snp: Optional[str] = Field(
-        None,
-        description="Name of SNP column",
-        validation_alias="snp"
-    )
-    a1: Optional[str] = Field(
-        None,
-        description="Name of effect allele column",
-        validation_alias="a1"
-    )
-    a2: Optional[str] = Field(
-        None,
-        description="Name of non-effect allele column",
-        validation_alias="a2"
-    )
-    info: Optional[str] = Field(
-        None,
-        description="Name of info column",
-        validation_alias="info"
-    )
-    beta: Optional[str] = Field(
-        None,
-        description="Name of GWAS beta column",
-        validation_alias="beta"
-    )
-    se: Optional[str] = Field(
-        None,
-        description="Name of GWAS standard error of beta column",
-        validation_alias="se"
-    )
-    p: Optional[str] = Field(
-        None,
-        description="Name of p-value column",
-        validation_alias="p"
-    )
-    frq: Optional[str] = Field(
-        None,
-        description="Name of A1 frequency column",
-        validation_alias="frq"
-    )
-    n: Optional[Union[str, int]] = Field(
-        None,
-        description="Name of sample size column or sample size value",
-        validation_alias="n"
-    )
-    z: Optional[str] = Field(
-        None,
-        description="Name of GWAS Z-statistics column",
-        validation_alias="z"
-    )
-    OR: Optional[str] = Field(
-        None,
-        description="Name of GWAS OR column",
-        validation_alias="OR"
-    )
-    se_OR: Optional[str] = Field(
-        None,
-        description="Name of standard error of OR column",
-        validation_alias="se_OR"
-    )
+    snp: Optional[str] = Field(default=None, description="Name of SNP column")
+    a1: Optional[str] = Field(default=None, description="Name of effect allele column")
+    a2: Optional[str] = Field(default=None, description="Name of non-effect allele column")
+    info: Optional[str] = Field(default=None, description="Name of info column")
+    beta: Optional[str] = Field(default=None, description="Name of GWAS beta column")
+    se: Optional[str] = Field(default=None, description="Name of GWAS standard error of beta column")
+    p: Optional[str] = Field(default=None, description="Name of p-value column")
+    frq: Optional[str] = Field(default=None, description="Name of A1 frequency column")
+    n: Optional[Union[str, int]] = Field(default=None, description="Name of sample size column or sample size value")
+    z: Optional[str] = Field(default=None, description="Name of GWAS Z-statistics column")
+    OR: Optional[str] = Field(default=None, description="Name of GWAS OR column")
+    se_OR: Optional[str] = Field(default=None, description="Name of standard error of OR column")
     
     # SNP to rsid conversion
-    chr: str = Field(
-        "Chr",
-        description="Name of SNP chromosome column",
-        validation_alias="chr"
-    )
-    pos: str = Field(
-        "Pos",
-        description="Name of SNP positions column",
-        validation_alias="pos"
-    )
-    dbsnp: Optional[Path] = Field(
-        None,
-        description="Path to reference dbSNP file",
-        validation_alias="dbsnp"
-    )
-    chunksize: int = Field(
-        1000000,
-        description="Chunk size for loading dbSNP file",
-        validation_alias="chunksize"
-    )
+    chr: str = Field(default="Chr", description="Name of SNP chromosome column")
+    pos: str = Field(default="Pos", description="Name of SNP positions column")
+    dbsnp: Optional[Path] = Field(default=None, description="Path to reference dbSNP file")
+    chunksize: int = Field(default=1000000, description="Chunk size for loading dbSNP file")
     
     # Output format and quality
-    format: Literal["gsMap", "COJO"] = Field(
-        "gsMap",
-        description="Format of output data",
-        validation_alias="format"
-    )
-    info_min: float = Field(
-        0.9,
-        description="Minimum INFO score",
-        validation_alias="info_min"
-    )
-    maf_min: float = Field(
-        0.01,
-        description="Minimum MAF",
-        validation_alias="maf_min"
-    )
-    keep_chr_pos: bool = Field(
-        False,
-        description="Keep SNP chromosome and position columns in the output data",
-        validation_alias="keep_chr_pos"
-    )
+    format: Literal["gsMap", "COJO"] = Field(default="gsMap", description="Format of output data")
+    info_min: float = Field(default=0.9, description="Minimum INFO score")
+    maf_min: float = Field(default=0.01, description="Minimum MAF")
+    keep_chr_pos: bool = Field(default=False, description="Keep SNP chromosome and position columns in the output data")
     
     def cli_cmd(self) -> None:
         """Execute the format sumstats command."""
+        if self.save_config:
+            self.save_to_yaml(self.save_config)
+            return
+            
         from gsMap.format_sumstats import gwas_format
         gwas_format(self)
 
 
-class QuickModeSettings(GsMapBaseSettings, WorkdirMixin):
-    """Settings for running gsMap in quick mode."""
+class QuickModeCommand(BaseModel, BaseConfigMixin, WorkdirMixin):
+    """Run the entire gsMap pipeline in quick mode."""
     
     gsMap_resource_dir: Path = Field(
         ...,
-        description="Directory containing gsMap resources",
-        validation_alias="gsMap_resource_dir"
+        description="Directory containing gsMap resources"
     )
     hdf5_path: Path = Field(
         ...,
-        description="Path to the input spatial transcriptomics data (H5AD format)",
-        validation_alias="hdf5_path"
+        description="Path to the input spatial transcriptomics data (H5AD format)"
     )
     annotation: str = Field(
         ...,
-        description="Name of the annotation in adata.obs to use",
-        validation_alias="annotation"
+        description="Name of the annotation in adata.obs to use"
     )
     data_layer: str = Field(
-        "counts",
-        description="Data layer for gene expression",
-        validation_alias="data_layer"
+        default="counts",
+        description="Data layer for gene expression"
     )
     trait_name: Optional[str] = Field(
-        None,
-        description="Name of the trait for GWAS analysis",
-        validation_alias="trait_name"
+        default=None,
+        description="Name of the trait for GWAS analysis"
     )
     sumstats_file: Optional[Path] = Field(
-        None,
-        description="Path to GWAS summary statistics file",
-        validation_alias="sumstats_file"
+        default=None,
+        description="Path to GWAS summary statistics file"
     )
     sumstats_config_file: Optional[Path] = Field(
-        None,
-        description="Path to GWAS summary statistics config file",
-        validation_alias="sumstats_config_file"
+        default=None,
+        description="Path to GWAS summary statistics config file"
     )
     homolog_file: Optional[Path] = Field(
-        None,
-        description="Path to homologous gene conversion file",
-        validation_alias="homolog_file"
+        default=None,
+        description="Path to homologous gene conversion file"
     )
     max_processes: int = Field(
-        10,
-        description="Maximum number of processes for parallel execution",
-        validation_alias="max_processes"
+        default=10,
+        description="Maximum number of processes for parallel execution"
     )
     latent_representation: Optional[str] = Field(
-        None,
-        description="Type of latent representation",
-        validation_alias="latent_representation"
+        default=None,
+        description="Type of latent representation"
     )
     num_neighbour: int = Field(
-        21,
-        description="Number of neighbors",
-        validation_alias="num_neighbour"
+        default=21,
+        description="Number of neighbors"
     )
     num_neighbour_spatial: int = Field(
-        101,
-        description="Number of spatial neighbors",
-        validation_alias="num_neighbour_spatial"
+        default=101,
+        description="Number of spatial neighbors"
     )
     gM_slices: Optional[Path] = Field(
-        None,
-        description="Path to the slice mean file",
-        validation_alias="gM_slices"
+        default=None,
+        description="Path to the slice mean file"
     )
     pearson_residuals: bool = Field(
-        False,
-        description="Use pearson residuals",
-        validation_alias="pearson_residuals"
+        default=False,
+        description="Use pearson residuals"
     )
     use_jax: bool = Field(
-        True,
-        description="Use JAX-accelerated spatial LDSC implementation",
-        validation_alias="use_jax"
+        default=True,
+        description="Use JAX-accelerated spatial LDSC implementation"
     )
     
     @model_validator(mode='after')
-    def validate_sumstats(self) -> 'QuickModeSettings':
+    def validate_sumstats(self) -> 'QuickModeCommand':
         """Validate summary statistics configuration."""
         if self.sumstats_file is None and self.sumstats_config_file is None:
             raise ValueError("Either sumstats_file or sumstats_config_file is required")
@@ -755,46 +645,44 @@ class QuickModeSettings(GsMapBaseSettings, WorkdirMixin):
     
     def cli_cmd(self) -> None:
         """Execute the quick mode pipeline."""
+        if self.save_config:
+            self.save_to_yaml(self.save_config)
+            return
+            
         from gsMap.run_all_mode import run_pipeline
         run_pipeline(self)
 
 
-class CreateSliceMeanSettings(GsMapBaseSettings):
-    """Settings for creating slice mean from multiple samples."""
+class CreateSliceMeanCommand(BaseModel, BaseConfigMixin):
+    """Create slice mean from multiple h5ad files."""
     
     sample_name_list: list[str] = Field(
         ...,
-        description="List of sample names to process",
-        validation_alias="sample_name_list"
+        description="List of sample names to process"
     )
     h5ad_list: Optional[list[Path]] = Field(
-        None,
-        description="List of h5ad file paths",
-        validation_alias="h5ad_list"
+        default=None,
+        description="List of h5ad file paths"
     )
     h5ad_yaml: Optional[Path] = Field(
-        None,
-        description="Path to YAML file containing sample names and h5ad paths",
-        validation_alias="h5ad_yaml"
+        default=None,
+        description="Path to YAML file containing sample names and h5ad paths"
     )
     slice_mean_output_file: Path = Field(
         ...,
-        description="Path to the output file for the slice mean",
-        validation_alias="slice_mean_output_file"
+        description="Path to the output file for the slice mean"
     )
     homolog_file: Optional[Path] = Field(
-        None,
-        description="Path to homologous gene conversion file",
-        validation_alias="homolog_file"
+        default=None,
+        description="Path to homologous gene conversion file"
     )
     data_layer: str = Field(
-        "counts",
-        description="Data layer for gene expression",
-        validation_alias="data_layer"
+        default="counts",
+        description="Data layer for gene expression"
     )
     
     @model_validator(mode='after')
-    def validate_inputs(self) -> 'CreateSliceMeanSettings':
+    def validate_inputs(self) -> 'CreateSliceMeanCommand':
         """Validate input configuration."""
         if self.h5ad_list is None and self.h5ad_yaml is None:
             raise ValueError("Either h5ad_list or h5ad_yaml must be provided")
@@ -810,67 +698,275 @@ class CreateSliceMeanSettings(GsMapBaseSettings):
     
     def cli_cmd(self) -> None:
         """Execute the create slice mean command."""
+        if self.save_config:
+            self.save_to_yaml(self.save_config)
+            return
+            
         from gsMap.create_slice_mean import run_create_slice_mean
         run_create_slice_mean(self)
 
 
+class ConfigManageCommand(BaseModel):
+    """Manage gsMap configuration files."""
+    
+    action: Literal["validate", "convert", "merge", "template"] = Field(
+        ...,
+        description="Action to perform on configuration files"
+    )
+    input_file: Optional[Path] = Field(
+        default=None,
+        description="Input configuration file"
+    )
+    output_file: Optional[Path] = Field(
+        default=None,
+        description="Output configuration file"
+    )
+    merge_file: Optional[Path] = Field(
+        default=None,
+        description="Additional configuration file to merge"
+    )
+    format: Optional[Literal["yaml", "json"]] = Field(
+        default="yaml",
+        description="Output format for configuration files"
+    )
+    command: Optional[str] = Field(
+        default=None,
+        description="Command name for template generation"
+    )
+    
+    def cli_cmd(self) -> None:
+        """Execute configuration management commands."""
+        if self.action == "template":
+            if not self.command or not self.output_file:
+                raise ValueError("Both command and output_file required for template action")
+            create_template_config(self.command, self.output_file)
+            return
+        
+        if not self.input_file:
+            raise ValueError(f"Input file required for {self.action} action")
+            
+        # Load input configuration
+        with open(self.input_file, 'r') as f:
+            if self.input_file.suffix.lower() in ['.yml', '.yaml']:
+                config = yaml.safe_load(f)
+            elif self.input_file.suffix.lower() == '.json':
+                config = json.load(f)
+            else:
+                # Try to detect format
+                content = f.read()
+                f.seek(0)
+                try:
+                    config = yaml.safe_load(f)
+                except:
+                    f.seek(0)
+                    config = json.load(f)
+        
+        if self.action == "validate":
+            print(f"✓ Configuration file is valid: {self.input_file}")
+            print(f"  Contains {len(config)} top-level keys")
+            for key in config:
+                print(f"    - {key}")
+        
+        elif self.action == "convert":
+            if not self.output_file:
+                raise ValueError("Output file required for convert action")
+            
+            self.output_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(self.output_file, 'w') as f:
+                if self.format == "yaml":
+                    yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+                else:
+                    json.dump(config, f, indent=2)
+            
+            print(f"✓ Configuration converted to {self.format}: {self.output_file}")
+        
+        elif self.action == "merge":
+            if not self.merge_file or not self.output_file:
+                raise ValueError("Both merge_file and output_file required for merge action")
+            
+            # Load merge configuration
+            with open(self.merge_file, 'r') as f:
+                if self.merge_file.suffix.lower() in ['.yml', '.yaml']:
+                    merge_config = yaml.safe_load(f)
+                else:
+                    merge_config = json.load(f)
+            
+            # Merge configurations (merge_config takes precedence)
+            config.update(merge_config)
+            
+            self.output_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(self.output_file, 'w') as f:
+                if self.format == "yaml":
+                    yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+                else:
+                    json.dump(config, f, indent=2)
+            
+            print(f"✓ Configurations merged to {self.format}: {self.output_file}")
+
+
 # ============================================================================
-# CLI Application Entry Point
+# Root CLI Command
+# ============================================================================
+
+class GsMapCLI(BaseSettings):
+    """
+    gsMap: Genetically informed spatial mapping of cells for complex traits
+    
+    A comprehensive toolkit for integrating spatial transcriptomics data with GWAS
+    to map cells to human complex traits in a spatially resolved manner.
+    """
+    
+    model_config = SettingsConfigDict(
+        cli_parse_args=True,
+        cli_prog_name="gsMap",
+        cli_use_class_docs_for_groups=True,
+        cli_exit_on_error=True,
+        cli_hide_none_type=True,
+        cli_avoid_json=True,
+        cli_implicit_flags=True,
+        cli_kebab_case=True
+    )
+    
+    # Subcommands (required fields - no default values)
+    quick_mode: CliSubCommand[QuickModeCommand]
+    find_latent: CliSubCommand[FindLatentCommand]
+    latent_to_gene: CliSubCommand[LatentToGeneCommand]
+    generate_ldscore: CliSubCommand[GenerateLDScoreCommand]
+    spatial_ldsc: CliSubCommand[SpatialLDSCCommand]
+    cauchy: CliSubCommand[CauchyCommand]
+    report: CliSubCommand[ReportCommand]
+    format_sumstats: CliSubCommand[FormatSumstatsCommand]
+    create_slice_mean: CliSubCommand[CreateSliceMeanCommand]
+    config: CliSubCommand[ConfigManageCommand]
+    
+    def cli_cmd(self) -> None:
+        """Execute the selected subcommand."""
+        import pyfiglet
+        
+        # Display banner
+        banner = pyfiglet.figlet_format("gsMap", font="doom", width=80, justify="center").rstrip()
+        print(banner, flush=True)
+        version_str = f"Version: {__version__}"
+        print(version_str.center(80), flush=True)
+        print("=" * 80, flush=True)
+        
+        # Run the selected subcommand
+        try:
+            subcommand = get_subcommand(self)
+            if subcommand:
+                CliApp.run_subcommand(self)
+        except SettingsError as e:
+            # No subcommand selected
+            print("\nNo subcommand selected. Use --help to see available commands.")
+            print("\nAvailable commands:")
+            print("  quick-mode         - Run the entire pipeline in quick mode")
+            print("  find-latent        - Find latent representations using GNN")
+            print("  latent-to-gene     - Convert latent representations to gene scores")
+            print("  generate-ldscore   - Generate LD scores")
+            print("  spatial-ldsc       - Run spatial LDSC analysis")
+            print("  cauchy             - Run Cauchy combination")
+            print("  report             - Generate diagnostic reports")
+            print("  format-sumstats    - Format GWAS summary statistics")
+            print("  create-slice-mean  - Create slice mean from multiple samples")
+            print("  config             - Manage configuration files")
+            sys.exit(1)
+
+
+# ============================================================================
+# Utility Functions
+# ============================================================================
+
+def create_template_config(command: str, output_path: Path) -> None:
+    """
+    Create a template configuration file for a specific command.
+    
+    Args:
+        command: Name of the command to create template for
+        output_path: Path to save the template configuration
+    """
+    templates = {
+        'quick-mode': QuickModeCommand,
+        'quick_mode': QuickModeCommand,
+        'find-latent': FindLatentCommand,
+        'find_latent': FindLatentCommand,
+        'latent-to-gene': LatentToGeneCommand,
+        'latent_to_gene': LatentToGeneCommand,
+        'generate-ldscore': GenerateLDScoreCommand,
+        'generate_ldscore': GenerateLDScoreCommand,
+        'spatial-ldsc': SpatialLDSCCommand,
+        'spatial_ldsc': SpatialLDSCCommand,
+        'cauchy': CauchyCommand,
+        'report': ReportCommand,
+        'format-sumstats': FormatSumstatsCommand,
+        'format_sumstats': FormatSumstatsCommand,
+        'create-slice-mean': CreateSliceMeanCommand,
+        'create_slice_mean': CreateSliceMeanCommand,
+    }
+    
+    if command not in templates:
+        raise ValueError(f"Unknown command: {command}. Available: {list(set(templates.keys()))}")
+    
+    # Create instance with example values
+    model_class = templates[command]
+    
+    # Get field info and create example dict
+    example_dict = {}
+    for field_name, field_info in model_class.model_fields.items():
+        if field_info.is_required():
+            # Add placeholder for required fields
+            if 'Path' in str(field_info.annotation):
+                example_dict[field_name] = f"/path/to/{field_name}"
+            elif 'str' in str(field_info.annotation):
+                example_dict[field_name] = f"example_{field_name}"
+            elif 'int' in str(field_info.annotation):
+                example_dict[field_name] = 100
+            elif 'float' in str(field_info.annotation):
+                example_dict[field_name] = 0.5
+            elif 'bool' in str(field_info.annotation):
+                example_dict[field_name] = False
+            elif 'list' in str(field_info.annotation):
+                example_dict[field_name] = ["example1", "example2"]
+    
+    # Save template
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    with open(output_path, 'w') as f:
+        yaml.dump(example_dict, f, default_flow_style=False, sort_keys=False)
+    
+    print(f"Template configuration created: {output_path}")
+    print(f"Edit this file and run: gsMap {command} --config-file {output_path}")
+
+
+# ============================================================================
+# Backward Compatibility Aliases
+# ============================================================================
+
+# For backward compatibility with old names
+FindLatentRepresentations = FindLatentCommand
+LatentToGene = LatentToGeneCommand
+GenerateLDScore = GenerateLDScoreCommand
+SpatialLDSC = SpatialLDSCCommand
+CauchyCombination = CauchyCommand
+Report = ReportCommand
+FormatSumstats = FormatSumstatsCommand
+QuickMode = QuickModeCommand
+CreateSliceMean = CreateSliceMeanCommand
+
+
+# ============================================================================
+# Main Entry Point
 # ============================================================================
 
 def main():
     """Main entry point for the gsMap CLI."""
-    import pyfiglet
-    
-    # Display banner
-    banner = pyfiglet.figlet_format("gsMap", font="doom", width=80, justify="center").rstrip()
-    print(banner, flush=True)
-    version_str = f"Version: {__version__}"
-    print(version_str.center(80), flush=True)
-    print("=" * 80, flush=True)
-    
-    # Parse command from sys.argv
-    if len(sys.argv) < 2:
-        print("Usage: gsMap <command> [options]")
-        print("\nAvailable commands:")
-        print("  quick_mode                    - Run the entire pipeline in quick mode")
-        print("  find_latent_representations   - Find latent representations using GNN")
-        print("  latent_to_gene               - Convert latent representations to gene scores")
-        print("  generate_ldscore             - Generate LD scores")
-        print("  spatial_ldsc                 - Run spatial LDSC analysis")
-        print("  cauchy_combination           - Run Cauchy combination")
-        print("  report                       - Generate diagnostic reports")
-        print("  format_sumstats              - Format GWAS summary statistics")
-        print("  create_slice_mean            - Create slice mean from multiple samples")
-        print("\nUse 'gsMap <command> --help' for command-specific help")
+    try:
+        CliApp.run(GsMapCLI)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
-    
-    command = sys.argv[1]
-    
-    # Map commands to settings classes
-    command_map = {
-        "quick_mode": QuickModeSettings,
-        "find_latent_representations": FindLatentRepresentationsSettings,
-        "latent_to_gene": LatentToGeneSettings,
-        "generate_ldscore": GenerateLDScoreSettings,
-        "spatial_ldsc": SpatialLDSCSettings,
-        "cauchy_combination": CauchyCombinationSettings,
-        "report": ReportSettings,
-        "format_sumstats": FormatSumstatsSettings,
-        "create_slice_mean": CreateSliceMeanSettings,
-    }
-    
-    if command not in command_map:
-        print(f"Unknown command: {command}")
-        print(f"Available commands: {', '.join(command_map.keys())}")
-        sys.exit(1)
-    
-    # Remove command from argv and run
-    sys.argv = [sys.argv[0]] + sys.argv[2:]
-    settings_class = command_map[command]
-    
-    # Run the command using CliApp
-    CliApp.run(settings_class)
 
 
 if __name__ == "__main__":
