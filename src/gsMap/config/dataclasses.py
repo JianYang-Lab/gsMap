@@ -302,13 +302,9 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
         help="Skip expression fraction filtering"
     )] = False
     
-    latent_representation: Annotated[str, typer.Option(
-        help="Type of latent representation"
-    )] = "emb_gcn"
+    latent_representation: str = "emb_gcn"
     
-    latent_representation_indv: Annotated[str, typer.Option(
-        help="Type of individual latent representation"
-    )] = "emb"
+    latent_representation_indv: str = "emb"
     
     spatial_key: Annotated[str, typer.Option(
         help="Spatial key in adata.obsm"
@@ -375,9 +371,7 @@ class SpatialLDSCConfig(ConfigWithAutoPaths):
     # Optional - must be after required fields
     project_name: str = None
     
-    w_file: Annotated[Optional[str], typer.Option(
-        help="Path to regression weight file"
-    )] = None
+    w_file: Optional[str] = None
     
     n_blocks: Annotated[int, typer.Option(
         help="Number of blocks for jackknife resampling",
@@ -482,4 +476,762 @@ class ReportConfig(ConfigWithAutoPaths):
     plot_type: str = "all"
 
 
-# Add other config classes as needed...
+@dataclass
+class MaxPoolingConfig(ConfigWithAutoPaths):
+    """Configuration for max pooling across sections."""
+    
+    # Required from parent
+    workdir: Annotated[Path, typer.Option(
+        help="Path to the working directory",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        resolve_path=True
+    )]
+    
+    sample_name: Annotated[str, typer.Option(
+        help="Name of the sample"
+    )]
+    
+    spe_file_list: Annotated[str, typer.Option(
+        help="List of input ST (.h5ad) files"
+    )]
+    
+    # Optional - must be after required fields
+    project_name: str = None
+    
+    annotation: Annotated[Optional[str], typer.Option(
+        help="Annotation in adata.obs to use"
+    )] = None
+    
+    spatial_key: Annotated[str, typer.Option(
+        help="Spatial key in adata.obsm"
+    )] = "spatial"
+    
+    sim_thresh: Annotated[float, typer.Option(
+        help="Similarity threshold for MNN matching",
+        min=0.0,
+        max=1.0
+    )] = 0.85
+
+
+@dataclass
+class GenerateLDScoreConfig(ConfigWithAutoPaths):
+    """Configuration for generating LD scores."""
+    
+    # Required from parent
+    workdir: Annotated[Path, typer.Option(
+        help="Path to the working directory",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        resolve_path=True
+    )]
+    
+    sample_name: Annotated[str, typer.Option(
+        help="Name of the sample"
+    )]
+    
+    chrom: Annotated[str, typer.Option(
+        help='Chromosome id (1-22) or "all"'
+    )]
+    
+    bfile_root: Annotated[str, typer.Option(
+        help="Root path for genotype plink bfiles (.bim, .bed, .fam)"
+    )]
+    
+    gtf_annotation_file: Annotated[Path, typer.Option(
+        help="Path to GTF annotation file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False
+    )]
+    
+    # Optional - must be after required fields
+    project_name: str = None
+    
+    keep_snp_root: Optional[str] = None  # Internal field
+    
+    gene_window_size: Annotated[int, typer.Option(
+        help="Gene window size in base pairs",
+        min=1000,
+        max=1000000
+    )] = 50000
+    
+    enhancer_annotation_file: Annotated[Optional[Path], typer.Option(
+        help="Path to enhancer annotation file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False
+    )] = None
+    
+    snp_multiple_enhancer_strategy: Annotated[str, typer.Option(
+        help="Strategy for handling multiple enhancers per SNP",
+        case_sensitive=False
+    )] = "max_mkscore"
+    
+    gene_window_enhancer_priority: Annotated[Optional[str], typer.Option(
+        help="Priority between gene window and enhancer annotations"
+    )] = None
+    
+    additional_baseline_annotation: Annotated[Optional[str], typer.Option(
+        help="Path of additional baseline annotations"
+    )] = None
+    
+    spots_per_chunk: Annotated[int, typer.Option(
+        help="Number of spots per chunk",
+        min=100,
+        max=10000
+    )] = 1000
+    
+    ld_wind: Annotated[int, typer.Option(
+        help="LD window size",
+        min=1,
+        max=10
+    )] = 1
+    
+    ld_unit: Annotated[str, typer.Option(
+        help="Unit for LD window",
+        case_sensitive=False
+    )] = "CM"
+    
+    # Additional fields
+    ldscore_save_format: str = "feather"
+    save_pre_calculate_snp_gene_weight_matrix: bool = False
+    baseline_annotation_dir: Optional[str] = None
+    SNP_gene_pair_dir: Optional[str] = None
+
+
+@dataclass
+class CauchyCombinationConfig(ConfigWithAutoPaths):
+    """Configuration for Cauchy combination test."""
+    
+    # Required from parent
+    workdir: Annotated[Path, typer.Option(
+        help="Path to the working directory",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        resolve_path=True
+    )]
+    
+    trait_name: Annotated[str, typer.Option(
+        help="Name of the trait being analyzed"
+    )]
+    
+    annotation: Annotated[str, typer.Option(
+        help="Name of the annotation in adata.obs to use"
+    )]
+    
+    # Optional - must be after required fields
+    sample_name: str = None
+    project_name: str = None
+    
+    sample_name_list: Annotated[Optional[str], typer.Option(
+        help="Space-separated list of sample names"
+    )] = None
+    
+    output_file: Annotated[Optional[Path], typer.Option(
+        help="Path to save the combined Cauchy results"
+    )] = None
+    
+    def __post_init__(self):
+        super().__post_init__()
+        # Handle sample_name_list
+        if self.sample_name_list and isinstance(self.sample_name_list, str):
+            self.sample_name_list = self.sample_name_list.split()
+        
+        if self.sample_name is not None:
+            if self.sample_name_list and len(self.sample_name_list) > 0:
+                raise ValueError("Only one of sample_name and sample_name_list must be provided.")
+            else:
+                self.sample_name_list = [self.sample_name]
+                self.output_file = (
+                    self.get_cauchy_result_file(self.trait_name)
+                    if self.output_file is None
+                    else self.output_file
+                )
+        else:
+            assert self.sample_name_list and len(self.sample_name_list) > 0, "At least one sample name must be provided."
+            assert self.output_file is not None, (
+                "Output_file must be provided if sample_name_list is provided."
+            )
+
+
+@dataclass
+class CreateSliceMeanConfig:
+    """Configuration for creating slice mean from multiple h5ad files."""
+    
+    slice_mean_output_file: Annotated[Path, typer.Option(
+        help="Path to the output file for the slice mean"
+    )]
+    
+    sample_name_list: Annotated[str, typer.Option(
+        help="Space-separated list of sample names"
+    )]
+    
+    h5ad_list: Annotated[str, typer.Option(
+        help="Space-separated list of h5ad file paths"
+    )]
+    
+    # Optional parameters
+    h5ad_yaml: Annotated[Optional[Path], typer.Option(
+        help="Path to YAML file with sample names and h5ad paths",
+        exists=True,
+        file_okay=True,
+        dir_okay=False
+    )] = None
+    
+    homolog_file: Annotated[Optional[Path], typer.Option(
+        help="Path to homologous gene conversion file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False
+    )] = None
+    
+    data_layer: Annotated[str, typer.Option(
+        help="Data layer for gene expression"
+    )] = "counts"
+    
+    species: Optional[str] = None
+    h5ad_dict: Optional[dict] = None
+    
+    def __post_init__(self):
+        import yaml
+        import logging
+        from pathlib import Path
+        
+        logger = logging.getLogger("gsMap")
+        
+        # Parse lists if provided as strings
+        if isinstance(self.sample_name_list, str):
+            self.sample_name_list = self.sample_name_list.split()
+        if isinstance(self.h5ad_list, str):
+            self.h5ad_list = self.h5ad_list.split()
+        
+        if self.h5ad_list is None and self.h5ad_yaml is None:
+            raise ValueError("At least one of --h5ad_list or --h5ad_yaml must be provided.")
+        
+        if self.h5ad_yaml is not None:
+            if isinstance(self.h5ad_yaml, (str, Path)):
+                logger.info(f"Reading h5ad yaml file: {self.h5ad_yaml}")
+                with open(self.h5ad_yaml) as f:
+                    h5ad_dict = yaml.safe_load(f)
+            else:
+                h5ad_dict = self.h5ad_yaml
+        elif self.sample_name_list and self.h5ad_list:
+            logger.info("Reading sample name list and h5ad list")
+            h5ad_dict = dict(zip(self.sample_name_list, self.h5ad_list, strict=False))
+        else:
+            raise ValueError(
+                "Please provide either h5ad_yaml or both sample_name_list and h5ad_list."
+            )
+        
+        # Check if sample names are unique
+        assert len(h5ad_dict) == len(set(h5ad_dict)), "Sample names must be unique."
+        assert len(h5ad_dict) > 1, "At least two samples are required."
+        
+        logger.info(f"Input h5ad files: {h5ad_dict}")
+        
+        # Check if all files exist
+        self.h5ad_dict = {}
+        for sample_name, h5ad_file in h5ad_dict.items():
+            h5ad_file = Path(h5ad_file)
+            if not h5ad_file.exists():
+                raise FileNotFoundError(f"{h5ad_file} does not exist.")
+            self.h5ad_dict[sample_name] = h5ad_file
+        
+        self.slice_mean_output_file = Path(self.slice_mean_output_file)
+        self.slice_mean_output_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Verify homolog file format if provided
+        if self.homolog_file is not None:
+            verify_homolog_file_format(self)
+
+
+@dataclass
+class FormatSumstatsConfig:
+    """Configuration for formatting GWAS summary statistics."""
+    
+    # Required parameters
+    sumstats: Annotated[Path, typer.Option(
+        help="Path to GWAS summary data",
+        exists=True,
+        file_okay=True,
+        dir_okay=False
+    )]
+    
+    out: Annotated[Path, typer.Option(
+        help="Path to save the formatted GWAS data"
+    )]
+    
+    # Optional column name specifications
+    snp: Annotated[Optional[str], typer.Option(
+        help="Name of SNP column"
+    )] = None
+    
+    a1: Annotated[Optional[str], typer.Option(
+        help="Name of effect allele column"
+    )] = None
+    
+    a2: Annotated[Optional[str], typer.Option(
+        help="Name of non-effect allele column"
+    )] = None
+    
+    info: Annotated[Optional[str], typer.Option(
+        help="Name of info column"
+    )] = None
+    
+    beta: Annotated[Optional[str], typer.Option(
+        help="Name of GWAS beta column"
+    )] = None
+    
+    se: Annotated[Optional[str], typer.Option(
+        help="Name of standard error of beta column"
+    )] = None
+    
+    p: Annotated[Optional[str], typer.Option(
+        help="Name of p-value column"
+    )] = None
+    
+    frq: Annotated[Optional[str], typer.Option(
+        help="Name of A1 frequency column"
+    )] = None
+    
+    n: Annotated[Optional[str], typer.Option(
+        help="Name of sample size column or constant value"
+    )] = None
+    
+    z: Annotated[Optional[str], typer.Option(
+        help="Name of GWAS Z-statistics column"
+    )] = None
+    
+    OR: Annotated[Optional[str], typer.Option(
+        help="Name of GWAS OR column"
+    )] = None
+    
+    se_OR: Annotated[Optional[str], typer.Option(
+        help="Name of standard error of OR column"
+    )] = None
+    
+    # SNP position columns
+    chr: Annotated[str, typer.Option(
+        help="Name of SNP chromosome column"
+    )] = "Chr"
+    
+    pos: Annotated[str, typer.Option(
+        help="Name of SNP positions column"
+    )] = "Pos"
+    
+    dbsnp: Annotated[Optional[Path], typer.Option(
+        help="Path to reference dbSNP file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False
+    )] = None
+    
+    chunksize: Annotated[int, typer.Option(
+        help="Chunk size for loading dbSNP file",
+        min=10000,
+        max=10000000
+    )] = 1000000
+    
+    # Output format and quality
+    format: Annotated[str, typer.Option(
+        help="Format of output data",
+        case_sensitive=False
+    )] = "gsMap"
+    
+    info_min: Annotated[float, typer.Option(
+        help="Minimum INFO score",
+        min=0.0,
+        max=1.0
+    )] = 0.9
+    
+    maf_min: Annotated[float, typer.Option(
+        help="Minimum MAF",
+        min=0.0,
+        max=0.5
+    )] = 0.01
+    
+    keep_chr_pos: Annotated[bool, typer.Option(
+        "--keep-chr-pos",
+        help="Keep SNP chromosome and position columns in output"
+    )] = False
+
+
+@dataclass
+class DiagnosisConfig(ConfigWithAutoPaths):
+    """Configuration for diagnostic plots and analysis."""
+    
+    # Required from parent
+    workdir: Annotated[Path, typer.Option(
+        help="Path to the working directory",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        resolve_path=True
+    )]
+    
+    sample_name: Annotated[str, typer.Option(
+        help="Name of the sample"
+    )]
+    
+    annotation: Annotated[str, typer.Option(
+        help="Annotation layer name"
+    )]
+    
+    trait_name: Annotated[str, typer.Option(
+        help="Name of the trait"
+    )]
+    
+    sumstats_file: Annotated[Path, typer.Option(
+        help="Path to GWAS summary statistics file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False
+    )]
+    
+    # Optional - must be after required fields
+    project_name: str = None
+    
+    plot_type: Annotated[str, typer.Option(
+        help="Type of diagnostic plot to generate",
+        case_sensitive=False
+    )] = "all"
+    
+    top_corr_genes: Annotated[int, typer.Option(
+        help="Number of top correlated genes",
+        min=1,
+        max=500
+    )] = 50
+    
+    selected_genes: Annotated[Optional[str], typer.Option(
+        help="Comma-separated list of specific genes"
+    )] = None
+    
+    fig_width: Annotated[Optional[int], typer.Option(
+        help="Width of the generated figures in pixels"
+    )] = None
+    
+    fig_height: Annotated[Optional[int], typer.Option(
+        help="Height of the generated figures in pixels"
+    )] = None
+    
+    point_size: Annotated[Optional[int], typer.Option(
+        help="Point size for the figures"
+    )] = None
+    
+    fig_style: Annotated[str, typer.Option(
+        help="Style of the generated figures",
+        case_sensitive=False
+    )] = "light"
+    
+    customize_fig: bool = False
+    
+    def __post_init__(self):
+        super().__post_init__()
+        import logging
+        logger = logging.getLogger("gsMap")
+        
+        if any([self.fig_width, self.fig_height, self.point_size]):
+            logger.info("Customizing the figure size and point size.")
+            assert all([self.fig_width, self.fig_height, self.point_size]), (
+                "All of fig_width, fig_height, and point_size must be provided."
+            )
+            self.customize_fig = True
+        else:
+            self.customize_fig = False
+
+
+@dataclass
+class VisualizeConfig(ConfigWithAutoPaths):
+    """Configuration for visualization."""
+    
+    # Required from parent
+    workdir: Annotated[Path, typer.Option(
+        help="Path to the working directory",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        resolve_path=True
+    )]
+    
+    sample_name: Annotated[str, typer.Option(
+        help="Name of the sample"
+    )]
+    
+    trait_name: Annotated[str, typer.Option(
+        help="Name of the trait"
+    )]
+    
+    # Optional - must be after required fields
+    project_name: str = None
+    
+    annotation: Annotated[Optional[str], typer.Option(
+        help="Annotation layer name"
+    )] = None
+    
+    fig_title: Annotated[Optional[str], typer.Option(
+        help="Figure title"
+    )] = None
+    
+    fig_height: Annotated[int, typer.Option(
+        help="Height of the figure",
+        min=100,
+        max=5000
+    )] = 600
+    
+    fig_width: Annotated[int, typer.Option(
+        help="Width of the figure",
+        min=100,
+        max=5000
+    )] = 800
+    
+    point_size: Annotated[Optional[int], typer.Option(
+        help="Point size for the figure"
+    )] = None
+    
+    fig_style: Annotated[str, typer.Option(
+        help="Style of the figure",
+        case_sensitive=False
+    )] = "light"
+
+
+@dataclass
+class RunLinkModeConfig(ConfigWithAutoPaths):
+    """Configuration for running gsMap in link mode (pre-computed LD scores)."""
+    
+    # Required from parent
+    workdir: Annotated[Path, typer.Option(
+        help="Path to the working directory",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        resolve_path=True
+    )]
+    
+    sample_name: Annotated[str, typer.Option(
+        help="Name of the sample"
+    )]
+    
+    gsmap_resource_dir: Annotated[Path, typer.Option(
+        "--gsmap-resource-dir",
+        help="Directory containing gsMap resources",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        resolve_path=True
+    )]
+    
+    # Optional - must be after required fields
+    project_name: str = None
+    
+    annotation: Annotated[Optional[str], typer.Option(
+        help="Annotation in adata.obs to use"
+    )] = None
+    
+    spatial_key: Annotated[str, typer.Option(
+        help="Spatial key in adata.obsm"
+    )] = "spatial"
+    
+    trait_name: Annotated[Optional[str], typer.Option(
+        help="Name of the trait for GWAS analysis"
+    )] = None
+    
+    sumstats_file: Annotated[Optional[Path], typer.Option(
+        help="Path to GWAS summary statistics file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False
+    )] = None
+    
+    sumstats_config_file: Annotated[Optional[Path], typer.Option(
+        help="Path to YAML file with trait names and sumstats paths",
+        exists=True,
+        file_okay=True,
+        dir_okay=False
+    )] = None
+    
+    max_processes: Annotated[int, typer.Option(
+        help="Maximum number of processes for parallel execution",
+        min=1,
+        max=50
+    )] = 10
+    
+    use_pooling: Annotated[bool, typer.Option(
+        "--use-pooling",
+        help="Use pooling across sections"
+    )] = False
+    
+    # Hidden parameters (populated in __post_init__)
+    gtffile: Optional[Path] = None
+    bfile_root: Optional[str] = None
+    keep_snp_root: Optional[str] = None
+    w_file: Optional[str] = None
+    snp_gene_weight_adata_path: Optional[str] = None
+    baseline_annotation_dir: Optional[Path] = None
+    SNP_gene_pair_dir: Optional[Path] = None
+    sumstats_config_dict: Optional[dict] = None
+    
+    def __post_init__(self):
+        super().__post_init__()
+        from pathlib import Path
+        import yaml
+        
+        # Set resource paths
+        self.gtffile = Path(f"{self.gsmap_resource_dir}/genome_annotation/gtf/gencode.v46lift37.basic.annotation.gtf")
+        self.bfile_root = f"{self.gsmap_resource_dir}/LD_Reference_Panel/1000G_EUR_Phase3_plink/1000G.EUR.QC"
+        self.keep_snp_root = f"{self.gsmap_resource_dir}/LDSC_resource/hapmap3_snps/hm"
+        self.w_file = f"{self.gsmap_resource_dir}/LDSC_resource/weights_hm3_no_hla/weights."
+        self.snp_gene_weight_adata_path = f"{self.gsmap_resource_dir}/quick_mode/snp_gene_weight_matrix.h5ad"
+        self.baseline_annotation_dir = Path(f"{self.gsmap_resource_dir}/quick_mode/baseline").resolve()
+        self.SNP_gene_pair_dir = Path(f"{self.gsmap_resource_dir}/quick_mode/SNP_gene_pair").resolve()
+        
+        # Check resource files exist
+        if not self.gtffile.exists():
+            raise FileNotFoundError(f"GTF file {self.gtffile} does not exist.")
+        
+        # Validate sumstats inputs
+        if self.sumstats_file is None and self.sumstats_config_file is None:
+            raise ValueError("One of sumstats_file and sumstats_config_file must be provided.")
+        if self.sumstats_file is not None and self.sumstats_config_file is not None:
+            raise ValueError("Only one of sumstats_file and sumstats_config_file must be provided.")
+        if self.sumstats_file is not None and self.trait_name is None:
+            raise ValueError("trait_name must be provided if sumstats_file is provided.")
+        if self.sumstats_config_file is not None and self.trait_name is not None:
+            raise ValueError("trait_name must not be provided if sumstats_config_file is provided.")
+        
+        self.sumstats_config_dict = {}
+        
+        # Load sumstats config
+        if self.sumstats_config_file is not None:
+            with open(self.sumstats_config_file) as f:
+                config = yaml.safe_load(f)
+            for trait_name, sumstats_file in config.items():
+                sumstats_path = Path(sumstats_file)
+                if not sumstats_path.exists():
+                    raise FileNotFoundError(f"{sumstats_file} does not exist.")
+                self.sumstats_config_dict[trait_name] = sumstats_file
+        elif self.sumstats_file is not None and self.trait_name is not None:
+            self.sumstats_config_dict[self.trait_name] = str(self.sumstats_file)
+        
+        # Verify all sumstats files exist
+        for sumstats_file in self.sumstats_config_dict.values():
+            if not Path(sumstats_file).exists():
+                raise FileNotFoundError(f"{sumstats_file} does not exist.")
+
+
+@dataclass
+class ThreeDCombineConfig:
+    """Configuration for 3D visualization and combination."""
+    
+    workdir: Annotated[Path, typer.Option(
+        help="Path to the working directory",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        resolve_path=True
+    )]
+    
+    # Optional parameters
+    trait_name: Annotated[Optional[str], typer.Option(
+        help="Name of the trait"
+    )] = None
+    
+    adata_3d: Annotated[Optional[str], typer.Option(
+        help="Path to 3D anndata file"
+    )] = None
+    
+    project_name: Annotated[Optional[str], typer.Option(
+        help="Project name"
+    )] = None
+    
+    st_id: Annotated[Optional[str], typer.Option(
+        help="Spatial transcriptomics ID"
+    )] = None
+    
+    annotation: Annotated[Optional[str], typer.Option(
+        help="Annotation layer name"
+    )] = None
+    
+    spatial_key: Annotated[str, typer.Option(
+        help="Spatial key in adata.obsm"
+    )] = "spatial"
+    
+    cmap: Annotated[Optional[str], typer.Option(
+        help="Colormap for visualization"
+    )] = None
+    
+    point_size: Annotated[float, typer.Option(
+        help="Point size for 3D visualization",
+        min=0.001,
+        max=1.0
+    )] = 0.01
+    
+    background_color: Annotated[str, typer.Option(
+        help="Background color for visualization"
+    )] = "white"
+    
+    n_snapshot: Annotated[int, typer.Option(
+        help="Number of snapshots to generate",
+        min=1,
+        max=1000
+    )] = 200
+    
+    show_outline: Annotated[bool, typer.Option(
+        "--show-outline",
+        help="Show outline in visualization"
+    )] = False
+    
+    save_mp4: Annotated[bool, typer.Option(
+        "--save-mp4",
+        help="Save as MP4 video"
+    )] = False
+    
+    save_gif: Annotated[bool, typer.Option(
+        "--save-gif",
+        help="Save as GIF animation"
+    )] = False
+    
+    project_dir: Optional[Path] = None
+    
+    def __post_init__(self):
+        from pathlib import Path
+        
+        if self.workdir is None:
+            raise ValueError('workdir must be provided.')
+        work_dir = Path(self.workdir)
+        if self.project_name is not None:
+            self.project_dir = work_dir / self.project_name
+        else:
+            self.project_dir = work_dir
+
+
+# Helper function for homolog file verification
+def verify_homolog_file_format(config):
+    """Verify the format of homolog file."""
+    import logging
+    logger = logging.getLogger("gsMap")
+    
+    if config.homolog_file is not None:
+        logger.info(
+            f"User provided homolog file to map gene names to human: {config.homolog_file}"
+        )
+        # Check the format of the homolog file
+        with open(config.homolog_file) as f:
+            first_line = f.readline().strip()
+            _n_col = len(first_line.split())
+            if _n_col != 2:
+                raise ValueError(
+                    f"Invalid homolog file format. Expected 2 columns, first column should be other species gene name, "
+                    f"second column should be human gene name. Got {_n_col} columns in the first line."
+                )
+            else:
+                first_col_name, second_col_name = first_line.split()
+                config.species = first_col_name
+                logger.info(
+                    f"Homolog file provided and will map gene name from column1:{first_col_name} to column2:{second_col_name}"
+                )
+    else:
+        logger.info("No homolog file provided. Run in human mode.")
