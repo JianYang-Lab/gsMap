@@ -5,10 +5,39 @@ Configuration dataclasses for gsMap commands.
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Annotated
+import yaml
+import logging
+from pathlib import Path
+
+logger = logging.getLogger("gsMap")
 
 import typer
 
 from .base import ConfigWithAutoPaths
+
+def verify_homolog_file_format(config):
+    if config.homolog_file is not None:
+        logger.info(
+            f"User provided homolog file to map gene names to human: {config.homolog_file}"
+        )
+        # check the format of the homolog file
+        with open(config.homolog_file) as f:
+            first_line = f.readline().strip()
+            _n_col = len(first_line.split())
+            if _n_col != 2:
+                raise ValueError(
+                    f"Invalid homolog file format. Expected 2 columns, first column should be other species gene name, second column should be human gene name. "
+                    f"Got {_n_col} columns in the first line."
+                )
+            else:
+                first_col_name, second_col_name = first_line.split()
+                config.species = first_col_name
+                logger.info(
+                    f"Homolog file provided and will map gene name from column1:{first_col_name} to column2:{second_col_name}"
+                )
+    else:
+        logger.info("No homolog file provided. Run in human mode.")
+
 
 
 @dataclass
@@ -114,6 +143,7 @@ class RunAllModeConfig(ConfigWithAutoPaths):
     latent_representation: Optional[str] = None
     gM_slices: Optional[str] = None
     sumstats_config_file: Optional[str] = None
+    species: Optional[str] = None
 
 
 @dataclass
@@ -271,6 +301,12 @@ class FindLatentRepresentationsConfig(ConfigWithAutoPaths):
         file_okay=True,
         dir_okay=False
     )] = None
+
+    species: Optional[str] = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        verify_homolog_file_format(self)
 
 
 @dataclass
@@ -697,11 +733,7 @@ class CreateSliceMeanConfig:
     h5ad_dict: Optional[dict] = None
     
     def __post_init__(self):
-        import yaml
-        import logging
-        from pathlib import Path
-        
-        logger = logging.getLogger("gsMap")
+
         
         # Parse lists if provided as strings
         if isinstance(self.sample_name_list, str):

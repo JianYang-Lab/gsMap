@@ -40,7 +40,7 @@ dependencies = [
     'bitarray >=2.9.2, <3.0.0',
     'pyarrow',
     'scikit-misc',
-    'numba'
+    'numba',
     'jax[cuda]'
 ]
 

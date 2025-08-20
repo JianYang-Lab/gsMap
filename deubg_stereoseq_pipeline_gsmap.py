@@ -22,7 +22,6 @@ from gsMap.config import (
     MaxPoolingConfig,
     RunLinkModeConfig,
     ThreeDCombineConfig,
-    get_dataclass_from_parser
 )
 from gsMap.find_latent_representation import run_find_latent_representation
 from gsMap.latent_to_gene import run_latent_to_gene
@@ -36,7 +35,7 @@ class PipelineConfig:
     """Configuration for the gsMap pipeline"""
 
     # Base paths
-    workdir: str = "/mnt/d/01_Project/01_Research/202312_gsMap/experiment/20250807_refactor_for_gsmap3d/02_latent2gene_optmization_max_pooling/01_mouse_E9.5_dev_v1"
+    workdir: str | Path = "/mnt/d/01_Project/01_Research/202312_gsMap/experiment/20250807_refactor_for_gsmap3d/02_latent2gene_optmization_max_pooling/01_mouse_E9.5_dev_v1"
     data_root: str = "/mnt/d/01_Project/01_Research/202312_gsMap/experiment/20250807_refactor_for_gsmap3d/02_latent2gene_optmization_max_pooling/Mouse_E9.5"
     gsmap_resource: str = "/mnt/d/01_Project/01_Research/202312_gsMap/data/gsMap_dev_data/online_resource/gsMap_resource"
     gwas_summary: str = "/mnt/d/01_Project/01_Research/202312_gsMap/experiment/20250807_refactor_for_gsmap3d/02_latent2gene_optmization_max_pooling/mouse_e9_5_gwas_config.yaml"

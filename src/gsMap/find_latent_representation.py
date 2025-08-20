@@ -101,6 +101,8 @@ def run_find_latent_representation(args: FindLatentRepresentationsConfig):
         get_trainning_data.expression_merge.size(1),
         get_trainning_data.expression_gcn_merge.size(1),
     ]
+
+
     class_size = len(torch.unique(get_trainning_data.label_merge))
     batch_size = get_trainning_data.batch_size
     cell_size, out_size = get_trainning_data.expression_merge.shape
@@ -220,13 +222,6 @@ def run_find_latent_representation(args: FindLatentRepresentationsConfig):
             
         # Save the ST data with embeddings
         adata.write_h5ad(output_path)
+
+
     
-        
-        # cell_name[st_name] = adata.obs_names
-        # processed_list.append(output_path)
-    
-    # compute the section weight
-    # compute_weight(emb_dict, depth_dict, args.section_weight_path, cell_size=10000)
-    
-    # build the cell net across sections
-    # build_across_section_net(emb_dict, cell_name, args.cell_net_path, batch_size=10000, cell_size=10000)

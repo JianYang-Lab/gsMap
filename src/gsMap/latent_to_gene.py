@@ -14,7 +14,6 @@ from gsMap.config import LatentToGeneConfig
 
 logger = logging.getLogger(__name__)
 
-
 def find_neighbors(coor, num_neighbour):
     """
     Find Neighbors of each cell (based on spatial coordinates).

@@ -11,13 +11,14 @@ from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 from scipy.special import softmax
 from gsMap.GNN.GCN import GCN, build_spatial_graph
+from gsMap.config import FindLatentRepresentationsConfig
 
 logger = logging.getLogger(__name__)
 
 # sys.path.append("/storage/yangjianLab/songliyang/SpatialData/gsMap_software/gsMap_V2/GNN")
 # from GCN import GCN, build_spatial_graph
 
-def find_common_hvg(spe_file_list, params):
+def find_common_hvg(spe_file_list, params: FindLatentRepresentationsConfig):
     """
     Identifies common highly variable genes (HVGs) across multiple ST datasets and calculates
     the number of cells to sample from each dataset.
