@@ -35,13 +35,13 @@ dependencies = [
     'plotly',
     'kaleido',
     'jinja2',
-    'scanpy >=1.8.0',
-    'zarr>=2,<3',
+    'scanpy >=1.11.0',
+    'zarr >=2.18.0',
     'bitarray >=2.9.2, <3.0.0',
     'pyarrow',
     'scikit-misc',
     'numba',
-    'jax[cuda]'
+    'jax[cuda12]'
 ]
 
 [project.optional-dependencies]

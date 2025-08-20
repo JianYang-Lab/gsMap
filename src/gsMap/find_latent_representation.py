@@ -16,6 +16,32 @@ from torch.utils.data import (
 from scipy.stats import rankdata
 from scipy.sparse import csr_matrix
 from zarr.storage import DirectoryStore, LRUStoreCache
+
+
+logger = logging.getLogger(__name__)
+try:
+    import jax
+    import jax.numpy as jnp
+    from jax import jit, vmap, pmap
+    from jax.scipy.stats import rankdata as jax_rankdata
+    JAX_AVAILABLE = True
+    # Set JAX to use GPU if available, otherwise CPU
+    try:
+        _ = jax.devices('gpu')
+        logger.info("JAX GPU backend available")
+    except:
+        logger.info("JAX CPU backend will be used")
+except ImportError:
+    JAX_AVAILABLE = False
+    logger.warning("JAX not available, using pure Python implementation")
+
+try:
+    import zarr.codecs
+    # Sharding will be configured via array creation options
+    logger.info("Using zarr with sharding support")
+except ImportError:
+    raise RuntimeError("Zarr codecs not available, please upgrade zarr")
+
 from gsMap.GNN.TrainStep import ModelTrain
 from gsMap.GNN.STmodel import StEmbeding
 from gsMap.ST_process import TrainingData, find_common_hvg, InferenceData
@@ -44,105 +70,349 @@ def csc_col_sum(mat: csr_matrix, fill_zero=False):
     return mat.tocsc().sum(0).A1
 
 
-def rank_data_nz(arr, glob_positions, n_genes):
-    # init res
+def rank_data_nz_vectorized(arr, n_genes):
+    """Vectorized version of rank_data_nz for better performance."""
     res = np.ones((arr.shape[0], n_genes), dtype=np.float32)
-    for i in range(arr.shape[0]):
-        cols = glob_positions[arr[i].indices]
-        res[i, cols] = rankdata(arr[i].data) + n_genes - arr[i].nnz
+    
+    # Process in batches for better cache efficiency
+    batch_size = min(100, arr.shape[0])
+    
+    for batch_start in range(0, arr.shape[0], batch_size):
+        batch_end = min(batch_start + batch_size, arr.shape[0])
+        
+        for i in range(batch_start, batch_end):
+            row = arr.getrow(i)
+            if row.nnz > 0:
+                # Data is already aligned, so indices directly correspond to gene positions
+                res[i, row.indices] = rankdata(row.data, method='average') + n_genes - row.nnz
+    
     return res
 
 
+if JAX_AVAILABLE:
+    @jit
+    def jax_rank_single_row(data, indices, n_genes):
+        """JAX-optimized ranking for a single row."""
+        n_nonzero = data.shape[0]
+        
+        # Create full row with zeros
+        full_row = jnp.zeros(n_genes, dtype=jnp.float32)
+        full_row = full_row.at[indices].set(data)
+        
+        # Rank non-zero elements
+        mask = full_row != 0
+        ranks = jnp.zeros_like(full_row)
+        
+        # Get ranks for non-zero elements
+        nonzero_data = jnp.where(mask, full_row, jnp.inf)
+        sorted_indices = jnp.argsort(nonzero_data)
+        
+        # Compute ranks
+        rank_values = jnp.arange(1, n_genes + 1, dtype=jnp.float32)
+        ranks = ranks.at[sorted_indices].set(rank_values)
+        
+        # Adjust ranks for zeros (they get max rank)
+        ranks = jnp.where(mask, ranks, 1.0)
+        
+        # Adjust for sparsity
+        ranks = jnp.where(mask, ranks + n_genes - n_nonzero, 1.0)
+        
+        return ranks
+    
+    @jit
+    def jax_rank_dense_batch(dense_matrix):
+        """JAX-optimized batch ranking for dense matrices."""
+        n_rows, n_cols = dense_matrix.shape
+        
+        # Vectorized ranking
+        # Add small noise to break ties consistently
+        noise = jax.random.uniform(jax.random.PRNGKey(0), dense_matrix.shape) * 1e-10
+        matrix_with_noise = dense_matrix + noise
+        
+        # Get argsort for each row
+        sorted_indices = jnp.argsort(matrix_with_noise, axis=1)
+        
+        # Create ranks
+        ranks = jnp.zeros_like(dense_matrix)
+        row_indices = jnp.arange(n_rows)[:, None]
+        col_ranks = jnp.arange(1, n_cols + 1)[None, :]
+        
+        ranks = ranks.at[row_indices, sorted_indices].set(col_ranks)
+        
+        # Handle zeros by setting their rank to 1
+        ranks = jnp.where(dense_matrix != 0, ranks, 1.0)
+        
+        return ranks
+    
+    def rank_data_nz_jax(arr, n_genes):
+        """JAX-optimized rank calculation for sparse matrices."""
+        n_rows = arr.shape[0]
+        
+        # Convert sparse to dense for JAX processing
+        # Process in chunks to manage memory
+        chunk_size = min(1000, n_rows)
+        all_ranks = []
+        
+        for start_idx in range(0, n_rows, chunk_size):
+            end_idx = min(start_idx + chunk_size, n_rows)
+            
+            # Convert chunk to dense
+            chunk = arr[start_idx:end_idx].toarray().astype(np.float32)
+            
+            # Compute ranks using JAX
+            chunk_ranks = jax_rank_dense_batch(jnp.array(chunk))
+            
+            # Convert back to numpy
+            all_ranks.append(np.array(chunk_ranks))
+        
+        # Concatenate all results
+        result = np.vstack(all_ranks) if all_ranks else np.ones((n_rows, n_genes), dtype=np.float32)
+        
+        return result
+
+
+def rank_data_nz(arr, n_genes, use_jax=True):
+    """Main ranking function with JAX acceleration."""
+    if use_jax and JAX_AVAILABLE and arr.nnz > 0:
+        try:
+            return rank_data_nz_jax(arr, n_genes)
+        except Exception as e:
+            logger.warning(f"JAX ranking failed, falling back to vectorized: {e}")
+            return rank_data_nz_vectorized(arr, n_genes)
+    else:
+        return rank_data_nz_vectorized(arr, n_genes)
+
+
+
+
 class ZarrBackedCSR:
+
     def __init__(
         self,
         path: str,
         ncols: int,
         mode: str = "r",
-        chunks_indptr: int = 1000,
-        chunks_data: int = 10000,
-        lru_cache_size: int = 1,
+        chunks_rows: int = 1000,
+        chunks_data: int = 5_000,
+        shards: int = 10_000_000,
+        lru_cache_size: int = 2,
         **kwargs,
     ):
+        zarr
+        # Check zarr version
+        zarr_version = tuple(map(int, zarr.__version__.split('.')[:2]))
+        if zarr_version < (2, 18):
+            raise RuntimeError(
+                f"Zarr version {zarr.__version__} is not supported. "
+                f"Please upgrade to zarr>=2.18 for sharding support: pip install 'zarr>=2.18'"
+            )
+        
         self.path = path
         self.ncols = ncols
+        
+        # Configure storage with sharding
         store = DirectoryStore(self.path)
-        lru_cache_store = LRUStoreCache(
-            store, max_size=lru_cache_size * 2024**3
-        )
-        self.zarr = zarr.open(lru_cache_store, mode=mode)
+        
+        # Configure sharding for fewer files
 
-        if "indptr" not in self.zarr.array_keys():
-            self.zarr.create(
+        # Use LRU cache for better performance
+        lru_cache_store = LRUStoreCache(
+            store, max_size=lru_cache_size * 1024**3
+        )
+        self.zarr_array = zarr.open(lru_cache_store, mode=mode)
+
+        if "indptr" not in self.zarr_array.array_keys():
+            # Configure compression
+            compressor = zarr.Blosc(cname='zstd', clevel=3, shuffle=zarr.Blosc.BITSHUFFLE)
+            
+            self.zarr_array.create(
                 "indptr",
                 shape=(0,),
-                dtype=np.int64,
-                chunks=(chunks_indptr,),
+                dtype=np.int32,
+                chunks=(chunks_rows,),
+                compressor=compressor,
                 **kwargs,
             )
-            self.zarr.create(
-                "indices",
+            
+            # Only create combined array (no backward compatibility)
+            dt = np.dtype([('idx', np.uint16), ('val', np.float32)])
+            self.zarr_array.create(
+                "data_indices",
                 shape=(0,),
-                dtype=np.uint16,
+                dtype=dt,
                 chunks=(chunks_data,),
+                compressor=compressor,
+                shards = (shards,),
                 **kwargs,
             )
-            self.zarr.create(
-                "data",
-                shape=(0,),
-                dtype=np.float32,
-                chunks=(chunks_data,),
-                **kwargs,
-            )
-            self.zarr.attrs["ncols"] = ncols  # Store critical metadata
+            
+            self.zarr_array.attrs["ncols"] = ncols
+            self.zarr_array.attrs["version"] = "3.0"
 
-        self._indptr = self.zarr["indptr"]
-        self._indices = self.zarr["indices"]
-        self._data = self.zarr["data"]
+        # Load indptr entirely into memory (it's small)
+        self._indptr_zarr = self.zarr_array["indptr"]
+        self._indptr = np.array(self._indptr_zarr[:], dtype=np.int32) if len(self._indptr_zarr) > 0 else np.array([], dtype=np.int32)
+        
+        # Keep data_indices as zarr array for lazy loading
+        self._data_indices = self.zarr_array["data_indices"]
+        
         self._binary_instance = None
 
     @classmethod
     def open(cls, path: str | Path, mode="r", **kwargs):
         z = zarr.open(path, mode="r")
         attrs = z.attrs
-        assert "ncols" in attrs, "ncols not found in attrs"
+        if "ncols" not in attrs:
+            raise ValueError("Invalid ZarrBackedCSR: ncols not found in attributes")
+        if attrs.get("version", "1.0") < "3.0":
+            raise ValueError(f"Unsupported ZarrBackedCSR version {attrs.get('version', '1.0')}. Please recreate with version 3.0")
         return cls(path, ncols=attrs["ncols"], mode=mode, **kwargs)
 
     @property
-    def bool(self):
-        if self._binary_instance is None:
-            binary_instance = self.open(self.path, mode="r")
-            binary_instance._data = np.ones(self.nnz, dtype=np.uint8)
-            self._binary_instance = binary_instance
-        return self._binary_instance
-
-    @property
     def shape(self):
-        return (self._indptr.shape[0] - 1, self.ncols)
+        return (len(self._indptr) - 1, self.ncols) if len(self._indptr) > 0 else (0, self.ncols)
 
     @property
     def nnz(self):
-        return len(self._data)
+        return self._indptr[-1] if len(self._indptr) > 0 else 0
 
     def append(self, mat: csr_matrix):
         if mat.shape[1] != self.ncols:
-            raise ValueError("Number of columns must match")
+            raise ValueError(f"Number of columns must match. Expected {self.ncols}, got {mat.shape[1]}")
         if mat.nnz == 0:  # Skip empty matrices
             return
 
-        if self._indptr.shape[0] == 0:
-            self._indptr.append(np.array([0], dtype=np.int64))
-        new_indptr = mat.indptr[1:] + self._indptr[-1]
-
-        self._indptr.append(new_indptr)
-        self._data.append(mat.data)
-        self._indices.append(mat.indices)
-
-        self._binary_instance = None  # Reset binary instance
+        # Update in-memory indptr
+        if len(self._indptr) == 0:
+            self._indptr = np.array([0], dtype=np.int32)
+            self._indptr_zarr.append(np.array([0], dtype=np.int32))
+        
+        current_nnz = self._indptr[-1]
+        new_indptr = mat.indptr[1:].astype(np.int32) + current_nnz
+        
+        # Update zarr indptr
+        self._indptr_zarr.append(new_indptr)
+        
+        # Update in-memory indptr
+        self._indptr = np.append(self._indptr, new_indptr)
+        
+        # Store in combined array only
+        combined = np.empty(mat.nnz, dtype=[('idx', np.uint16), ('val', np.float32)])
+        combined['idx'] = mat.indices.astype(np.uint16)
+        combined['val'] = mat.data.astype(np.float32)
+        self._data_indices.append(combined)
+    
+    def __getitem__(self, indices):
+        """Optimized slicing with combined data access."""
+        if isinstance(indices, (int, np.integer)):
+            indices = [indices]
+        
+        indices_array = np.asarray(indices, dtype=np.int32)
+        M = len(indices_array)
+        
+        if M == 0:
+            raise ValueError("Expected non-empty indices")
+        
+        nrows = len(self._indptr) - 1
+        if nrows == 0:
+            return csr_matrix((M, self.ncols), dtype=np.float32)
+        
+        # Handle negative indices
+        negative_mask = indices_array < 0
+        if negative_mask.any():
+            indices_array[negative_mask] += nrows
+        
+        # Use in-memory indptr for fast access
+        start_ptrs = self._indptr[indices_array]
+        end_ptrs = self._indptr[indices_array + 1]
+        
+        # Calculate total size needed
+        row_nnz = end_ptrs - start_ptrs
+        res_indptr = np.zeros(M + 1, dtype=np.int32)
+        np.cumsum(row_nnz, out=res_indptr[1:])
+        
+        total_nnz = res_indptr[-1]
+        
+        if total_nnz == 0:
+            return csr_matrix((M, self.ncols), dtype=np.float32)
+        
+        # Optimize data fetching by merging consecutive ranges
+        ranges = [(start, end) for start, end in zip(start_ptrs, end_ptrs) if end > start]
+        
+        if not ranges:
+            return csr_matrix((M, self.ncols), dtype=np.float32)
+        
+        # Merge nearby ranges to reduce I/O
+        merged_ranges = []
+        current_start, current_end = ranges[0]
+        
+        for start, end in ranges[1:]:
+            if start <= current_end + 5000:  # Merge if gap < 5000 elements
+                current_end = max(current_end, end)
+            else:
+                merged_ranges.append((current_start, current_end))
+                current_start, current_end = start, end
+        merged_ranges.append((current_start, current_end))
+        
+        # Fetch data in merged chunks
+        all_data = []
+        for chunk_start, chunk_end in merged_ranges:
+            chunk_data = self._data_indices[chunk_start:chunk_end]
+            all_data.append(chunk_data)
+        
+        # Combine and extract needed elements
+        if len(all_data) == 1:
+            combined_data = all_data[0]
+        else:
+            combined_data = np.concatenate(all_data)
+        
+        # Extract only the needed elements
+        needed_indices = []
+        base_offset = merged_ranges[0][0]
+        for start, end in zip(start_ptrs, end_ptrs):
+            if end > start:
+                needed_indices.extend(range(start - base_offset, end - base_offset))
+        
+        if needed_indices:
+            sub_combined = combined_data[needed_indices]
+            sub_indices = sub_combined['idx']
+            sub_data = sub_combined['val']
+        else:
+            sub_indices = np.array([], dtype=np.uint16)
+            sub_data = np.array([], dtype=np.float32)
+        
+        return csr_matrix(
+            (sub_data, sub_indices, res_indptr),
+            shape=(M, self.ncols),
+            dtype=np.float32
+        )
 
     def tail_add_dummy(self):
         """Add a dummy row at the end of the matrix."""
-        self._indptr.append(np.array([self._indptr[-1]]))
+        if len(self._indptr) > 0:
+            last_val = self._indptr[-1]
+            self._indptr_zarr.append(np.array([last_val], dtype=np.int32))
+            self._indptr = np.append(self._indptr, last_val)
+    
+    def optimize_chunks(self):
+        """Dynamically optimize chunk sizes based on data characteristics."""
+        if self._indptr.shape[0] > 1:
+            # Calculate average row density
+            total_nnz = self._indptr[-1]
+            n_rows = self._indptr.shape[0] - 1
+            avg_nnz_per_row = total_nnz / n_rows if n_rows > 0 else 0
+            
+            # Optimize row chunks: aim for ~100KB per chunk
+            optimal_rows_per_chunk = max(100, min(2000, int(100000 / (avg_nnz_per_row * 6))))  # 6 bytes per entry
+            
+            # Optimize data chunks: aim for ~500KB per chunk  
+            optimal_data_chunk = max(10000, min(200000, int(500000 / 6)))
+            
+            logger.info(f"Optimal chunking - rows: {optimal_rows_per_chunk}, data: {optimal_data_chunk}")
+            logger.info(f"Average NNZ per row: {avg_nnz_per_row:.1f}")
+            
+            return optimal_rows_per_chunk, optimal_data_chunk
+        return 500, 50000
 
 
 def _parse_spe_file_list(spe_file_list: str | list[str]):
@@ -198,6 +468,19 @@ def index_splitter(n, splits):
 
 def run_find_latent_representation(args: FindLatentRepresentationsConfig):
     logger.info(f'Project dir: {args.project_dir}')
+    
+    # Check for JAX availability
+    if JAX_AVAILABLE:
+        logger.info("JAX acceleration is available for rank calculations")
+        # Check if GPU is available
+        try:
+            devices = jax.devices()
+            logger.info(f"JAX devices available: {devices}")
+        except:
+            pass
+    else:
+        logger.info("JAX not available, using vectorized numpy implementation")
+    
     set_seed(2024)
     
     # Find the hvg
@@ -351,22 +634,31 @@ def run_find_latent_representation(args: FindLatentRepresentationsConfig):
         else:
             X = adata.X
         
-        # Convert to sparse if not already
+        # Efficient sparse matrix conversion
         if not hasattr(X, 'tocsr'):
-            X = csr_matrix(X)
+            X = csr_matrix(X, dtype=np.float32)  # Use float32 for memory efficiency
         else:
             X = X.tocsr()
+            if X.dtype != np.float32:
+                X = X.astype(np.float32)  # Convert to float32 if needed
         
-        # Calculate ranks using non-zero method
-        global_positions = np.arange(n_genes)  # All genes are already aligned
-        study_log_ranks = np.log(rank_data_nz(X, global_positions, n_genes))
+        # Pre-allocate output arrays for efficiency
+        X.sort_indices()  # Sort indices for better cache performance
         
-        # Check for anomalous ranks
-        max_study_log_ranks = study_log_ranks.max()
-        if max_study_log_ranks > 11:
-            logger.warning(
-                f"Max log rank {max_study_log_ranks} is larger than 11 in {st_name}"
-            )
+        # Calculate ranks using optimized method
+        n_cells = X.shape[0]
+        
+        # Choose ranking method based on data size and available resources
+        if JAX_AVAILABLE and n_cells > 50:
+            # Use JAX for medium to large datasets
+            logger.debug(f"Using JAX acceleration for {n_cells} cells")
+            study_ranks = rank_data_nz(X, n_genes, use_jax=True)
+        else:
+            # Use vectorized numpy for small datasets
+            logger.debug(f"Using vectorized numpy for {n_cells} cells")
+            study_ranks = rank_data_nz(X, n_genes, use_jax=False)
+        
+        study_log_ranks = np.log(study_ranks,)
         
         # Convert to sparse and append to zarr
         study_log_ranks_sparse = csr_matrix(study_log_ranks)

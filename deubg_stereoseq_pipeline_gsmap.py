@@ -24,7 +24,7 @@ from gsMap.config import (
     ThreeDCombineConfig,
 )
 from gsMap.find_latent_representation import run_find_latent_representation
-from gsMap.latent_to_gene import run_latent_to_gene
+from gsMap.latent_to_gene_gnn import run_latent_to_gene
 from gsMap.max_pooling import run_max_pooling
 from gsMap.run_link_mode import run_pipeline_link
 from gsMap.three_d_combine import three_d_combine
@@ -41,7 +41,7 @@ class PipelineConfig:
     gwas_summary: str = "/mnt/d/01_Project/01_Research/202312_gsMap/experiment/20250807_refactor_for_gsmap3d/02_latent2gene_optmization_max_pooling/mouse_e9_5_gwas_config.yaml"
 
     # Project settings
-    project_name: str = "202508115_Mouse_E9.5_dev_v3"
+    project_name: str = "202508115_Mouse_E9.5_dev_v4"
     annotation: str = "mapped_celltype"
     spatial_key: str = "spatial"
 
