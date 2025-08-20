@@ -3,6 +3,9 @@ import torch
 import numpy as np
 import logging
 import random
+import gc
+import zarr
+import pandas as pd
 from pathlib import Path
 from torch.utils.data import (
     DataLoader,
@@ -10,6 +13,9 @@ from torch.utils.data import (
     TensorDataset,
     SubsetRandomSampler,
 )
+from scipy.stats import rankdata
+from scipy.sparse import csr_matrix
+from zarr.storage import DirectoryStore, LRUStoreCache
 from gsMap.GNN.TrainStep import ModelTrain
 from gsMap.GNN.STmodel import StEmbeding
 from gsMap.ST_process import TrainingData, find_common_hvg, InferenceData
@@ -19,6 +25,124 @@ from gsMap.slice_mean import process_slice_mean
 from operator import itemgetter
 
 logger = logging.getLogger(__name__)
+
+
+def csc_col_sum(mat: csr_matrix, fill_zero=False):
+    if fill_zero:
+        ncols = mat.shape[1]
+        zero_ranks = np.log((ncols - mat.getnnz(axis=1) + 1) / 2)
+        mat = mat.tocsc()
+        nz_sum = mat.sum(axis=0).A1
+
+        not_to_fill = mat != 0
+        zero_sum = zero_ranks.sum() - (
+            zero_ranks * not_to_fill
+        )  # NOTE: `not_to_fill` is a matrix, * here is matrix multiplication
+
+        return nz_sum + zero_sum
+
+    return mat.tocsc().sum(0).A1
+
+
+def rank_data_nz(arr, glob_positions, n_genes):
+    # init res
+    res = np.ones((arr.shape[0], n_genes), dtype=np.float32)
+    for i in range(arr.shape[0]):
+        cols = glob_positions[arr[i].indices]
+        res[i, cols] = rankdata(arr[i].data) + n_genes - arr[i].nnz
+    return res
+
+
+class ZarrBackedCSR:
+    def __init__(
+        self,
+        path: str,
+        ncols: int,
+        mode: str = "r",
+        chunks_indptr: int = 1000,
+        chunks_data: int = 10000,
+        lru_cache_size: int = 1,
+        **kwargs,
+    ):
+        self.path = path
+        self.ncols = ncols
+        store = DirectoryStore(self.path)
+        lru_cache_store = LRUStoreCache(
+            store, max_size=lru_cache_size * 2024**3
+        )
+        self.zarr = zarr.open(lru_cache_store, mode=mode)
+
+        if "indptr" not in self.zarr.array_keys():
+            self.zarr.create(
+                "indptr",
+                shape=(0,),
+                dtype=np.int64,
+                chunks=(chunks_indptr,),
+                **kwargs,
+            )
+            self.zarr.create(
+                "indices",
+                shape=(0,),
+                dtype=np.uint16,
+                chunks=(chunks_data,),
+                **kwargs,
+            )
+            self.zarr.create(
+                "data",
+                shape=(0,),
+                dtype=np.float32,
+                chunks=(chunks_data,),
+                **kwargs,
+            )
+            self.zarr.attrs["ncols"] = ncols  # Store critical metadata
+
+        self._indptr = self.zarr["indptr"]
+        self._indices = self.zarr["indices"]
+        self._data = self.zarr["data"]
+        self._binary_instance = None
+
+    @classmethod
+    def open(cls, path: str | Path, mode="r", **kwargs):
+        z = zarr.open(path, mode="r")
+        attrs = z.attrs
+        assert "ncols" in attrs, "ncols not found in attrs"
+        return cls(path, ncols=attrs["ncols"], mode=mode, **kwargs)
+
+    @property
+    def bool(self):
+        if self._binary_instance is None:
+            binary_instance = self.open(self.path, mode="r")
+            binary_instance._data = np.ones(self.nnz, dtype=np.uint8)
+            self._binary_instance = binary_instance
+        return self._binary_instance
+
+    @property
+    def shape(self):
+        return (self._indptr.shape[0] - 1, self.ncols)
+
+    @property
+    def nnz(self):
+        return len(self._data)
+
+    def append(self, mat: csr_matrix):
+        if mat.shape[1] != self.ncols:
+            raise ValueError("Number of columns must match")
+        if mat.nnz == 0:  # Skip empty matrices
+            return
+
+        if self._indptr.shape[0] == 0:
+            self._indptr.append(np.array([0], dtype=np.int64))
+        new_indptr = mat.indptr[1:] + self._indptr[-1]
+
+        self._indptr.append(new_indptr)
+        self._data.append(mat.data)
+        self._indices.append(mat.indices)
+
+        self._binary_instance = None  # Reset binary instance
+
+    def tail_add_dummy(self):
+        """Add a dummy row at the end of the matrix."""
+        self._indptr.append(np.array([self._indptr[-1]]))
 
 
 def _parse_spe_file_list(spe_file_list: str | list[str]):
@@ -194,12 +318,20 @@ def run_find_latent_representation(args: FindLatentRepresentationsConfig):
     
     print(args.zarr_group_path)
     
-    # Do inference
-    # # processed_list = []
-    # emb_dict, depth_dict, cell_name = {}, {}, {}
+    # Initialize zarr storage for ranks
+    n_genes = len(common_genes)
+    output_zarr_path = args.latent_dir / "ranks.zarr"
+    log_ranks = ZarrBackedCSR(str(output_zarr_path), ncols=n_genes, mode="w")
     
+    # Initialize arrays for mean calculation
+    sum_log_ranks = np.zeros(n_genes, dtype=np.float32)
+    sum_frac = np.zeros(n_genes, dtype=np.float32)
+    total_cells = 0
+    
+    # Do inference
     for st_id, st_file in enumerate(spe_file_list):
         st_name = (Path(st_file).name).split(".h5ad")[0]
+        logger.info(f"Processing {st_name} ({st_id + 1}/{len(spe_file_list)})...")
         
         output_path = args.latent_dir / f"{st_name}_add_latent.h5ad"  
         
@@ -213,7 +345,39 @@ def run_find_latent_representation(args: FindLatentRepresentationsConfig):
         adata = adata[:,common_genes].copy()
         adata.var_names = common_genes_transfer
         
-        # Compute the slice mean
+        # Get expression data for ranking
+        if args.data_layer in ["count", "counts"]:
+            X = adata.layers[args.data_layer]
+        else:
+            X = adata.X
+        
+        # Convert to sparse if not already
+        if not hasattr(X, 'tocsr'):
+            X = csr_matrix(X)
+        else:
+            X = X.tocsr()
+        
+        # Calculate ranks using non-zero method
+        global_positions = np.arange(n_genes)  # All genes are already aligned
+        study_log_ranks = np.log(rank_data_nz(X, global_positions, n_genes))
+        
+        # Check for anomalous ranks
+        max_study_log_ranks = study_log_ranks.max()
+        if max_study_log_ranks > 11:
+            logger.warning(
+                f"Max log rank {max_study_log_ranks} is larger than 11 in {st_name}"
+            )
+        
+        # Convert to sparse and append to zarr
+        study_log_ranks_sparse = csr_matrix(study_log_ranks)
+        log_ranks.append(study_log_ranks_sparse)
+        
+        # Update sums for mean calculation
+        sum_log_ranks += csc_col_sum(study_log_ranks_sparse, fill_zero=True)
+        sum_frac += (X != 0).tocsc().sum(0).A1
+        total_cells += X.shape[0]
+        
+        # Compute the slice mean (original method for backward compatibility)
         process_slice_mean(args, st_name, adata)
 
         # Compute the depth
@@ -222,6 +386,34 @@ def run_find_latent_representation(args: FindLatentRepresentationsConfig):
             
         # Save the ST data with embeddings
         adata.write_h5ad(output_path)
+        
+        # Clean up memory
+        del adata, X, study_log_ranks, study_log_ranks_sparse
+        gc.collect()
+    
+    # Finalize zarr storage
+    log_ranks.tail_add_dummy()
+    
+    # Calculate mean log ranks and mean fraction
+    mean_log_ranks = sum_log_ranks / total_cells
+    mean_frac = sum_frac / total_cells
+    
+    # Save mean and fraction to parquet file
+    mean_frac_df = pd.DataFrame(
+        data=dict(
+            G_Mean=mean_log_ranks,
+            frac=mean_frac,
+            gene_name=common_genes_transfer,
+        ),
+        index=common_genes_transfer,
+    )
+    parquet_path = args.latent_dir / "mean_frac.parquet"
+    mean_frac_df.to_parquet(
+        parquet_path,
+        index=True,
+        compression="gzip",
+    )
+    logger.info(f"Mean fraction data saved to {parquet_path}")
 
 
     
