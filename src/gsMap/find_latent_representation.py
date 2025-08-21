@@ -195,10 +195,7 @@ if JAX_AVAILABLE:
                     
                     # Clear pending ranks
                     pending_ranks = []
-                    
-                    # Update progress with percentage
-                    write_percent = (chunks_written * write_interval * 100) / total_chunks
-                    pbar.set_postfix({"written": f"{write_percent:.1f}%"})
+
         
         # Handle remaining ranks
         if pending_ranks:
@@ -387,6 +384,7 @@ class ZarrBackedCSR:
             try:
                 mat, row_offset, nnz_offset, metadata = self.write_queue.get()
                 self.write_direct(mat, row_offset, nnz_offset)
+                print(f"Write completed for row {row_offset} with nnz offset {nnz_offset}", flush=True)
                 return metadata
             finally:
                 self.write_queue.task_done()
@@ -736,7 +734,7 @@ def run_find_latent_representation(args: FindLatentRepresentationsConfig):
     # Initialize zarr storage for ranks with async writing support
     n_genes = len(common_genes)
     output_zarr_path = args.latent_dir / "ranks.zarr"
-    log_ranks = ZarrBackedCSR(str(output_zarr_path), ncols=n_genes, mode="w", max_workers=2)
+    log_ranks = ZarrBackedCSR(str(output_zarr_path), ncols=n_genes, mode="w", max_workers=1, max_queue_size=5)
     
     # Initialize arrays for mean calculation
     sum_log_ranks = np.zeros(n_genes, dtype=np.float64)  # Use float64 for accumulation precision
@@ -793,14 +791,17 @@ def run_find_latent_representation(args: FindLatentRepresentationsConfig):
         
         # Process with incremental writing (writes happen inside rank_data)
         # Returns None for CSR since it's written incrementally
-        _, batch_sum_log_ranks, batch_frac = rank_data_jax(
-            X, 
-            n_genes, 
-            zarr_csr=log_ranks,
-            write_interval=10,  # Write every 10 chunks (10,000 cells)
-            metadata=study_metadata
-        )
-        
+        import viztracer
+        with viztracer.VizTracer(output_file = Path(args.latent_dir / f"{st_name}_rank_trace.json").as_posix(),
+            max_stack_depth=10,):
+            _, batch_sum_log_ranks, batch_frac = rank_data_jax(
+                X,
+                n_genes,
+                zarr_csr=log_ranks,
+                write_interval=1,
+                metadata=study_metadata
+            )
+
         # Update global sums
         sum_log_ranks += batch_sum_log_ranks
         sum_frac += batch_frac
