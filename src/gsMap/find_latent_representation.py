@@ -58,38 +58,11 @@ logger = logging.getLogger(__name__)
 
 
 if JAX_AVAILABLE:
-    @jit
-    def jax_rank_single_row(data, indices, n_genes):
-        """JAX-optimized ranking for a single row."""
-        n_nonzero = data.shape[0]
-        
-        # Create full row with zeros
-        full_row = jnp.zeros(n_genes, dtype=jnp.float32)
-        full_row = full_row.at[indices].set(data)
-        
-        # Rank non-zero elements
-        mask = full_row != 0
-        ranks = jnp.zeros_like(full_row)
-        
-        # Get ranks for non-zero elements
-        nonzero_data = jnp.where(mask, full_row, jnp.inf)
-        sorted_indices = jnp.argsort(nonzero_data)
-        
-        # Compute ranks
-        rank_values = jnp.arange(1, n_genes + 1, dtype=jnp.float32)
-        ranks = ranks.at[sorted_indices].set(rank_values)
-        
-        # Adjust ranks for zeros (they get max rank)
-        ranks = jnp.where(mask, ranks, 1.0)
-        
-        # Adjust for sparsity
-        ranks = jnp.where(mask, ranks + n_genes - n_nonzero, 1.0)
-        
-        return ranks
+    from jax.experimental.sparse import BCSR
     
     @jit
-    def jax_log_rank_dense_batch(dense_matrix):
-        """JAX-optimized batch ranking for dense matrices."""
+    def jax_process_chunk(dense_matrix, n_genes):
+        """JAX-optimized processing: ranking + accumulator calculations."""
         n_rows, n_cols = dense_matrix.shape
         
         # Vectorized ranking
@@ -110,7 +83,22 @@ if JAX_AVAILABLE:
         # Handle zeros by setting their rank to 1
         ranks = jnp.where(dense_matrix != 0, ranks, 1.0)
         
-        return jnp.log(ranks)
+        # Compute log ranks
+        log_ranks = jnp.log(ranks)
+        
+        # Compute accumulators for fill_zero logic
+        nonzero_mask = dense_matrix != 0
+        n_nonzero_per_row = nonzero_mask.sum(axis=1, keepdims=True)
+        zero_log_ranks = jnp.log((n_genes - n_nonzero_per_row + 1) / 2)
+        
+        # Sum log ranks (with fill_zero)
+        sum_log_ranks = log_ranks.sum(axis=0)
+        sum_log_ranks += zero_log_ranks.sum() - (zero_log_ranks * nonzero_mask).sum(axis=0)
+        
+        # Sum fraction (count of non-zeros)
+        sum_frac = nonzero_mask.sum(axis=0)
+        
+        return log_ranks, sum_log_ranks, sum_frac
     
     def rank_data_jax(X: csr_matrix, n_genes,
                       zarr_csr = None,
@@ -149,26 +137,29 @@ if JAX_AVAILABLE:
                 end_idx = min(start_idx + chunk_size, n_rows)
 
                 # Convert chunk to dense
-                chunk_dense = X[start_idx:end_idx].toarray().astype(np.float32)
+                chunk_X = X[start_idx:end_idx]
+                chunk_dense = chunk_X.toarray().astype(np.float32)
                 chunk_jax = jnp.array(chunk_dense)
 
-                chunk_log_ranks = jax_log_rank_dense_batch(chunk_jax)
-
-                # Update accumulators
-                # Sum log ranks (with fill_zero logic)
-                nonzero_mask = chunk_jax != 0
-                n_nonzero_per_row = nonzero_mask.sum(axis=1, keepdims=True)
-                zero_log_ranks = jnp.log((n_genes - n_nonzero_per_row + 1) / 2)
-
-                # Sum including zero positions
-                sum_log_ranks += chunk_log_ranks.sum(axis=0)
-                sum_log_ranks += zero_log_ranks.sum() - (zero_log_ranks * nonzero_mask).sum(axis=0)
-
-                # Sum fraction (count of non-zeros)
-                sum_frac += nonzero_mask.sum(axis=0)
-
-                # Convert back to numpy and collect
-                pending_ranks.append(np.array(chunk_log_ranks))
+                # Process chunk with JIT-compiled function (ranking + accumulators)
+                chunk_log_ranks, chunk_sum_log_ranks, chunk_sum_frac = jax_process_chunk(chunk_jax, n_genes)
+                
+                # Update global accumulators
+                sum_log_ranks += chunk_sum_log_ranks
+                sum_frac += chunk_sum_frac
+                
+                # Use JAX BCSR for efficient sparse conversion
+                bcsr_jax = BCSR.fromdense(chunk_log_ranks, nse=chunk_X.nnz)
+                
+                csr_chunk = csr_matrix(
+                    (np.array(bcsr_jax.data), 
+                     np.array(bcsr_jax.indices), 
+                     np.array(bcsr_jax.indptr)),
+                    shape=chunk_log_ranks.shape
+                )
+                
+                # Add to pending ranks
+                pending_ranks.append(csr_chunk)
                 chunks_processed += 1
 
                 # Update progress bar
@@ -176,20 +167,20 @@ if JAX_AVAILABLE:
 
                 # Write to zarr periodically
                 if zarr_csr and chunks_processed % write_interval == 0 and pending_ranks:
-                    # Combine pending ranks into CSR
-                    combined = np.vstack(pending_ranks)
-                    csr_chunk = csr_matrix(combined)
+                    # Combine pending CSR matrices
+                    from scipy.sparse import vstack
+                    csr_combined = vstack(pending_ranks, format='csr')
                     
                     # Calculate actual nnz for this chunk
-                    chunk_nnz = csr_chunk.nnz
+                    chunk_nnz = csr_combined.nnz
                     
                     # Submit for async direct writing
                     chunk_metadata = metadata.copy() if metadata else {}
                     chunk_metadata['chunk_id'] = chunks_written
-                    zarr_csr.write_direct_async(csr_chunk, current_row_pos, current_nnz_pos, chunk_metadata)
+                    zarr_csr.write_direct_async(csr_combined, current_row_pos, current_nnz_pos, chunk_metadata)
                     
                     # Update positions for next write
-                    current_row_pos += csr_chunk.shape[0]
+                    current_row_pos += csr_combined.shape[0]
                     current_nnz_pos += chunk_nnz
                     chunks_written += 1
                     
@@ -199,25 +190,27 @@ if JAX_AVAILABLE:
         
         # Handle remaining ranks
         if pending_ranks:
-            combined = np.vstack(pending_ranks)
+            from scipy.sparse import vstack
             if zarr_csr:
-                csr_chunk = csr_matrix(combined)
+                # Combine remaining CSR matrices
+                csr_combined = vstack(pending_ranks, format='csr')
                 chunk_metadata = metadata.copy() if metadata else {}
                 chunk_metadata['chunk_id'] = chunks_written
                 chunk_metadata['final'] = True
                 
                 # Write final chunk
-                zarr_csr.write_direct_async(csr_chunk, current_row_pos, current_nnz_pos, chunk_metadata)
+                zarr_csr.write_direct_async(csr_combined, current_row_pos, current_nnz_pos, chunk_metadata)
                 
                 # Final resize if we overestimated nnz
-                final_nnz = current_nnz_pos + csr_chunk.nnz
+                final_nnz = current_nnz_pos + csr_combined.nnz
                 if final_nnz < zarr_csr.total_nnz_reserved:
                     zarr_csr._data_indices.resize(final_nnz)
                 
                 return None, np.array(sum_log_ranks), np.array(sum_frac)
             else:
-                # Return as CSR if no writer
-                return csr_matrix(combined), np.array(sum_log_ranks), np.array(sum_frac)
+                # Return combined CSR if no writer
+                csr_combined = vstack(pending_ranks, format='csr')
+                return csr_combined, np.array(sum_log_ranks), np.array(sum_frac)
         
         return None, np.array(sum_log_ranks), np.array(sum_frac)
 
