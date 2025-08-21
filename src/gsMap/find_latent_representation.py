@@ -115,7 +115,8 @@ if JAX_AVAILABLE:
     def rank_data_jax(X: csr_matrix, n_genes,
                       zarr_csr = None,
                       write_interval=10,
-                      metadata=None):
+                      metadata=None,
+                      chunk_size=1000):
         """JAX-optimized rank calculation with pre-allocated direct writing."""
         assert X.nnz != 0, "Input matrix must not be empty"
 
@@ -134,7 +135,7 @@ if JAX_AVAILABLE:
         sum_frac = jnp.zeros(n_genes, dtype=jnp.float32)
         
         # Process in chunks to manage memory
-        chunk_size = min(1000, n_rows)
+        chunk_size = min(chunk_size, n_rows)
         pending_ranks = []
         chunks_processed = 0
         chunks_written = 0
