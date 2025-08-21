@@ -148,18 +148,11 @@ if JAX_AVAILABLE:
                 sum_log_ranks += chunk_sum_log_ranks
                 sum_frac += chunk_sum_frac
                 
-                # Use JAX BCSR for efficient sparse conversion
-                bcsr_jax = BCSR.fromdense(chunk_log_ranks, nse=chunk_X.nnz)
+                # Convert JAX array to numpy
+                chunk_log_ranks_np = np.array(chunk_log_ranks)
                 
-                csr_chunk = csr_matrix(
-                    (np.array(bcsr_jax.data), 
-                     np.array(bcsr_jax.indices), 
-                     np.array(bcsr_jax.indptr)),
-                    shape=chunk_log_ranks.shape
-                )
-                
-                # Add to pending ranks
-                pending_ranks.append(csr_chunk)
+                # Add to pending ranks (will be converted to CSR later)
+                pending_ranks.append(chunk_log_ranks_np)
                 chunks_processed += 1
 
                 # Update progress bar
@@ -167,9 +160,9 @@ if JAX_AVAILABLE:
 
                 # Write to zarr periodically
                 if zarr_csr and chunks_processed % write_interval == 0 and pending_ranks:
-                    # Combine pending CSR matrices
-                    from scipy.sparse import vstack
-                    csr_combined = vstack(pending_ranks, format='csr')
+                    # Combine pending numpy arrays and convert to CSR
+                    combined_np = np.vstack(pending_ranks)
+                    csr_combined = csr_matrix(combined_np)
                     
                     # Calculate actual nnz for this chunk
                     chunk_nnz = csr_combined.nnz
@@ -190,10 +183,10 @@ if JAX_AVAILABLE:
         
         # Handle remaining ranks
         if pending_ranks:
-            from scipy.sparse import vstack
             if zarr_csr:
-                # Combine remaining CSR matrices
-                csr_combined = vstack(pending_ranks, format='csr')
+                # Combine remaining numpy arrays and convert to CSR
+                combined_np = np.vstack(pending_ranks)
+                csr_combined = csr_matrix(combined_np)
                 chunk_metadata = metadata.copy() if metadata else {}
                 chunk_metadata['chunk_id'] = chunks_written
                 chunk_metadata['final'] = True
@@ -209,7 +202,8 @@ if JAX_AVAILABLE:
                 return None, np.array(sum_log_ranks), np.array(sum_frac)
             else:
                 # Return combined CSR if no writer
-                csr_combined = vstack(pending_ranks, format='csr')
+                combined_np = np.vstack(pending_ranks)
+                csr_combined = csr_matrix(combined_np)
                 return csr_combined, np.array(sum_log_ranks), np.array(sum_frac)
         
         return None, np.array(sum_log_ranks), np.array(sum_frac)
@@ -721,9 +715,9 @@ def run_find_latent_representation(args: FindLatentRepresentationsConfig):
 
     # Configure the inference
     infer = InferenceData(hvg, batch_size, gsmap_embedding_model, label_name, args)
-    
     print(args.zarr_group_path)
-    
+
+
     # Initialize zarr storage for ranks with async writing support
     n_genes = len(common_genes)
     output_zarr_path = args.latent_dir / "ranks.zarr"
@@ -791,8 +785,9 @@ def run_find_latent_representation(args: FindLatentRepresentationsConfig):
                 X,
                 n_genes,
                 zarr_csr=log_ranks,
-                write_interval=1,
-                metadata=study_metadata
+                write_interval=5,
+                metadata=study_metadata,
+                chunk_size=1_000
             )
 
         # Update global sums
