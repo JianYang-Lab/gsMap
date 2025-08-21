@@ -155,7 +155,7 @@ if JAX_AVAILABLE:
         if zarr_csr and pending_chunks:
             zarr_csr.append_batch(np.vstack(pending_chunks))
 
-        return None, np.array(sum_log_ranks), np.array(sum_frac)
+        return np.array(sum_log_ranks), np.array(sum_frac)
 
 
 class ZarrBackedCSR:
@@ -310,6 +310,7 @@ class ZarrBackedCSR:
     def close(self):
         """Clean up resources and wait for pending writes."""
         if hasattr(self, 'writer_thread') and self.writer_thread and self.writer_thread.is_alive():
+            logger.info("Closing ZarrBackedCSR, waiting for writer thread to finish...")
             # Wait for queue to empty
             self.write_queue.join()
             # Send sentinel to stop thread
@@ -318,13 +319,6 @@ class ZarrBackedCSR:
             self.writer_thread.join(timeout=5)
             if self.writer_thread.is_alive():
                 logger.warning("Writer thread did not finish in time")
-    
-    def finalize(self):
-        """Finalize the matrix and ensure all writes are complete."""
-        if hasattr(self, 'writer_thread') and self.writer_thread and self.writer_thread.is_alive():
-            # Wait for all pending writes
-            self.write_queue.join()
-        logger.info(f"Finalized matrix with {self.current_row} rows and {self.current_nnz} non-zeros")
 
     def __getitem__(self, indices):
         """Optimized slicing with combined data access."""
@@ -602,12 +596,15 @@ def run_find_latent_representation(args: FindLatentRepresentationsConfig):
     # Initialize zarr storage for ranks with simple append-based writing
     n_genes = len(common_genes)
     output_zarr_path = args.latent_dir / "ranks.zarr"
-    log_ranks = ZarrBackedCSR(str(output_zarr_path), ncols=n_genes, mode="w")
+    log_ranks_zarr = ZarrBackedCSR(str(output_zarr_path), ncols=n_genes, mode="w")
     
     # Initialize arrays for mean calculation
     sum_log_ranks = np.zeros(n_genes, dtype=np.float64)  # Use float64 for accumulation precision
     sum_frac = np.zeros(n_genes, dtype=np.float64)
     total_cells = 0
+    
+    # Initialize list to collect AnnData objects for concatenation
+    adata_list = []
     
     # Do inference
     logger.info(f"Processing {len(spe_file_list)} spatial transcriptomics files")
@@ -658,10 +655,10 @@ def run_find_latent_representation(args: FindLatentRepresentationsConfig):
         study_metadata = {'name': st_name, 'cells': n_cells, 'study_id': st_id}
         
         # Process with batched append-based writing
-        _, batch_sum_log_ranks, batch_frac = rank_data_jax(
+        batch_sum_log_ranks, batch_frac = rank_data_jax(
             X,
             n_genes,
-            zarr_csr=log_ranks,
+            zarr_csr=log_ranks_zarr,
             metadata=study_metadata,
             chunk_size=1_000,
             write_interval=10  # Batch 10 chunks before writing
@@ -678,14 +675,36 @@ def run_find_latent_representation(args: FindLatentRepresentationsConfig):
         # Compute the depth
         if args.data_layer in ["count", "counts"]:
             adata.obs['depth'] = np.array(adata.layers[args.data_layer].sum(axis=1)).flatten()
-            
-        # Save the ST data with embeddings
+        
+        # Add slice_id to obs
+        adata.obs['slice_id'] = st_name
+        adata.obs['slice_numeric_id'] = st_id
+        
+        # Create a minimal AnnData with empty X matrix but keep obs and obsm
+        # This saves memory while preserving the needed metadata
+        import anndata as ad
+        minimal_adata = ad.AnnData(
+            X=csr_matrix((adata.n_obs, n_genes), dtype=np.float32),  # Empty sparse matrix
+            obs=adata.obs.copy(),
+            var=pd.DataFrame(index=common_genes_transfer),
+            obsm=adata.obsm.copy()  # Keep all the latent representations
+        )
+        
+        # # Add annotation if exists
+        # if args.annotation is not None and args.annotation in adata.obs.columns:
+        #     minimal_adata.obs[args.annotation] = adata.obs[args.annotation]
+        
+        # Append to list for later concatenation
+        adata_list.append(minimal_adata)
+        
+        # Save the ST data with embeddings (optional, keeping original behavior)
         # adata.write_h5ad(output_path)
         
         # Clean up memory
-        del adata, X
+        del adata, X, minimal_adata
         gc.collect()
 
+    log_ranks_zarr.close()
     # Calculate mean log ranks and mean fraction
     mean_log_ranks = sum_log_ranks / total_cells
     mean_frac = sum_frac / total_cells
@@ -706,6 +725,30 @@ def run_find_latent_representation(args: FindLatentRepresentationsConfig):
         compression="gzip",
     )
     logger.info(f"Mean fraction data saved to {parquet_path}")
+    
+    # Concatenate all AnnData objects
+    logger.info("Concatenating all AnnData objects...")
+    if adata_list:
+        import anndata as ad
+        # Concatenate along the observation axis
+        concatenated_adata = ad.concat(adata_list, axis=0, join='outer', merge='same')
+        
+        # Ensure the var_names are the common genes
+        concatenated_adata.var_names = common_genes_transfer
+        
+        # Save the concatenated AnnData
+        concat_output_path = args.latent_dir / "concatenated_latent_adata.h5ad"
+        concatenated_adata.write_h5ad(concat_output_path)
+        logger.info(f"Concatenated AnnData saved to {concat_output_path}")
+        logger.info(f"  - Total cells: {concatenated_adata.n_obs}")
+        logger.info(f"  - Total genes: {concatenated_adata.n_vars}")
+        logger.info(f"  - Latent representations in obsm: {list(concatenated_adata.obsm.keys())}")
+        if 'slice_id' in concatenated_adata.obs.columns:
+            logger.info(f"  - Number of slices: {concatenated_adata.obs['slice_id'].nunique()}")
+        
+        # Clean up
+        del adata_list, concatenated_adata
+        gc.collect()
 
 
     
