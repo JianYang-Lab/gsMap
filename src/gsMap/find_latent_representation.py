@@ -13,12 +13,9 @@ from torch.utils.data import (
     TensorDataset,
     SubsetRandomSampler,
 )
-from scipy.stats import rankdata
 from scipy.sparse import csr_matrix
-from zarr.storage import DirectoryStore, LRUStoreCache
-import threading
-import queue
-from concurrent.futures import ThreadPoolExecutor
+from zarr.storage import DirectoryStore
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 
 
@@ -56,66 +53,6 @@ from operator import itemgetter
 
 logger = logging.getLogger(__name__)
 
-
-class AsyncZarrWriter:
-    """Asynchronous writer for ZarrBackedCSR using threading."""
-
-    def __init__(self, zarr_csr, max_queue_size=5):
-        self.zarr_csr = zarr_csr
-        self.queue = queue.Queue(maxsize=max_queue_size)
-        self.executor = ThreadPoolExecutor(max_workers=1)  # Single writer thread
-        self.futures = []
-        self.stop_event = threading.Event()
-        self.exception = None
-
-        # Start the writer thread
-        self.writer_future = self.executor.submit(self._writer_loop)
-
-    def _writer_loop(self):
-        """Background writer that processes the queue."""
-        while not self.stop_event.is_set() or not self.queue.empty():
-            try:
-                # Get item with timeout to check stop_event periodically
-                item = self.queue.get(timeout=0.1)
-                if item is None:  # Sentinel value to stop
-                    break
-
-                csr_matrix_data, metadata = item
-                # Append to zarr
-                self.zarr_csr.append(csr_matrix_data)
-                logger.debug(f"Written {metadata['name']} to zarr")
-
-            except queue.Empty:
-                continue
-            except Exception as e:
-                logger.error(f"Error in writer thread: {e}")
-                self.exception = e
-                break
-
-    def submit(self, csr_matrix_data, metadata):
-        """Submit a CSR matrix for async writing."""
-        if self.exception:
-            raise self.exception
-
-        self.queue.put((csr_matrix_data, metadata))
-        logger.debug(f"Queued {metadata['name']} for writing")
-
-    def finish(self):
-        """Wait for all pending writes to complete."""
-        # Send sentinel to stop writer
-        self.queue.put(None)
-
-        # Wait for writer to finish
-        self.writer_future.result()
-
-        # Shutdown executor
-        self.executor.shutdown(wait=True)
-
-        # Check for any exceptions
-        if self.exception:
-            raise self.exception
-
-        logger.info("Async writer finished")
 
 
 if JAX_AVAILABLE:
@@ -173,7 +110,7 @@ if JAX_AVAILABLE:
         
         return jnp.log(ranks)
     
-    def rank_data_jax(X: csr_matrix, n_genes, async_writer: AsyncZarrWriter =None, write_interval=10, metadata=None):
+    def rank_data_jax(X: csr_matrix, n_genes, zarr_csr = None, write_interval=10, metadata=None):
         """JAX-optimized rank calculation with incremental writing."""
         n_rows, n_cols = X.shape
         
@@ -221,15 +158,15 @@ if JAX_AVAILABLE:
                 pbar.update(end_idx - start_idx)
 
                 # Write to zarr periodically
-                if async_writer and chunks_processed % write_interval == 0:
+                if zarr_csr and chunks_processed % write_interval == 0:
                     # Combine pending ranks into CSR
                     combined = np.vstack(pending_ranks)
                     csr_chunk = csr_matrix(combined)
 
-                    # Submit to async writer
+                    # Submit for async writing
                     chunk_metadata = metadata.copy() if metadata else {}
                     chunk_metadata['chunk_id'] = chunks_processed // write_interval
-                    async_writer.submit(csr_chunk, chunk_metadata)
+                    zarr_csr.append_async(csr_chunk, chunk_metadata)
 
                     # Clear pending ranks
                     pending_ranks = []
@@ -238,110 +175,97 @@ if JAX_AVAILABLE:
         # Handle remaining ranks
         if pending_ranks:
             combined = np.vstack(pending_ranks)
-            if async_writer:
+            if zarr_csr:
                 csr_chunk = csr_matrix(combined)
                 chunk_metadata = metadata.copy() if metadata else {}
                 chunk_metadata['chunk_id'] = (chunks_processed // write_interval) + 1
-                async_writer.submit(csr_chunk, chunk_metadata)
+                zarr_csr.append_async(csr_chunk, chunk_metadata)
                 return None, np.array(sum_log_ranks), np.array(sum_frac)
             else:
                 # Return as CSR if no writer
                 return csr_matrix(combined), np.array(sum_log_ranks), np.array(sum_frac)
         
         return None, np.array(sum_log_ranks), np.array(sum_frac)
-        
-        return result
 
 
-def rank_data(arr, n_genes, async_writer=None, write_interval=10, metadata=None):
+def rank_data(arr, n_genes, zarr_csr=None, write_interval=10, metadata=None):
     """Main ranking function using JAX with incremental writing."""
-
-    
     if arr.nnz == 0:
         # Handle empty matrix
         empty_csr = csr_matrix((arr.shape[0], n_genes), dtype=np.float32)
         return empty_csr, np.zeros(n_genes), np.zeros(n_genes)
     
     try:
-        return rank_data_jax(arr, n_genes, async_writer, write_interval, metadata)
+        return rank_data_jax(arr, n_genes, zarr_csr, write_interval, metadata)
     except Exception as e:
         logger.error(f"JAX ranking failed: {e}")
         raise
 
- zarr.ThreadSynchronizer()
-
 class ZarrBackedCSR:
-
+    """Thread-safe CSR matrix storage using Zarr with concurrent writing."""
+    
     def __init__(
         self,
         path: str,
         ncols: int,
         mode: str = "r",
         chunks_rows: int = 1000,
-        chunks_data: int = 5_000,
-        shards: int = 10_000_000,
-        lru_cache_size: int = 2,
+        chunks_data: int = 100_000,
+        max_workers: int = 2,
         **kwargs,
     ):
-        zarr
         # Check zarr version
         zarr_version = tuple(map(int, zarr.__version__.split('.')[:2]))
         if zarr_version < (2, 18):
             raise RuntimeError(
                 f"Zarr version {zarr.__version__} is not supported. "
-                f"Please upgrade to zarr>=2.18 for sharding support: pip install 'zarr>=2.18'"
+                f"Please upgrade to zarr>=2.18: pip install 'zarr>=2.18'"
             )
         
         self.path = path
         self.ncols = ncols
+        self.current_row = 0
         
-        # Configure storage with sharding
+        # Configure thread-safe storage
+        synchronizer = zarr.ThreadSynchronizer()
         store = DirectoryStore(self.path)
-        
-        # Configure sharding for fewer files
-
-        # Use LRU cache for better performance
-        lru_cache_store = LRUStoreCache(
-            store, max_size=lru_cache_size * 1024**3
-        )
-        self.zarr_array = zarr.open(lru_cache_store, mode=mode)
+        self.zarr_array = zarr.open(store, mode=mode, synchronizer=synchronizer)
 
         if "indptr" not in self.zarr_array.array_keys():
-            # Configure compression
-            compressor = zarr.Blosc(cname='zstd', clevel=3, shuffle=zarr.Blosc.BITSHUFFLE)
-            
+
             self.zarr_array.create(
                 "indptr",
                 shape=(0,),
                 dtype=np.int32,
                 chunks=(chunks_rows,),
-                compressor=compressor,
                 **kwargs,
             )
             
-            # Only create combined array (no backward compatibility)
+            # Combined array for indices and values
             dt = np.dtype([('idx', np.uint16), ('val', np.float32)])
             self.zarr_array.create(
                 "data_indices",
                 shape=(0,),
                 dtype=dt,
                 chunks=(chunks_data,),
-                compressor=compressor,
-                shards = (shards,),
+                shards=(chunks_data*10,),
+                order='C',  # Explicitly use C order for row-oriented access
                 **kwargs,
             )
             
             self.zarr_array.attrs["ncols"] = ncols
             self.zarr_array.attrs["version"] = "3.0"
-
-        # Load indptr entirely into memory (it's small)
+        
+        # Load indptr into memory for fast access
         self._indptr_zarr = self.zarr_array["indptr"]
         self._indptr = np.array(self._indptr_zarr[:], dtype=np.int32) if len(self._indptr_zarr) > 0 else np.array([], dtype=np.int32)
         
-        # Keep data_indices as zarr array for lazy loading
+        # Keep data_indices as zarr array
         self._data_indices = self.zarr_array["data_indices"]
         
-        self._binary_instance = None
+        # Thread pool for concurrent writes
+        self.executor = ThreadPoolExecutor(max_workers=max_workers)
+        self.write_futures = []
 
     @classmethod
     def open(cls, path: str | Path, mode="r", **kwargs):
@@ -362,11 +286,12 @@ class ZarrBackedCSR:
         return self._indptr[-1] if len(self._indptr) > 0 else 0
 
     def append(self, mat: csr_matrix):
+        """Append CSR matrix to zarr storage."""
         if mat.shape[1] != self.ncols:
             raise ValueError(f"Number of columns must match. Expected {self.ncols}, got {mat.shape[1]}")
-        if mat.nnz == 0:  # Skip empty matrices
+        if mat.nnz == 0:
             return
-
+        
         # Update in-memory indptr
         if len(self._indptr) == 0:
             self._indptr = np.array([0], dtype=np.int32)
@@ -377,15 +302,49 @@ class ZarrBackedCSR:
         
         # Update zarr indptr
         self._indptr_zarr.append(new_indptr)
-        
-        # Update in-memory indptr
         self._indptr = np.append(self._indptr, new_indptr)
         
-        # Store in combined array only
+        # Prepare combined data
         combined = np.empty(mat.nnz, dtype=[('idx', np.uint16), ('val', np.float32)])
         combined['idx'] = mat.indices.astype(np.uint16)
         combined['val'] = mat.data.astype(np.float32)
         self._data_indices.append(combined)
+        
+        self.current_row += mat.shape[0]
+    
+    def append_async(self, mat: csr_matrix, metadata=None):
+        """Submit CSR matrix for asynchronous writing."""
+        def _write(mat, metadata):
+            self.append(mat)
+            print(f"Appended {mat.shape[0]} rows for {metadata}")
+            return metadata
+        
+        future = self.executor.submit(_write, mat, metadata)
+        self.write_futures.append(future)
+        return future
+    
+    def wait_for_writes(self):
+        """Wait for all pending writes to complete."""
+        completed = 0
+        with tqdm(total=len(self.write_futures), desc="Writing to zarr", unit="chunk") as pbar:
+            for future in as_completed(self.write_futures):
+                try:
+                    metadata = future.result()
+                    completed += 1
+                    pbar.update(1)
+                    if metadata:
+                        pbar.set_postfix({"last": metadata.get('name', '')})
+                except Exception as e:
+                    logger.error(f"Write failed: {e}")
+                    raise
+        
+        self.write_futures.clear()
+        logger.info(f"Completed {completed} writes")
+    
+    def close(self):
+        """Clean up resources."""
+        if hasattr(self, 'executor'):
+            self.executor.shutdown(wait=True)
     
     def __getitem__(self, indices):
         """Optimized slicing with combined data access."""
@@ -686,13 +645,10 @@ def run_find_latent_representation(args: FindLatentRepresentationsConfig):
     
     print(args.zarr_group_path)
     
-    # Initialize zarr storage for ranks
+    # Initialize zarr storage for ranks with async writing support
     n_genes = len(common_genes)
     output_zarr_path = args.latent_dir / "ranks.zarr"
-    log_ranks = ZarrBackedCSR(str(output_zarr_path), ncols=n_genes, mode="w")
-    
-    # Initialize async writer for better I/O performance
-    async_writer = AsyncZarrWriter(log_ranks, max_queue_size=3)
+    log_ranks = ZarrBackedCSR(str(output_zarr_path), ncols=n_genes, mode="w", max_workers=2)
     
     # Initialize arrays for mean calculation
     sum_log_ranks = np.zeros(n_genes, dtype=np.float64)  # Use float64 for accumulation precision
@@ -752,7 +708,7 @@ def run_find_latent_representation(args: FindLatentRepresentationsConfig):
         _, batch_sum_log_ranks, batch_frac = rank_data(
             X, 
             n_genes, 
-            async_writer=async_writer,
+            zarr_csr=log_ranks,
             write_interval=10,  # Write every 10 chunks (10,000 cells)
             metadata=study_metadata
         )
@@ -778,10 +734,11 @@ def run_find_latent_representation(args: FindLatentRepresentationsConfig):
     
     # Wait for all async writes to complete
     logger.info("Waiting for async writes to complete...")
-    async_writer.finish()
+    log_ranks.wait_for_writes()
     
     # Finalize zarr storage
     log_ranks.tail_add_dummy()
+    log_ranks.close()
     
     # Calculate mean log ranks and mean fraction
     mean_log_ranks = sum_log_ranks / total_cells
