@@ -16,6 +16,8 @@ from torch.utils.data import (
 from scipy.sparse import csr_matrix
 from zarr.storage import DirectoryStore
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import queue
+import threading
 from tqdm import tqdm
 
 
@@ -110,9 +112,22 @@ if JAX_AVAILABLE:
         
         return jnp.log(ranks)
     
-    def rank_data_jax(X: csr_matrix, n_genes, zarr_csr = None, write_interval=10, metadata=None):
-        """JAX-optimized rank calculation with incremental writing."""
+    def rank_data_jax(X: csr_matrix, n_genes,
+                      zarr_csr = None,
+                      write_interval=10,
+                      metadata=None):
+        """JAX-optimized rank calculation with pre-allocated direct writing."""
+        assert X.nnz != 0, "Input matrix must not be empty"
+
         n_rows, n_cols = X.shape
+        
+        # Pre-allocate space if zarr_csr is provided
+        if zarr_csr:
+            # Estimate total nnz (assuming similar density throughout)
+            estimated_nnz = int(X.nnz * 1.1)  # Add 10% buffer
+            row_offset, nnz_offset = zarr_csr.reserve_space(n_rows, estimated_nnz)
+            current_row_pos = row_offset
+            current_nnz_pos = nnz_offset
         
         # Initialize accumulators
         sum_log_ranks = jnp.zeros(n_genes, dtype=jnp.float32)
@@ -122,6 +137,7 @@ if JAX_AVAILABLE:
         chunk_size = min(1000, n_rows)
         pending_ranks = []
         chunks_processed = 0
+        chunks_written = 0
         
         # Setup progress bar
         study_name = metadata.get('name', 'unknown') if metadata else 'unknown'
@@ -158,19 +174,30 @@ if JAX_AVAILABLE:
                 pbar.update(end_idx - start_idx)
 
                 # Write to zarr periodically
-                if zarr_csr and chunks_processed % write_interval == 0:
+                if zarr_csr and chunks_processed % write_interval == 0 and pending_ranks:
                     # Combine pending ranks into CSR
                     combined = np.vstack(pending_ranks)
                     csr_chunk = csr_matrix(combined)
-
-                    # Submit for async writing
+                    
+                    # Calculate actual nnz for this chunk
+                    chunk_nnz = csr_chunk.nnz
+                    
+                    # Submit for async direct writing
                     chunk_metadata = metadata.copy() if metadata else {}
-                    chunk_metadata['chunk_id'] = chunks_processed // write_interval
-                    zarr_csr.append_async(csr_chunk, chunk_metadata)
-
+                    chunk_metadata['chunk_id'] = chunks_written
+                    zarr_csr.write_direct_async(csr_chunk, current_row_pos, current_nnz_pos, chunk_metadata)
+                    
+                    # Update positions for next write
+                    current_row_pos += csr_chunk.shape[0]
+                    current_nnz_pos += chunk_nnz
+                    chunks_written += 1
+                    
                     # Clear pending ranks
                     pending_ranks = []
-                    pbar.set_postfix({"chunks_written": chunk_metadata['chunk_id']})
+                    
+                    # Update progress with percentage
+                    write_percent = (chunks_written * write_interval * 100) / total_chunks
+                    pbar.set_postfix({"written": f"{write_percent:.1f}%"})
         
         # Handle remaining ranks
         if pending_ranks:
@@ -178,8 +205,17 @@ if JAX_AVAILABLE:
             if zarr_csr:
                 csr_chunk = csr_matrix(combined)
                 chunk_metadata = metadata.copy() if metadata else {}
-                chunk_metadata['chunk_id'] = (chunks_processed // write_interval) + 1
-                zarr_csr.append_async(csr_chunk, chunk_metadata)
+                chunk_metadata['chunk_id'] = chunks_written
+                chunk_metadata['final'] = True
+                
+                # Write final chunk
+                zarr_csr.write_direct_async(csr_chunk, current_row_pos, current_nnz_pos, chunk_metadata)
+                
+                # Final resize if we overestimated nnz
+                final_nnz = current_nnz_pos + csr_chunk.nnz
+                if final_nnz < zarr_csr.total_nnz_reserved:
+                    zarr_csr._data_indices.resize(final_nnz)
+                
                 return None, np.array(sum_log_ranks), np.array(sum_frac)
             else:
                 # Return as CSR if no writer
@@ -188,21 +224,8 @@ if JAX_AVAILABLE:
         return None, np.array(sum_log_ranks), np.array(sum_frac)
 
 
-def rank_data(arr, n_genes, zarr_csr=None, write_interval=10, metadata=None):
-    """Main ranking function using JAX with incremental writing."""
-    if arr.nnz == 0:
-        # Handle empty matrix
-        empty_csr = csr_matrix((arr.shape[0], n_genes), dtype=np.float32)
-        return empty_csr, np.zeros(n_genes), np.zeros(n_genes)
-    
-    try:
-        return rank_data_jax(arr, n_genes, zarr_csr, write_interval, metadata)
-    except Exception as e:
-        logger.error(f"JAX ranking failed: {e}")
-        raise
-
 class ZarrBackedCSR:
-    """Thread-safe CSR matrix storage using Zarr with concurrent writing."""
+    """Thread-safe CSR matrix storage with pre-allocation and direct writing."""
     
     def __init__(
         self,
@@ -212,6 +235,7 @@ class ZarrBackedCSR:
         chunks_rows: int = 1000,
         chunks_data: int = 100_000,
         max_workers: int = 2,
+        max_queue_size: int = 5,
         **kwargs,
     ):
         # Check zarr version
@@ -225,6 +249,9 @@ class ZarrBackedCSR:
         self.path = path
         self.ncols = ncols
         self.current_row = 0
+        self.current_nnz = 0
+        self.total_rows_reserved = 0
+        self.total_nnz_reserved = 0
         
         # Configure thread-safe storage
         synchronizer = zarr.ThreadSynchronizer()
@@ -258,14 +285,24 @@ class ZarrBackedCSR:
         
         # Load indptr into memory for fast access
         self._indptr_zarr = self.zarr_array["indptr"]
-        self._indptr = np.array(self._indptr_zarr[:], dtype=np.int32) if len(self._indptr_zarr) > 0 else np.array([], dtype=np.int32)
+        if len(self._indptr_zarr) > 0:
+            self._indptr = np.array(self._indptr_zarr[:], dtype=np.int32)
+        else:
+            # Initialize with 0 for CSR format
+            self._indptr = np.array([0], dtype=np.int32)
+            if mode == 'w':
+                # Resize to at least 1 element before writing
+                self._indptr_zarr.resize(1)
+                self._indptr_zarr[0] = 0
         
         # Keep data_indices as zarr array
         self._data_indices = self.zarr_array["data_indices"]
         
-        # Thread pool for concurrent writes
+        # Thread pool with queue for memory control
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
+        self.write_queue = queue.Queue(maxsize=max_queue_size)
         self.write_futures = []
+        self.write_lock = threading.Lock()
 
     @classmethod
     def open(cls, path: str | Path, mode="r", **kwargs):
@@ -285,61 +322,111 @@ class ZarrBackedCSR:
     def nnz(self):
         return self._indptr[-1] if len(self._indptr) > 0 else 0
 
-    def append(self, mat: csr_matrix):
-        """Append CSR matrix to zarr storage."""
+    def reserve_space(self, n_rows: int, estimated_nnz: int):
+        """Pre-allocate space for n_rows with estimated non-zeros."""
+        with self.write_lock:
+            # Resize arrays to accommodate new data
+            new_total_rows = self.total_rows_reserved + n_rows
+            new_total_nnz = self.total_nnz_reserved + estimated_nnz
+            
+            # Resize indptr (add 1 for the initial 0)
+            self._indptr_zarr.resize(new_total_rows + 1)
+            
+            # Resize data_indices
+            self._data_indices.resize(new_total_nnz)
+            
+            # Update reserved counters
+            start_row = self.total_rows_reserved
+            start_nnz = self.total_nnz_reserved
+            self.total_rows_reserved = new_total_rows
+            self.total_nnz_reserved = new_total_nnz
+            
+            # Return the reserved positions
+            return start_row, start_nnz
+    
+    def write_direct(self, mat: csr_matrix, row_offset: int, nnz_offset: int):
+        """Write CSR matrix directly to pre-allocated positions."""
         if mat.shape[1] != self.ncols:
             raise ValueError(f"Number of columns must match. Expected {self.ncols}, got {mat.shape[1]}")
-        if mat.nnz == 0:
-            return
         
-        # Update in-memory indptr
-        if len(self._indptr) == 0:
-            self._indptr = np.array([0], dtype=np.int32)
-            self._indptr_zarr.append(np.array([0], dtype=np.int32))
+        n_rows = mat.shape[0]
+        nnz = mat.nnz
         
-        current_nnz = self._indptr[-1]
-        new_indptr = mat.indptr[1:].astype(np.int32) + current_nnz
+        # Write indptr (offset by current nnz position)
+        if row_offset == 0:
+            # First write includes the initial 0
+            self._indptr_zarr[0:n_rows+1] = mat.indptr.astype(np.int32) + nnz_offset
+        else:
+            # Subsequent writes exclude the initial 0
+            self._indptr_zarr[row_offset+1:row_offset+n_rows+1] = mat.indptr[1:].astype(np.int32) + nnz_offset
         
-        # Update zarr indptr
-        self._indptr_zarr.append(new_indptr)
-        self._indptr = np.append(self._indptr, new_indptr)
+        # Write data_indices as structured array
+        if nnz > 0:
+            combined = np.empty(nnz, dtype=[('idx', np.uint16), ('val', np.float32)], order='C')
+            combined['idx'] = mat.indices.astype(np.uint16)
+            combined['val'] = mat.data.astype(np.float32)
+            self._data_indices[nnz_offset:nnz_offset+nnz] = combined
         
-        # Prepare combined data (ensure C-contiguous for optimal append)
-        combined = np.empty(mat.nnz, dtype=[('idx', np.uint16), ('val', np.float32)], order='C')
-        combined['idx'] = mat.indices.astype(np.uint16)
-        combined['val'] = mat.data.astype(np.float32)
-        self._data_indices.append(combined)
-        
-        self.current_row += mat.shape[0]
+        # Update in-memory indptr if needed
+        with self.write_lock:
+            if row_offset + n_rows > len(self._indptr) - 1:
+                # Extend in-memory indptr
+                new_indptr = self._indptr_zarr[len(self._indptr):row_offset+n_rows+1]
+                self._indptr = np.append(self._indptr, new_indptr)
+            
+            self.current_row = max(self.current_row, row_offset + n_rows)
+            self.current_nnz = max(self.current_nnz, nnz_offset + nnz)
     
-    def append_async(self, mat: csr_matrix, metadata=None):
-        """Submit CSR matrix for asynchronous writing."""
-        def _write(mat, metadata):
-            self.append(mat)
-            print(f"Appended {mat.shape[0]} rows for {metadata}")
-            return metadata
+    def write_direct_async(self, mat: csr_matrix, row_offset: int, nnz_offset: int, metadata=None):
+        """Submit CSR matrix for asynchronous direct writing."""
+        # Put task in queue (blocks if queue is full)
+        self.write_queue.put((mat, row_offset, nnz_offset, metadata))
         
-        future = self.executor.submit(_write, mat, metadata)
+        def _write():
+            try:
+                mat, row_offset, nnz_offset, metadata = self.write_queue.get()
+                self.write_direct(mat, row_offset, nnz_offset)
+                return metadata
+            finally:
+                self.write_queue.task_done()
+        
+        future = self.executor.submit(_write)
         self.write_futures.append(future)
         return future
     
     def wait_for_writes(self):
         """Wait for all pending writes to complete."""
+        if not self.write_futures:
+            return
+            
         completed = 0
-        with tqdm(total=len(self.write_futures), desc="Writing to zarr", unit="chunk") as pbar:
+        total_futures = len(self.write_futures)
+        
+        with tqdm(total=total_futures, desc="Finalizing writes", unit="chunk") as pbar:
             for future in as_completed(self.write_futures):
                 try:
                     metadata = future.result()
                     completed += 1
                     pbar.update(1)
+                    
+                    # Show progress percentage
+                    percent = (completed * 100) / total_futures
+                    postfix = {"progress": f"{percent:.1f}%"}
                     if metadata:
-                        pbar.set_postfix({"last": metadata.get('name', '')})
+                        postfix["study"] = metadata.get('name', '')
+                        if metadata.get('final'):
+                            postfix["status"] = "final"
+                    pbar.set_postfix(postfix)
+                    
                 except Exception as e:
                     logger.error(f"Write failed: {e}")
                     raise
         
+        # Wait for queue to be empty
+        self.write_queue.join()
+        
         self.write_futures.clear()
-        logger.info(f"Completed {completed} writes")
+        logger.info(f"Completed {completed} write operations")
     
     def close(self):
         """Clean up resources."""
@@ -705,7 +792,7 @@ def run_find_latent_representation(args: FindLatentRepresentationsConfig):
         
         # Process with incremental writing (writes happen inside rank_data)
         # Returns None for CSR since it's written incrementally
-        _, batch_sum_log_ranks, batch_frac = rank_data(
+        _, batch_sum_log_ranks, batch_frac = rank_data_jax(
             X, 
             n_genes, 
             zarr_csr=log_ranks,
