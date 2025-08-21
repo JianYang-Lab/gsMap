@@ -112,11 +112,13 @@ if JAX_AVAILABLE:
         
         # Pre-allocate space if zarr_csr is provided
         if zarr_csr:
-            # Estimate total nnz (assuming similar density throughout)
-            estimated_nnz = int(X.nnz * 1.1)  # Add 10% buffer
+            # Conservative estimate: assume all cells could be non-zero after log transform
+            # Log ranks are typically denser than original sparse data
+            estimated_nnz = n_rows * n_genes  # Worst case: fully dense
             row_offset, nnz_offset = zarr_csr.reserve_space(n_rows, estimated_nnz)
             current_row_pos = row_offset
             current_nnz_pos = nnz_offset
+            actual_nnz_written = 0  # Track actual nnz for accurate positioning
         
         # Initialize accumulators
         sum_log_ranks = jnp.zeros(n_genes, dtype=jnp.float32)
@@ -160,21 +162,28 @@ if JAX_AVAILABLE:
 
                 # Write to zarr periodically
                 if zarr_csr and chunks_processed % write_interval == 0 and pending_ranks:
-                    # Combine pending numpy arrays and convert to CSR
+                    # Combine pending numpy arrays (no CSR conversion here)
                     combined_np = np.vstack(pending_ranks)
-                    csr_combined = csr_matrix(combined_np)
                     
-                    # Calculate actual nnz for this chunk
-                    chunk_nnz = csr_combined.nnz
+                    # For accurate offset tracking, we need to know actual nnz
+                    # Quick conversion just to get nnz (this is fast for getting metadata)
+                    temp_csr = csr_matrix(combined_np)
+                    actual_chunk_nnz = temp_csr.nnz
+                    del temp_csr  # Free memory immediately
                     
-                    # Submit for async direct writing
+                    # Submit numpy array for async writing (conversion happens in thread)
                     chunk_metadata = metadata.copy() if metadata else {}
                     chunk_metadata['chunk_id'] = chunks_written
-                    zarr_csr.write_direct_async(csr_combined, current_row_pos, current_nnz_pos, chunk_metadata)
+                    chunk_metadata['row_offset'] = current_row_pos
+                    chunk_metadata['nnz_offset'] = current_nnz_pos
+                    chunk_metadata['expected_nnz'] = actual_chunk_nnz
                     
-                    # Update positions for next write
-                    current_row_pos += csr_combined.shape[0]
-                    current_nnz_pos += chunk_nnz
+                    zarr_csr.write_direct_async(combined_np, current_row_pos, current_nnz_pos, chunk_metadata)
+                    
+                    # Update positions with actual nnz
+                    current_row_pos += combined_np.shape[0]
+                    current_nnz_pos += actual_chunk_nnz
+                    actual_nnz_written += actual_chunk_nnz
                     chunks_written += 1
                     
                     # Clear pending ranks
@@ -184,20 +193,24 @@ if JAX_AVAILABLE:
         # Handle remaining ranks
         if pending_ranks:
             if zarr_csr:
-                # Combine remaining numpy arrays and convert to CSR
+                # Combine remaining numpy arrays
                 combined_np = np.vstack(pending_ranks)
-                csr_combined = csr_matrix(combined_np)
+                
+                # Get actual nnz for final chunk
+                temp_csr = csr_matrix(combined_np)
+                actual_chunk_nnz = temp_csr.nnz
+                del temp_csr
+                
                 chunk_metadata = metadata.copy() if metadata else {}
                 chunk_metadata['chunk_id'] = chunks_written
                 chunk_metadata['final'] = True
+                chunk_metadata['row_offset'] = current_row_pos
+                chunk_metadata['nnz_offset'] = current_nnz_pos
+                chunk_metadata['expected_nnz'] = actual_chunk_nnz
+                chunk_metadata['total_nnz'] = current_nnz_pos + actual_chunk_nnz
                 
-                # Write final chunk
-                zarr_csr.write_direct_async(csr_combined, current_row_pos, current_nnz_pos, chunk_metadata)
-                
-                # Final resize if we overestimated nnz
-                final_nnz = current_nnz_pos + csr_combined.nnz
-                if final_nnz < zarr_csr.total_nnz_reserved:
-                    zarr_csr._data_indices.resize(final_nnz)
+                # Write final chunk (conversion happens in writer thread)
+                zarr_csr.write_direct_async(combined_np, current_row_pos, current_nnz_pos, chunk_metadata)
                 
                 return None, np.array(sum_log_ranks), np.array(sum_frac)
             else:
@@ -329,8 +342,20 @@ class ZarrBackedCSR:
             # Return the reserved positions
             return start_row, start_nnz
     
-    def write_direct(self, mat: csr_matrix, row_offset: int, nnz_offset: int):
-        """Write CSR matrix directly to pre-allocated positions."""
+    def write_direct(self, mat, row_offset: int, nnz_offset: int):
+        """Write matrix directly to pre-allocated positions.
+        
+        Args:
+            mat: Either a CSR matrix or numpy array (will be converted to CSR)
+            row_offset: Starting row position
+            nnz_offset: Starting nnz position
+        """
+        # Convert numpy array to CSR if needed
+        if isinstance(mat, np.ndarray):
+            mat = csr_matrix(mat)
+        elif not isinstance(mat, csr_matrix):
+            raise TypeError(f"Expected csr_matrix or numpy array, got {type(mat)}")
+        
         if mat.shape[1] != self.ncols:
             raise ValueError(f"Number of columns must match. Expected {self.ncols}, got {mat.shape[1]}")
         
@@ -362,9 +387,17 @@ class ZarrBackedCSR:
             self.current_row = max(self.current_row, row_offset + n_rows)
             self.current_nnz = max(self.current_nnz, nnz_offset + nnz)
     
-    def write_direct_async(self, mat: csr_matrix, row_offset: int, nnz_offset: int, metadata=None):
-        """Submit CSR matrix for asynchronous direct writing."""
+    def write_direct_async(self, mat, row_offset: int, nnz_offset: int, metadata=None):
+        """Submit matrix for asynchronous direct writing.
+        
+        Args:
+            mat: Either a CSR matrix or numpy array (conversion happens in writer thread)
+            row_offset: Starting row position  
+            nnz_offset: Starting nnz position
+            metadata: Optional metadata
+        """
         # Put task in queue (blocks if queue is full)
+        # Note: mat can be numpy array, conversion happens in writer thread
         self.write_queue.put((mat, row_offset, nnz_offset, metadata))
         
         def _write():
@@ -413,6 +446,11 @@ class ZarrBackedCSR:
         
         self.write_futures.clear()
         logger.info(f"Completed {completed} write operations")
+        
+        # Final resize to actual size
+        if self.current_nnz < self.total_nnz_reserved:
+            logger.info(f"Resizing data_indices from {self.total_nnz_reserved} to {self.current_nnz}")
+            self._data_indices.resize(self.current_nnz)
     
     def close(self):
         """Clean up resources."""
