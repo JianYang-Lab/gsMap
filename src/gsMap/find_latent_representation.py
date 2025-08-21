@@ -19,6 +19,7 @@ from zarr.storage import DirectoryStore, LRUStoreCache
 import threading
 import queue
 from concurrent.futures import ThreadPoolExecutor
+from tqdm import tqdm
 
 
 logger = logging.getLogger(__name__)
@@ -36,14 +37,14 @@ try:
         logger.info("JAX CPU backend will be used")
 except ImportError:
     JAX_AVAILABLE = False
-    logger.warning("JAX not available, using pure Python implementation")
-
+    if not JAX_AVAILABLE:
+        raise RuntimeError("JAX is required for rank computation. Install with: pip install jax[cpu]")
 try:
     import zarr.codecs
     # Sharding will be configured via array creation options
     logger.info("Using zarr with sharding support")
 except ImportError:
-    raise RuntimeError("Zarr codecs not available, please upgrade zarr")
+    raise RuntimeError("Zarr codecs not available, please upgrade zarr>=2.18.0 to use sharding features. Install with: pip install 'zarr>=2.18'")
 
 from gsMap.GNN.TrainStep import ModelTrain
 from gsMap.GNN.STmodel import StEmbeding
@@ -56,52 +57,65 @@ from operator import itemgetter
 logger = logging.getLogger(__name__)
 
 
-def compute_log_rank_stats(log_ranks_dense, X_sparse, n_genes, fill_zero=True):
-    """Compute CSR matrix, sum log ranks, and fraction in one pass."""
-    # Convert log ranks to sparse CSR
-    log_ranks_sparse = csr_matrix(log_ranks_dense)
-    
-    # Compute sum of log ranks with fill_zero option
-    if fill_zero:
-        zero_ranks = np.log((n_genes - (X_sparse != 0).sum(axis=1).A1 + 1) / 2)
-        mat_csc = log_ranks_sparse.tocsc()
-        nz_sum = mat_csc.sum(axis=0).A1
-        
-        not_to_fill = X_sparse != 0
-        zero_sum = zero_ranks.sum() - (zero_ranks @ not_to_fill.toarray())
-        sum_log_ranks = nz_sum + zero_sum
-    else:
-        sum_log_ranks = log_ranks_sparse.tocsc().sum(0).A1
-    
-    # Compute fraction of non-zero elements
-    frac = (X_sparse != 0).tocsc().sum(0).A1
-    
-    return log_ranks_sparse, sum_log_ranks, frac
+class AsyncZarrWriter:
+    """Asynchronous writer for ZarrBackedCSR using threading."""
 
+    def __init__(self, zarr_csr, max_queue_size=5):
+        self.zarr_csr = zarr_csr
+        self.queue = queue.Queue(maxsize=max_queue_size)
+        self.executor = ThreadPoolExecutor(max_workers=1)  # Single writer thread
+        self.futures = []
+        self.stop_event = threading.Event()
+        self.exception = None
 
-def rank_data_nz_vectorized(arr, n_genes, compute_stats=False):
-    """Vectorized version with optional stats computation."""
-    res = np.ones((arr.shape[0], n_genes), dtype=np.float32)
-    
-    # Process in batches for better cache efficiency
-    batch_size = min(100, arr.shape[0])
-    
-    for batch_start in range(0, arr.shape[0], batch_size):
-        batch_end = min(batch_start + batch_size, arr.shape[0])
-        
-        for i in range(batch_start, batch_end):
-            row = arr.getrow(i)
-            if row.nnz > 0:
-                # Data is already aligned, so indices directly correspond to gene positions
-                res[i, row.indices] = rankdata(row.data, method='average') + n_genes - row.nnz
-    
-    if compute_stats:
-        # Apply log transformation
-        log_ranks = np.log(res)
-        # Compute all stats in one pass
-        return compute_log_rank_stats(log_ranks, arr, n_genes)
-    
-    return res
+        # Start the writer thread
+        self.writer_future = self.executor.submit(self._writer_loop)
+
+    def _writer_loop(self):
+        """Background writer that processes the queue."""
+        while not self.stop_event.is_set() or not self.queue.empty():
+            try:
+                # Get item with timeout to check stop_event periodically
+                item = self.queue.get(timeout=0.1)
+                if item is None:  # Sentinel value to stop
+                    break
+
+                csr_matrix_data, metadata = item
+                # Append to zarr
+                self.zarr_csr.append(csr_matrix_data)
+                logger.debug(f"Written {metadata['name']} to zarr")
+
+            except queue.Empty:
+                continue
+            except Exception as e:
+                logger.error(f"Error in writer thread: {e}")
+                self.exception = e
+                break
+
+    def submit(self, csr_matrix_data, metadata):
+        """Submit a CSR matrix for async writing."""
+        if self.exception:
+            raise self.exception
+
+        self.queue.put((csr_matrix_data, metadata))
+        logger.debug(f"Queued {metadata['name']} for writing")
+
+    def finish(self):
+        """Wait for all pending writes to complete."""
+        # Send sentinel to stop writer
+        self.queue.put(None)
+
+        # Wait for writer to finish
+        self.writer_future.result()
+
+        # Shutdown executor
+        self.executor.shutdown(wait=True)
+
+        # Check for any exceptions
+        if self.exception:
+            raise self.exception
+
+        logger.info("Async writer finished")
 
 
 if JAX_AVAILABLE:
@@ -135,7 +149,7 @@ if JAX_AVAILABLE:
         return ranks
     
     @jit
-    def jax_rank_dense_batch(dense_matrix):
+    def jax_log_rank_dense_batch(dense_matrix):
         """JAX-optimized batch ranking for dense matrices."""
         n_rows, n_cols = dense_matrix.shape
         
@@ -157,118 +171,104 @@ if JAX_AVAILABLE:
         # Handle zeros by setting their rank to 1
         ranks = jnp.where(dense_matrix != 0, ranks, 1.0)
         
-        return ranks
+        return jnp.log(ranks)
     
-    def rank_data_nz_jax(arr, n_genes, compute_stats=False, ):
-        """JAX-optimized rank calculation with optional stats."""
-        n_rows = arr.shape[0]
+    def rank_data_jax(X: csr_matrix, n_genes, async_writer: AsyncZarrWriter =None, write_interval=10, metadata=None):
+        """JAX-optimized rank calculation with incremental writing."""
+        n_rows, n_cols = X.shape
         
-        # Convert sparse to dense for JAX processing
+        # Initialize accumulators
+        sum_log_ranks = jnp.zeros(n_genes, dtype=jnp.float32)
+        sum_frac = jnp.zeros(n_genes, dtype=jnp.float32)
+        
         # Process in chunks to manage memory
         chunk_size = min(1000, n_rows)
-        all_ranks = []
+        pending_ranks = []
+        chunks_processed = 0
         
-        for start_idx in range(0, n_rows, chunk_size):
-            end_idx = min(start_idx + chunk_size, n_rows)
-            
-            # Convert chunk to dense
-            chunk = arr[start_idx:end_idx].toarray().astype(np.float32)
-            
-            # Compute ranks using JAX
-            chunk_ranks = jax_rank_dense_batch(jnp.array(chunk))
-            
-            # Convert back to numpy
-            all_ranks.append(np.array(chunk_ranks))
-
-
-
-
-        # Concatenate all results
-        result = np.vstack(all_ranks) if all_ranks else np.ones((n_rows, n_genes), dtype=np.float32)
+        # Setup progress bar
+        study_name = metadata.get('name', 'unknown') if metadata else 'unknown'
+        total_chunks = (n_rows + chunk_size - 1) // chunk_size
         
-        if compute_stats:
-            # Apply log transformation
-            log_ranks = np.log(np.maximum(result, 1e-10))
-            # Compute all stats in one pass
-            return compute_log_rank_stats(log_ranks, arr, n_genes)
+        with tqdm(total=n_rows, desc=f"Ranking {study_name}", unit="cells") as pbar:
+            for start_idx in range(0, n_rows, chunk_size):
+                end_idx = min(start_idx + chunk_size, n_rows)
+
+                # Convert chunk to dense
+                chunk_dense = X[start_idx:end_idx].toarray().astype(np.float32)
+                chunk_jax = jnp.array(chunk_dense)
+
+                chunk_log_ranks = jax_log_rank_dense_batch(chunk_jax)
+
+                # Update accumulators
+                # Sum log ranks (with fill_zero logic)
+                nonzero_mask = chunk_jax != 0
+                n_nonzero_per_row = nonzero_mask.sum(axis=1, keepdims=True)
+                zero_log_ranks = jnp.log((n_genes - n_nonzero_per_row + 1) / 2)
+
+                # Sum including zero positions
+                sum_log_ranks += chunk_log_ranks.sum(axis=0)
+                sum_log_ranks += zero_log_ranks.sum() - (zero_log_ranks * nonzero_mask).sum(axis=0)
+
+                # Sum fraction (count of non-zeros)
+                sum_frac += nonzero_mask.sum(axis=0)
+
+                # Convert back to numpy and collect
+                pending_ranks.append(np.array(chunk_log_ranks))
+                chunks_processed += 1
+
+                # Update progress bar
+                pbar.update(end_idx - start_idx)
+
+                # Write to zarr periodically
+                if async_writer and chunks_processed % write_interval == 0:
+                    # Combine pending ranks into CSR
+                    combined = np.vstack(pending_ranks)
+                    csr_chunk = csr_matrix(combined)
+
+                    # Submit to async writer
+                    chunk_metadata = metadata.copy() if metadata else {}
+                    chunk_metadata['chunk_id'] = chunks_processed // write_interval
+                    async_writer.submit(csr_chunk, chunk_metadata)
+
+                    # Clear pending ranks
+                    pending_ranks = []
+                    pbar.set_postfix({"chunks_written": chunk_metadata['chunk_id']})
+        
+        # Handle remaining ranks
+        if pending_ranks:
+            combined = np.vstack(pending_ranks)
+            if async_writer:
+                csr_chunk = csr_matrix(combined)
+                chunk_metadata = metadata.copy() if metadata else {}
+                chunk_metadata['chunk_id'] = (chunks_processed // write_interval) + 1
+                async_writer.submit(csr_chunk, chunk_metadata)
+                return None, np.array(sum_log_ranks), np.array(sum_frac)
+            else:
+                # Return as CSR if no writer
+                return csr_matrix(combined), np.array(sum_log_ranks), np.array(sum_frac)
+        
+        return None, np.array(sum_log_ranks), np.array(sum_frac)
         
         return result
 
 
-def rank_data_nz(arr, n_genes, use_jax=True, compute_stats=False):
-    """Main ranking function with JAX acceleration and stats computation."""
-    if use_jax and JAX_AVAILABLE and arr.nnz > 0:
-        try:
-            return rank_data_nz_jax(arr, n_genes, compute_stats)
-        except Exception as e:
-            logger.warning(f"JAX ranking failed, falling back to vectorized: {e}")
-            return rank_data_nz_vectorized(arr, n_genes, compute_stats)
-    else:
-        return rank_data_nz_vectorized(arr, n_genes, compute_stats)
+def rank_data(arr, n_genes, async_writer=None, write_interval=10, metadata=None):
+    """Main ranking function using JAX with incremental writing."""
 
-
-
-
-class AsyncZarrWriter:
-    """Asynchronous writer for ZarrBackedCSR using threading."""
     
-    def __init__(self, zarr_csr, max_queue_size=5):
-        self.zarr_csr = zarr_csr
-        self.queue = queue.Queue(maxsize=max_queue_size)
-        self.executor = ThreadPoolExecutor(max_workers=1)  # Single writer thread
-        self.futures = []
-        self.stop_event = threading.Event()
-        self.exception = None
-        
-        # Start the writer thread
-        self.writer_future = self.executor.submit(self._writer_loop)
+    if arr.nnz == 0:
+        # Handle empty matrix
+        empty_csr = csr_matrix((arr.shape[0], n_genes), dtype=np.float32)
+        return empty_csr, np.zeros(n_genes), np.zeros(n_genes)
     
-    def _writer_loop(self):
-        """Background writer that processes the queue."""
-        while not self.stop_event.is_set() or not self.queue.empty():
-            try:
-                # Get item with timeout to check stop_event periodically
-                item = self.queue.get(timeout=0.1)
-                if item is None:  # Sentinel value to stop
-                    break
-                
-                csr_matrix_data, metadata = item
-                # Append to zarr
-                self.zarr_csr.append(csr_matrix_data)
-                logger.debug(f"Written {metadata['name']} to zarr")
-                
-            except queue.Empty:
-                continue
-            except Exception as e:
-                logger.error(f"Error in writer thread: {e}")
-                self.exception = e
-                break
-    
-    def submit(self, csr_matrix_data, metadata):
-        """Submit a CSR matrix for async writing."""
-        if self.exception:
-            raise self.exception
-        
-        self.queue.put((csr_matrix_data, metadata))
-        logger.debug(f"Queued {metadata['name']} for writing")
-    
-    def finish(self):
-        """Wait for all pending writes to complete."""
-        # Send sentinel to stop writer
-        self.queue.put(None)
-        
-        # Wait for writer to finish
-        self.writer_future.result()
-        
-        # Shutdown executor
-        self.executor.shutdown(wait=True)
-        
-        # Check for any exceptions
-        if self.exception:
-            raise self.exception
-        
-        logger.info("Async writer finished")
+    try:
+        return rank_data_jax(arr, n_genes, async_writer, write_interval, metadata)
+    except Exception as e:
+        logger.error(f"JAX ranking failed: {e}")
+        raise
 
+ zarr.ThreadSynchronizer()
 
 class ZarrBackedCSR:
 
@@ -700,7 +700,12 @@ def run_find_latent_representation(args: FindLatentRepresentationsConfig):
     total_cells = 0
     
     # Do inference
-    for st_id, st_file in enumerate(spe_file_list):
+    logger.info(f"Processing {len(spe_file_list)} spatial transcriptomics files")
+    
+    for st_id, st_file in tqdm(enumerate(spe_file_list), 
+                                total=len(spe_file_list), 
+                                desc="Processing studies", 
+                                unit="study"):
         st_name = (Path(st_file).name).split(".h5ad")[0]
         logger.info(f"Processing {st_name} ({st_id + 1}/{len(spe_file_list)})...")
         
@@ -736,24 +741,20 @@ def run_find_latent_representation(args: FindLatentRepresentationsConfig):
         # Calculate ranks using optimized method
         n_cells = X.shape[0]
         
-        # Choose ranking method and compute stats in one pass
-        if JAX_AVAILABLE and n_cells > 50:
-            # Use JAX for medium to large datasets
-            logger.debug(f"Using JAX acceleration for {n_cells} cells")
-            study_log_ranks_sparse, batch_sum_log_ranks, batch_frac = rank_data_nz(
-                X, n_genes, use_jax=True, compute_stats=True
-            )
-        else:
-            # Use vectorized numpy for small datasets
-            logger.debug(f"Using vectorized numpy for {n_cells} cells")
-            study_log_ranks_sparse, batch_sum_log_ranks, batch_frac = rank_data_nz(
-                X, n_genes, use_jax=False, compute_stats=True
-            )
+        # Use JAX with incremental writing
+        logger.debug(f"Processing {n_cells} cells with JAX")
         
-        # Submit to async writer (non-blocking)
-        async_writer.submit(
-            study_log_ranks_sparse, 
-            {'name': st_name, 'cells': n_cells}
+        # Metadata for this study
+        study_metadata = {'name': st_name, 'cells': n_cells, 'study_id': st_id}
+        
+        # Process with incremental writing (writes happen inside rank_data)
+        # Returns None for CSR since it's written incrementally
+        _, batch_sum_log_ranks, batch_frac = rank_data(
+            X, 
+            n_genes, 
+            async_writer=async_writer,
+            write_interval=10,  # Write every 10 chunks (10,000 cells)
+            metadata=study_metadata
         )
         
         # Update global sums
@@ -762,17 +763,17 @@ def run_find_latent_representation(args: FindLatentRepresentationsConfig):
         total_cells += n_cells
         
         # Compute the slice mean (original method for backward compatibility)
-        process_slice_mean(args, st_name, adata)
+        # process_slice_mean(args, st_name, adata)
 
         # Compute the depth
         if args.data_layer in ["count", "counts"]:
             adata.obs['depth'] = np.array(adata.layers[args.data_layer].sum(axis=1)).flatten()
             
         # Save the ST data with embeddings
-        adata.write_h5ad(output_path)
+        # adata.write_h5ad(output_path)
         
         # Clean up memory
-        del adata, X, study_log_ranks_sparse
+        del adata, X
         gc.collect()
     
     # Wait for all async writes to complete
