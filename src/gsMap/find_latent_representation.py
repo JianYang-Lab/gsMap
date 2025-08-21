@@ -16,6 +16,8 @@ from torch.utils.data import (
 from scipy.sparse import csr_matrix
 from zarr.storage import DirectoryStore
 from tqdm import tqdm
+import threading
+import queue
 
 
 logger = logging.getLogger(__name__)
@@ -100,8 +102,9 @@ if JAX_AVAILABLE:
     def rank_data_jax(X: csr_matrix, n_genes,
                       zarr_csr = None,
                       metadata=None,
-                      chunk_size=1000):
-        """JAX-optimized rank calculation with simple append-based writing."""
+                      chunk_size=1000,
+                      write_interval=10):
+        """JAX-optimized rank calculation with batched writing."""
         assert X.nnz != 0, "Input matrix must not be empty"
 
         n_rows, n_cols = X.shape
@@ -112,6 +115,8 @@ if JAX_AVAILABLE:
         
         # Process in chunks to manage memory
         chunk_size = min(chunk_size, n_rows)
+        pending_chunks = []  # Buffer for batching writes
+        chunks_processed = 0
         
         # Setup progress bar
         study_name = metadata.get('name', 'unknown') if metadata else 'unknown'
@@ -132,22 +137,29 @@ if JAX_AVAILABLE:
                 sum_log_ranks += chunk_sum_log_ranks
                 sum_frac += chunk_sum_frac
                 
-                # Convert JAX array to numpy and then to CSR
+                # Convert JAX array to numpy
                 chunk_log_ranks_np = np.array(chunk_log_ranks)
-                chunk_csr = csr_matrix(chunk_log_ranks_np)
-                
-                # Write to zarr using append
-                if zarr_csr:
-                    zarr_csr.append(chunk_csr)
+                pending_chunks.append(chunk_log_ranks_np)
+                chunks_processed += 1
+
+                # Write to zarr periodically
+                if zarr_csr and chunks_processed % write_interval == 0:
+                    # Combine pending chunks and convert to CSR
+                    zarr_csr.append_batch(np.vstack(pending_chunks))
+                    pending_chunks = []
 
                 # Update progress bar
                 pbar.update(end_idx - start_idx)
         
+        # Write any remaining chunks
+        if zarr_csr and pending_chunks:
+            zarr_csr.append_batch(np.vstack(pending_chunks))
+
         return None, np.array(sum_log_ranks), np.array(sum_frac)
 
 
 class ZarrBackedCSR:
-    """Simple CSR matrix storage using zarr append method."""
+    """CSR matrix storage with single background writer thread and batched appends."""
     
     def __init__(
         self,
@@ -198,7 +210,7 @@ class ZarrBackedCSR:
             )
             
             self.zarr_array.attrs["ncols"] = ncols
-            self.zarr_array.attrs["version"] = "3.1"
+            self.zarr_array.attrs["version"] = "3.2"
         
         # Keep references to zarr arrays
         self._indptr_zarr = self.zarr_array["indptr"]
@@ -213,36 +225,67 @@ class ZarrBackedCSR:
             self._indptr = np.array([0], dtype=np.int32)
             self.current_row = 0
             self.current_nnz = 0
+        
+        # Single background writer thread
+        self.write_queue = queue.Queue()
+        self.writer_thread = None
+        self.stop_writer = threading.Event()
+        
+        if mode == 'w':
+            self._start_writer_thread()
 
+    def _start_writer_thread(self):
+        """Start the background writer thread."""
+        def writer_worker():
+            while not self.stop_writer.is_set():
+                try:
+                    # Get batch from queue with timeout
+                    mat = self.write_queue.get(timeout=0.1)
+                    if mat is None:  # Sentinel value
+                        break
+                    self._append_to_zarr(mat)
+                    self.write_queue.task_done()
+                except queue.Empty:
+                    continue
+                except Exception as e:
+                    logger.error(f"Writer thread error: {e}")
+                    raise
+        
+        self.writer_thread = threading.Thread(target=writer_worker, daemon=True)
+        self.writer_thread.start()
+    
     @classmethod
     def open(cls, path: str | Path, mode="r", **kwargs):
         z = zarr.open(path, mode="r")
         attrs = z.attrs
         if "ncols" not in attrs:
             raise ValueError("Invalid ZarrBackedCSR: ncols not found in attributes")
-        if attrs.get("version", "1.0") < "3.0":
-            raise ValueError(f"Unsupported ZarrBackedCSR version {attrs.get('version', '1.0')}. Please recreate with version 3.0")
         return cls(path, ncols=attrs["ncols"], mode=mode, **kwargs)
 
     @property
     def shape(self):
-        return (len(self._indptr) - 1, self.ncols) if len(self._indptr) > 0 else (0, self.ncols)
+        return (self.current_row, self.ncols)
 
     @property
     def nnz(self):
-        return self._indptr[-1] if len(self._indptr) > 0 else 0
+        return self.current_nnz
 
-    def append(self, mat):
-        """Append a CSR matrix using zarr's append functionality."""
-        # Convert numpy array to CSR if needed
-        if isinstance(mat, np.ndarray):
-            mat = csr_matrix(mat)
-        elif not isinstance(mat, csr_matrix):
-            raise TypeError(f"Expected csr_matrix or numpy array, got {type(mat)}")
-        
+    def append_batch(self, mat):
+
+        # Queue for background writing
+        self.write_queue.put(mat)
+    
+    def _append_to_zarr(self, mat):
+
+        if not isinstance(mat, csr_matrix):
+            if isinstance(mat, np.ndarray):
+                mat = csr_matrix(mat)
+            else:
+                raise TypeError(f"Expected csr_matrix or numpy array, got {type(mat)}")
+
         if mat.shape[1] != self.ncols:
             raise ValueError(f"Number of columns must match. Expected {self.ncols}, got {mat.shape[1]}")
-        
+
         n_rows = mat.shape[0]
         nnz = mat.nnz
         
@@ -252,7 +295,7 @@ class ZarrBackedCSR:
         
         # Append to data_indices as structured array
         if nnz > 0:
-            combined = np.empty(nnz, dtype=[('idx', np.uint16), ('val', np.float32)], order='C')
+            combined = np.empty(nnz, dtype=[('idx', np.uint16), ('val', np.float32)])
             combined['idx'] = mat.indices.astype(np.uint16)
             combined['val'] = mat.data.astype(np.float32)
             self._data_indices.append(combined)
@@ -263,6 +306,25 @@ class ZarrBackedCSR:
         
         # Update in-memory indptr
         self._indptr = np.append(self._indptr, new_indptr)
+    
+    def close(self):
+        """Clean up resources and wait for pending writes."""
+        if hasattr(self, 'writer_thread') and self.writer_thread and self.writer_thread.is_alive():
+            # Wait for queue to empty
+            self.write_queue.join()
+            # Send sentinel to stop thread
+            self.write_queue.put(None)
+            # Wait for thread to finish
+            self.writer_thread.join(timeout=5)
+            if self.writer_thread.is_alive():
+                logger.warning("Writer thread did not finish in time")
+    
+    def finalize(self):
+        """Finalize the matrix and ensure all writes are complete."""
+        if hasattr(self, 'writer_thread') and self.writer_thread and self.writer_thread.is_alive():
+            # Wait for all pending writes
+            self.write_queue.join()
+        logger.info(f"Finalized matrix with {self.current_row} rows and {self.current_nnz} non-zeros")
 
     def __getitem__(self, indices):
         """Optimized slicing with combined data access."""
@@ -595,13 +657,14 @@ def run_find_latent_representation(args: FindLatentRepresentationsConfig):
         # Metadata for this study
         study_metadata = {'name': st_name, 'cells': n_cells, 'study_id': st_id}
         
-        # Process with simple append-based writing
+        # Process with batched append-based writing
         _, batch_sum_log_ranks, batch_frac = rank_data_jax(
             X,
             n_genes,
             zarr_csr=log_ranks,
             metadata=study_metadata,
-            chunk_size=1_000
+            chunk_size=1_000,
+            write_interval=10  # Batch 10 chunks before writing
         )
 
         # Update global sums
