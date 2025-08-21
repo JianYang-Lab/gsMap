@@ -304,8 +304,8 @@ class ZarrBackedCSR:
         self._indptr_zarr.append(new_indptr)
         self._indptr = np.append(self._indptr, new_indptr)
         
-        # Prepare combined data
-        combined = np.empty(mat.nnz, dtype=[('idx', np.uint16), ('val', np.float32)])
+        # Prepare combined data (ensure C-contiguous for optimal append)
+        combined = np.empty(mat.nnz, dtype=[('idx', np.uint16), ('val', np.float32)], order='C')
         combined['idx'] = mat.indices.astype(np.uint16)
         combined['val'] = mat.data.astype(np.float32)
         self._data_indices.append(combined)
