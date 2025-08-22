@@ -190,7 +190,7 @@ class ZarrBackedCSR:
             self.zarr_array.create(
                 "indptr",
                 shape=(1,),
-                dtype=np.int32,
+                dtype=np.int64,
                 chunks=(chunks_rows,),
                 **kwargs,
             )
@@ -216,11 +216,11 @@ class ZarrBackedCSR:
         
         # Load current indptr for tracking
         if len(self._indptr_zarr) > 0:
-            self._indptr = np.array(self._indptr_zarr[:], dtype=np.int32)
+            self._indptr = np.array(self._indptr_zarr[:], dtype=np.int64)
             self.current_row = len(self._indptr) - 1
             self.current_nnz = self._indptr[-1]
         else:
-            self._indptr = np.array([0], dtype=np.int32)
+            self._indptr = np.array([0], dtype=np.int64)
             self.current_row = 0
             self.current_nnz = 0
         
@@ -288,7 +288,7 @@ class ZarrBackedCSR:
         nnz = mat.nnz
         
         # Append to indptr (offset by current nnz)
-        new_indptr = mat.indptr[1:].astype(np.int32) + self.current_nnz
+        new_indptr = mat.indptr[1:].astype(np.int64) + self.current_nnz
         self._indptr_zarr.append(new_indptr)
         
         # Append to data_indices as structured array
@@ -323,7 +323,7 @@ class ZarrBackedCSR:
         if isinstance(indices, (int, np.integer)):
             indices = [indices]
         
-        indices_array = np.asarray(indices, dtype=np.int32)
+        indices_array = np.asarray(indices, dtype=np.int64)
         M = len(indices_array)
         
         if M == 0:
@@ -344,9 +344,9 @@ class ZarrBackedCSR:
         
         # Calculate total size needed
         row_nnz = end_ptrs - start_ptrs
-        res_indptr = np.zeros(M + 1, dtype=np.int32)
+        res_indptr = np.zeros(M + 1, dtype=np.int64)
         np.cumsum(row_nnz, out=res_indptr[1:])
-        
+
         total_nnz = res_indptr[-1]
         
         if total_nnz == 0:
