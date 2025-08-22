@@ -47,7 +47,7 @@ class PipelineConfig:
 
     # Processing parameters
     n_cell_training: int = 100000
-    data_layer: str = "X"
+    data_layer: str = "counts"
     homolog_file: str = "/storage/yangjianLab/songliyang/SpatialData/homologs/mouse_human_homologs.txt"
 
     # 3D visualization
@@ -82,11 +82,11 @@ def step1_find_latent_representations(config: PipelineConfig):
 
     # Create file list
     file_list_path = f"{config.workdir}/{config.project_name}/sample_list.txt"
-    files = get_sample_list(config)
-
-    with open(file_list_path, 'w') as f:
-        for file in files:
-            f.write(f"{file}\n")
+    # files = get_sample_list(config)
+    #
+    # with open(file_list_path, 'w') as f:
+    #     for file in files:
+    #         f.write(f"{file}\n")
 
     # Create config for FindLatentRepresentations
     latent_config = FindLatentRepresentationsConfig(
@@ -347,7 +347,8 @@ if __name__ == "__main__":
     # main()
     # # get h5ad files
     config = PipelineConfig()
-    run_full_pipeline(config)
+    step1_find_latent_representations(config)
+    # run_full_pipeline(config)
     # step4_spatial_ldsc(config, )
     # step5_3d_visualization(config, )
 
