@@ -319,17 +319,28 @@ class ZarrBackedCSR:
                 logger.warning("Writer thread did not finish in time")
 
     def __getitem__(self, indices):
-        """Optimized slicing with combined data access."""
-        if isinstance(indices, (int, np.integer)):
+        nrows = len(self._indptr) - 1
+        
+        # Handle different index types
+        if isinstance(indices, slice):
+            # Convert slice to array of indices
+            start, stop, step = indices.indices(nrows)
+            indices = list(range(start, stop, step))
+            if len(indices) == 0:
+                return csr_matrix((0, self.ncols), dtype=np.float32)
+        elif isinstance(indices, (int, np.integer)):
             indices = [indices]
+        elif isinstance(indices, (list, tuple, np.ndarray)):
+            indices = list(indices)
+        else:
+            raise TypeError(f"Indices must be an integer, slice, or array-like, got {type(indices)}")
         
         indices_array = np.asarray(indices, dtype=np.int64)
         M = len(indices_array)
         
         if M == 0:
-            raise ValueError("Expected non-empty indices")
+            return csr_matrix((0, self.ncols), dtype=np.float32)
         
-        nrows = len(self._indptr) - 1
         if nrows == 0:
             return csr_matrix((M, self.ncols), dtype=np.float32)
         
