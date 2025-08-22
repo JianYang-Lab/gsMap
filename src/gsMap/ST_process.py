@@ -61,16 +61,13 @@ def find_common_hvg(spe_file_list, params: FindLatentRepresentationsConfig):
         
         # Identify highly variable genes
         flavor = "seurat_v3" if params.data_layer in ["count", "counts", "impute_count"] else "seurat"
-        try:
-            sc.pp.highly_variable_genes(
-                adata_temp, n_top_genes=params.feat_cell, subset=False, flavor=flavor
-            )
-            var_df = adata_temp.var
-            var_df["gene"] = var_df.index.tolist()
-            variances_list.append(var_df)
-        except:
-            logger.warning(f"Failed to find HVGs for {st_file}.")
-        
+        sc.pp.highly_variable_genes(
+            adata_temp, n_top_genes=params.feat_cell, subset=False, flavor=flavor
+        )
+        var_df = adata_temp.var
+        var_df["gene"] = var_df.index.tolist()
+        variances_list.append(var_df)
+
         cell_number.append(adata_temp.n_obs)
         # Store the annotation
         if params.annotation is not None:

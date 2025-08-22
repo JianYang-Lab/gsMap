@@ -7,8 +7,6 @@ from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.utils import add_remaining_self_loops, degree
 
 
-
-
 def build_spatial_graph(adata, n_neighbors, spatial_key):
     """
     Build the spatial neighbor graphs.

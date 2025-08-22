@@ -32,28 +32,28 @@ from gsMap.three_d_combine import three_d_combine
 
 @dataclass
 class PipelineConfig:
-    """Configuration for the gsMap pipeline"""
+    """Configuration for the gsMap3D pipeline"""
 
     # Base paths
-    workdir: str | Path = "/mnt/d/01_Project/01_Research/202312_gsMap/experiment/20250807_refactor_for_gsmap3d/02_latent2gene_optmization_max_pooling/01_mouse_E9.5_dev_v1"
-    data_root: str = "/mnt/d/01_Project/01_Research/202312_gsMap/experiment/20250807_refactor_for_gsmap3d/02_latent2gene_optmization_max_pooling/Mouse_E9.5"
-    gsmap_resource: str = "/mnt/d/01_Project/01_Research/202312_gsMap/data/gsMap_dev_data/online_resource/gsMap_resource"
-    gwas_summary: str = "/mnt/d/01_Project/01_Research/202312_gsMap/experiment/20250807_refactor_for_gsmap3d/02_latent2gene_optmization_max_pooling/mouse_e9_5_gwas_config.yaml"
+    workdir: str = "/storage/yangjianLab/chenwenhao/01_Project/01_Research/202312_gsMap/experiment/20250807_refactor_for_gsmap3d/02_latent2gene_optmization_max_pooling"
+    data_root: str = "/storage/yangjianLab/chenwenhao/projects/202312_GPS/data/ST_data_Collection/01_MERFISH/mouse_brain/01_cell_atlas_of_whole_mouse_brain/01_processed"
+    gsmap_resource: str = "/storage/yangjianLab/chenwenhao/projects/202312_GPS/data/resource/gsMap_resource"
+    gwas_summary: str = "/storage/yangjianLab/songliyang/GWAS_trait/GWAS_brain_use.yaml"
 
     # Project settings
-    project_name: str = "202508115_Mouse_E9.5_dev_v4"
-    annotation: str = "mapped_celltype"
+    project_name: str = "MERFISH_BRAIN_V1"
+    annotation: str = "cell_type"
     spatial_key: str = "spatial"
 
     # Processing parameters
     n_cell_training: int = 100000
     data_layer: str = "X"
-    homolog_file: str = "/mnt/d/01_Project/01_Research/202312_gsMap/data/gsMap_dev_data/online_resource/gsMap_resource/homologs/mouse_human_homologs.txt"
+    homolog_file: str = "/storage/yangjianLab/songliyang/SpatialData/homologs/mouse_human_homologs.txt"
 
     # 3D visualization
-    adata_3d: str = "/storage/yangjianLab/songliyang/SpatialData/gsMap_analysis/MouseBrain_StereoSeq/MouseBrain_StereoSeq.meta.parquet"
+    adata_3d: str = "/storage/yangjianLab/chenwenhao/projects/202312_GPS/data/ST_data_Collection/01_MERFISH/mouse_brain/01_cell_atlas_of_whole_mouse_brain/01_processed"
     background_color: str = "white"
-    spatial_key_3d: str = "3d_align_spatial"
+    spatial_key_3d: str = "X_CCF"
     st_id: str = "st_id"
 
     # Additional parameters
@@ -69,7 +69,7 @@ def setup_directories(config: PipelineConfig):
 
 def get_sample_list(config: PipelineConfig) -> List[str]:
     """Get list of h5ad files for processing"""
-    pattern = f"{config.data_root}/*.h5ad"
+    pattern = f"{config.data_root}/WB_imputation_animal3_sagittal_C57BL6J*.h5ad"
     files = glob.glob(pattern)
     return files
 
@@ -81,12 +81,12 @@ def step1_find_latent_representations(config: PipelineConfig):
     print("=" * 80)
 
     # Create file list
-    file_list_path = f"{config.workdir}/list/{config.project_name}_list"
-    # files = get_sample_list(config)
-    #
-    # with open(file_list_path, 'w') as f:
-    #     for file in files:
-    #         f.write(f"{file}\n")
+    file_list_path = f"{config.workdir}/{config.project_name}/sample_list.txt"
+    files = get_sample_list(config)
+
+    with open(file_list_path, 'w') as f:
+        for file in files:
+            f.write(f"{file}\n")
 
     # Create config for FindLatentRepresentations
     latent_config = FindLatentRepresentationsConfig(
