@@ -3,19 +3,10 @@ import torch.nn as nn
 import pandas as pd
 from torch_geometric.nn import knn_graph
 from torch_geometric.utils import to_undirected
-
 from torch_geometric.nn.conv import MessagePassing
-from torch_scatter import scatter_add
-from torch_geometric.utils import add_remaining_self_loops
+from torch_geometric.utils import add_remaining_self_loops, degree
 
 
-def full_block(in_dim, out_dim, p_drop=0.1):
-    return nn.Sequential(
-        nn.Linear(in_dim, out_dim),
-        nn.BatchNorm1d(out_dim),
-        nn.ReLU(),
-        nn.Dropout(p=p_drop),
-    )
 
 
 def build_spatial_graph(adata, n_neighbors, spatial_key):
@@ -44,46 +35,30 @@ def build_spatial_graph(adata, n_neighbors, spatial_key):
     return edge_index, graph_df
 
 
-# Define the GCN feature extractor
-def sym_norm(edge_index, num_nodes, edge_weight=None, improved=False, dtype=None):
-    if edge_weight is None:
-        edge_weight = torch.ones(
-            (edge_index.size(1),), dtype=dtype, device=edge_index.device
-        )
-
-    fill_value = 1 if not improved else 2
-    edge_index, edge_weight = add_remaining_self_loops(
-        edge_index, edge_weight, fill_value, num_nodes
-    )
-
-    # compute normalization
-    row, col = edge_index
-    deg = scatter_add(edge_weight, row, dim=0, dim_size=num_nodes)
-    deg_inv_sqrt = deg.pow(-0.5)
-    deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
-
-    return edge_index, deg_inv_sqrt[row] * edge_weight * deg_inv_sqrt[col]
-
-
 class GCN(MessagePassing):
     """
-    LGCN (GCN without learnable and concat)
-    K: K-hop neighbor to propagate
+    GCN for unweighted graphs.
     """
 
-    def __init__(self, K=1, cached=False, bias=True, **kwargs):
-        super().__init__(aggr="add", **kwargs)
+    def __init__(self, K=1):
+        super().__init__(aggr="add")
         self.K = K
 
-    def forward(self, x, edge_index, edge_weight=None):
-        edge_index, norm = sym_norm(
-            edge_index, x.size(0), edge_weight, dtype=x.dtype)
+    def forward(self, x, edge_index):
+        # Add self-loops
+        edge_index, _ = add_remaining_self_loops(edge_index, num_nodes=x.size(0))
 
+        # Compute normalization: 1/sqrt(deg_i * deg_j)
+        row, col = edge_index
+        deg = degree(row, x.size(0), dtype=x.dtype)
+        norm = (deg[row] * deg[col]).pow(-0.5)
+        norm[norm == float("inf")] = 0
+
+        # K-hop propagation
         xs = [x]
-        if self.K == 0:
-            return x
-        for k in range(self.K):
+        for _ in range(self.K):
             xs.append(self.propagate(edge_index, x=xs[-1], norm=norm))
+
         return torch.cat(xs[1:], dim=1)
 
     def message(self, x_j, norm):

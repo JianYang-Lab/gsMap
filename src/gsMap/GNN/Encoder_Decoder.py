@@ -1,16 +1,18 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.distributions import Normal
 from torch.distributions import kl_divergence as kl
 
 from gsMap.GNN.GeneFormer import GeneModuleFormer
-from gsMap.GNN.GCN import full_block
 
-# sys.path.append("/storage/yangjianLab/songliyang/SpatialData/gsMap_software/gsMap_V2/GNN")
-# from GeneFormer import GeneModuleFormer
-# from GCN import full_block
 
+def full_block(in_dim, out_dim, p_drop=0.1):
+    return nn.Sequential(
+        nn.Linear(in_dim, out_dim),
+        nn.BatchNorm1d(out_dim),
+        nn.ReLU(),
+        nn.Dropout(p=p_drop),
+    )
 
 class transform(nn.Module):
     """
