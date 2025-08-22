@@ -14,6 +14,7 @@ from functools import partial
 import warnings
 
 import numpy as np
+import pandas as pd
 import jax
 import jax.numpy as jnp
 from jax import jit, vmap
@@ -42,7 +43,7 @@ logging.basicConfig(level=logging.INFO)
 class LatentToGeneConfig:
     """Configuration for marker score calculation"""
     # Input paths
-    adata_path: str
+    latent_dir: str  # Directory containing concatenated_latent_adata.h5ad and mean_frac.parquet
     rank_zarr_path: str
     output_path: str
     
@@ -578,38 +579,23 @@ class MarkerScoreCalculator:
         self.config = config
         self.connectivity_builder = ConnectivityMatrixBuilder(config)
         
-    def calculate_global_stats(self, adata: ad.AnnData) -> Tuple[np.ndarray, np.ndarray]:
-        """Calculate global geometric mean and expression fraction"""
+    def load_global_stats(self) -> Tuple[np.ndarray, np.ndarray]:
+        """Load pre-calculated global geometric mean and expression fraction from parquet"""
 
-        logger.info("Calculating global statistics...")
-        rank_zarr = ZarrBackedCSR.open(self.config.rank_zarr_path, mode='r')
+        logger.info("Loading global statistics from parquet...")
+        parquet_path = Path(self.config.latent_dir) / "mean_frac.parquet"
         
-        n_cells = rank_zarr.shape[0]
-        n_genes = rank_zarr.shape[1]
+        if not parquet_path.exists():
+            raise FileNotFoundError(f"Global stats file not found: {parquet_path}")
         
-        # Sample cells for global stats (use all if small enough)
-        sample_size = min(10000, n_cells)
-        sample_indices = np.random.choice(n_cells, sample_size, replace=False)
+        # Load the dataframe
+        mean_frac_df = pd.read_parquet(parquet_path)
         
-        # Read sample data
-        sample_data = rank_zarr[sample_indices]
-        if hasattr(sample_data, 'toarray'):
-            sample_data = sample_data.toarray()
+        # Extract global log geometric mean and expression fraction
+        global_log_gmean = mean_frac_df['G_Mean'].values.astype(np.float32)
+        global_expr_frac = mean_frac_df['frac'].values.astype(np.float32)
         
-        # Calculate global geometric mean (in log space)
-        nonzero_mask = sample_data > 0
-        log_sums = np.zeros(n_genes)
-        counts = np.zeros(n_genes)
-        
-        for i in range(sample_size):
-            gene_mask = nonzero_mask[i]
-            log_sums[gene_mask] += np.log(sample_data[i, gene_mask])
-            counts[gene_mask] += 1
-        
-        global_log_gmean = np.where(counts > 0, log_sums / counts, 0.0)
-        
-        # Calculate global expression fraction
-        global_expr_frac = nonzero_mask.sum(axis=0) / sample_size
+        logger.info(f"Loaded global stats for {len(global_log_gmean)} genes")
         
         return global_log_gmean, global_expr_frac
     
@@ -800,12 +786,17 @@ class MarkerScoreCalculator:
         """Main execution function"""
         logger.info("Starting marker score calculation...")
         
-        # Load AnnData
-        logger.info(f"Loading AnnData from {self.config.adata_path}")
-        adata = sc.read_h5ad(self.config.adata_path)
+        # Load concatenated AnnData
+        adata_path = Path(self.config.latent_dir) / "concatenated_latent_adata.h5ad"
+        logger.info(f"Loading concatenated AnnData from {adata_path}")
         
-        # Calculate global statistics
-        global_log_gmean, global_expr_frac = self.calculate_global_stats(adata)
+        if not adata_path.exists():
+            raise FileNotFoundError(f"Concatenated AnnData not found: {adata_path}")
+        
+        adata = sc.read_h5ad(adata_path)
+        
+        # Load pre-calculated global statistics
+        global_log_gmean, global_expr_frac = self.load_global_stats()
         
         # Get dimensions
         n_cells = adata.n_obs
@@ -863,10 +854,12 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description="Calculate marker scores from latent representations")
-    parser.add_argument("--adata", required=True, help="Path to AnnData file")
+    parser.add_argument("--latent-dir", required=True, help="Directory containing concatenated_latent_adata.h5ad and mean_frac.parquet")
     parser.add_argument("--rank-zarr", required=True, help="Path to rank Zarr")
     parser.add_argument("--output", required=True, help="Output path for marker scores")
     parser.add_argument("--config", help="Path to config JSON file")
+    parser.add_argument("--annotation-key", default="cell_type", help="Annotation key for cell types")
+    parser.add_argument("--spatial-key", default="spatial", help="Key for spatial coordinates")
     parser.add_argument("--batch-size", type=int, default=1000, help="Batch size")
     parser.add_argument("--num-workers", type=int, default=4, help="Number of read workers")
     parser.add_argument("--no-jax", action="store_true", help="Disable JAX acceleration")
@@ -881,9 +874,11 @@ def main():
         config = LatentToGeneConfig(**config_dict)
     else:
         config = LatentToGeneConfig(
-            adata_path=args.adata,
+            latent_dir=args.latent_dir,
             rank_zarr_path=args.rank_zarr,
             output_path=args.output,
+            annotation_key=args.annotation_key,
+            spatial_key=args.spatial_key,
             batch_size=args.batch_size,
             num_read_workers=args.num_workers,
             use_jax=not args.no_jax
