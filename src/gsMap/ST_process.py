@@ -33,7 +33,7 @@ def find_common_hvg(spe_file_list, params: FindLatentRepresentationsConfig):
     annotation_list = []
 
     logger.info("Finding highly variable genes (HVGs)...")
-    for st_file in tqdm(spe_file_list, desc="Finding common genes"):
+    for st_file in tqdm(spe_file_list, desc="Finding HVGs"):
         adata_temp = sc.read_h5ad(st_file)
         # sc.pp.filter_genes(adata_temp, min_counts=1)
         
@@ -201,11 +201,11 @@ class TrainingData(object):
             
             # Get expression array and apply GCN
             expression_array = torch.Tensor(adata[:, hvg].X.toarray())
-            edge, _ = build_spatial_graph(
-                adata,
-                self.params.n_neighbors,
-                self.params.spatial_key,
+            edge = build_spatial_graph(
+                coords = np.array(adata.obsm[self.params.spatial_key]),
+                n_neighbors=self.params.n_neighbors,
             )
+            edge = torch.from_numpy(edge.T).long()
             expression_array_gcn = self.gcov(expression_array, edge)
             logger.info(
                 f"Graph for {st_name} has {edge.size(1)} edges, {adata.n_obs} cells."
@@ -326,11 +326,11 @@ class InferenceData(object):
         expression_array = torch.Tensor(adata[:, self.hvg].X.toarray())
 
         # Graph convolution of expression array
-        edge, _ = build_spatial_graph(
-            adata,
-            self.params.n_neighbors,
-            self.params.spatial_key
+        edge = build_spatial_graph(
+            coords=np.array(adata.obsm[self.params.spatial_key]),
+            n_neighbors=self.params.n_neighbors,
         )
+        edge = torch.from_numpy(edge.T).long()
         expression_array_gcn = self.gcov(expression_array, edge)
 
         # Build batch vector as one-hot encoding

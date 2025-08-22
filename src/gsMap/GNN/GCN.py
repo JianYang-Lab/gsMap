@@ -1,37 +1,59 @@
+import numpy as np
 import torch
-import torch.nn as nn
-import pandas as pd
-from torch_geometric.nn import knn_graph
-from torch_geometric.utils import to_undirected
+from scipy.spatial import cKDTree
 from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.utils import add_remaining_self_loops, degree
 
 
-def build_spatial_graph(adata, n_neighbors, spatial_key):
+def build_spatial_graph(
+        coords: np.ndarray,
+        n_neighbors: int,
+        undirected: bool = False
+) -> np.ndarray:
     """
-    Build the spatial neighbor graphs.
-    adata: AnnData object of scanpy package.
-    n_neighbors: The number of nearest neighbors when model='KNN'
+
+    Parameters:
+    -----------
+    coords : np.ndarray
+        Spatial coordinates of shape (n_cells, n_dims)
+    n_neighbors : int
+        Number of nearest neighbors
+    undirected : bool, default=True
+        Whether to make graph undirected
+
+    Returns:
+    --------
+    edge_array : np.ndarray
+        Edge array of shape (n_edges, 2)
     """
 
-    edge_index = to_undirected(
-        knn_graph(
-            x=torch.tensor(adata.obsm[spatial_key]),
-            flow="target_to_source",
-            k=n_neighbors,
-            loop=True,
-            num_workers=8,
-        ),
-        num_nodes=adata.shape[0],
-    )
+    coords = np.ascontiguousarray(coords, dtype=np.float32)
 
-    graph_df = pd.DataFrame(edge_index.numpy().T, columns=["Cell1", "Cell2"])
-    id_cell_trans = dict(zip(range(adata.n_obs), adata.obs_names))
-    graph_df["Cell1"] = graph_df["Cell1"].map(id_cell_trans)
-    graph_df["Cell2"] = graph_df["Cell2"].map(id_cell_trans)
+    # Query k-NN
+    tree = cKDTree(coords, balanced_tree=True, compact_nodes=True)
+    _, indices = tree.query(coords, k=n_neighbors, workers=-1)
 
-    return edge_index, graph_df
+    n_nodes = coords.shape[0]
 
+    if undirected:
+        # Create bidirectional edges
+        source = np.repeat(np.arange(n_nodes), n_neighbors)
+        target = indices.flatten()
+
+        # Combine forward and reverse edges
+        all_edges = np.column_stack([
+            np.concatenate([source, target]),
+            np.concatenate([target, source])
+        ])
+
+        # Remove duplicates using set
+        edge_set = {tuple(sorted([i, j])) for i, j in all_edges}
+        return np.array(list(edge_set), dtype=np.int32)
+    else:
+        # Directed graph - just flatten the indices
+        source = np.repeat(np.arange(n_nodes), n_neighbors)
+        target = indices.flatten()
+        return np.column_stack([source, target]).astype(np.int32)
 
 class GCN(MessagePassing):
     """
