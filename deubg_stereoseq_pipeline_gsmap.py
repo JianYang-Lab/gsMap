@@ -127,7 +127,7 @@ def step2_calculate_gss(config: PipelineConfig, sample_name: Optional[str] = Non
         print("Using refactored JAX-accelerated latent_to_gene implementation")
         
         latent_dir = Path(config.workdir) / config.project_name / "find_latent_representations"
-        rank_zarr_path = latent_dir / "zarr_rank"
+        rank_zarr_path = latent_dir / "ranks.zarr"
         output_path = Path(config.workdir) / config.project_name / "latent_to_gene" / "marker_scores.zarr"
         
         # Create output directory
@@ -138,8 +138,8 @@ def step2_calculate_gss(config: PipelineConfig, sample_name: Optional[str] = Non
             latent_dir=str(latent_dir),
             rank_zarr_path=str(rank_zarr_path),
             output_path=str(output_path),
-            latent_representation="X_morpho_emb_gcn",
-            latent_representation_indv="X_morpho_emb",
+            latent_representation="emb_gcn",
+            latent_representation_indv="emb",
             spatial_key=config.spatial_key,
             annotation_key=config.annotation,
             num_neighbour_spatial=201,
@@ -393,7 +393,7 @@ if __name__ == "__main__":
     # # get h5ad files
     config = PipelineConfig()
     # run_full_pipeline(config)
-    step2_calculate_gss(config, args.sample)
+    step2_calculate_gss(config, )
 
     # step4_spatial_ldsc(config, )
     # step5_3d_visualization(config, )
