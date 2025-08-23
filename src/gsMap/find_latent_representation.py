@@ -18,25 +18,21 @@ from zarr.storage import DirectoryStore
 from tqdm import tqdm
 import threading
 import queue
-
+import anndata as ad
 
 logger = logging.getLogger(__name__)
+import jax
+import jax.numpy as jnp
+from jax import jit, vmap, pmap
+from jax.scipy.stats import rankdata as jax_rankdata
+JAX_AVAILABLE = True
+# Set JAX to use GPU if available, otherwise CPU
 try:
-    import jax
-    import jax.numpy as jnp
-    from jax import jit, vmap, pmap
-    from jax.scipy.stats import rankdata as jax_rankdata
-    JAX_AVAILABLE = True
-    # Set JAX to use GPU if available, otherwise CPU
-    try:
-        _ = jax.devices('gpu')
-        logger.info("JAX GPU backend available")
-    except:
-        logger.info("JAX CPU backend will be used")
-except ImportError:
-    JAX_AVAILABLE = False
-    if not JAX_AVAILABLE:
-        raise RuntimeError("JAX is required for rank computation. Install with: pip install jax[cpu]")
+    _ = jax.devices('gpu')
+    logger.info("JAX GPU backend available")
+except:
+    logger.info("JAX CPU backend will be used")
+
 try:
     import zarr.codecs
     # Sharding will be configured via array creation options
@@ -53,7 +49,6 @@ from gsMap.slice_mean import process_slice_mean
 from operator import itemgetter
 
 logger = logging.getLogger(__name__)
-
 
 
 
@@ -640,6 +635,36 @@ def run_find_latent_representation(args: FindLatentRepresentationsConfig):
         common_genes_transfer = np.array(itemgetter(*common_genes)(gene_name_dict))
         adata = adata[:,common_genes].copy()
         adata.var_names = common_genes_transfer
+
+        # Compute the depth
+        if args.data_layer in ["count", "counts"]:
+            adata.obs['depth'] = np.array(adata.layers[args.data_layer].sum(axis=1)).flatten()
+
+        # Add slice_id to obs
+        adata.obs['slice_id'] = st_name
+        adata.obs['slice_numeric_id'] = st_id
+
+        # Filter cells based on annotation group size if annotation is provided
+        # This must be done BEFORE adding to rank zarr to maintain index consistency
+        if args.annotation is not None and args.annotation in adata.obs.columns:
+            min_cells_per_type = 21  # Minimum number of homogeneous neighbors
+            annotation_counts = adata.obs[args.annotation].value_counts()
+            valid_annotations = annotation_counts[annotation_counts >= min_cells_per_type].index
+            
+            # Check if any filtering is needed
+            if len(valid_annotations) < len(annotation_counts):
+                n_cells_before = adata.n_obs
+                mask = adata.obs[args.annotation].isin(valid_annotations)
+                adata = adata[mask, :].copy()
+                n_cells_after = adata.n_obs
+                
+                logger.info(f"  Filtered {st_name} based on annotation group size (min={min_cells_per_type})")
+                logger.info(f"    - Cells before: {n_cells_before}, after: {n_cells_after}, removed: {n_cells_before - n_cells_after}")
+                
+                # Log which groups were removed
+                removed_groups = annotation_counts[~annotation_counts.index.isin(valid_annotations)]
+                if len(removed_groups) > 0:
+                    logger.debug(f"    - Removed groups: {removed_groups.to_dict()}")
         
         # Get expression data for ranking
         if args.data_layer in ["count", "counts"]:
@@ -681,20 +706,8 @@ def run_find_latent_representation(args: FindLatentRepresentationsConfig):
         sum_frac += batch_frac
         total_cells += n_cells
         
-        # Compute the slice mean (original method for backward compatibility)
-        # process_slice_mean(args, st_name, adata)
-
-        # Compute the depth
-        if args.data_layer in ["count", "counts"]:
-            adata.obs['depth'] = np.array(adata.layers[args.data_layer].sum(axis=1)).flatten()
-        
-        # Add slice_id to obs
-        adata.obs['slice_id'] = st_name
-        adata.obs['slice_numeric_id'] = st_id
-        
         # Create a minimal AnnData with empty X matrix but keep obs and obsm
         # This saves memory while preserving the needed metadata
-        import anndata as ad
         minimal_adata = ad.AnnData(
             X=csr_matrix((adata.n_obs, n_genes), dtype=np.float32),  # Empty sparse matrix
             obs=adata.obs.copy(),
@@ -741,31 +754,12 @@ def run_find_latent_representation(args: FindLatentRepresentationsConfig):
     # Concatenate all AnnData objects
     logger.info("Concatenating all AnnData objects...")
     if adata_list:
-        import anndata as ad
         # Concatenate along the observation axis
         concatenated_adata = ad.concat(adata_list, axis=0, join='outer', merge='same')
         
         # Ensure the var_names are the common genes
         concatenated_adata.var_names = common_genes_transfer
-        
-        # Filter cells based on annotation group size if annotation is provided
-        if args.annotation is not None and args.annotation in concatenated_adata.obs.columns:
-            min_cells_per_type = 21  # Minimum number of homogeneous neighbors
-            annotation_counts = concatenated_adata.obs[args.annotation].value_counts()
-            valid_annotations = annotation_counts[annotation_counts >= min_cells_per_type].index
-            
-            # Filter cells
-            n_cells_before = concatenated_adata.n_obs
-            mask = concatenated_adata.obs[args.annotation].isin(valid_annotations)
-            concatenated_adata = concatenated_adata[mask, :]
-            n_cells_after = concatenated_adata.n_obs
-            
-            logger.info(f"Filtered cells based on annotation group size (min={min_cells_per_type})")
-            logger.info(f"  - Cells before filtering: {n_cells_before}")
-            logger.info(f"  - Cells after filtering: {n_cells_after}")
-            logger.info(f"  - Cells removed: {n_cells_before - n_cells_after}")
-            logger.info(f"  - Valid annotation groups: {len(valid_annotations)}")
-        
+
         # Save the concatenated AnnData
         concat_output_path = args.latent_dir / "concatenated_latent_adata.h5ad"
         concatenated_adata.write_h5ad(concat_output_path)

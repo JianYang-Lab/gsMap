@@ -28,7 +28,7 @@ import anndata as ad
 from gsMap.find_latent_representation import ZarrBackedCSR
 # Configure JAX
 jax.config.update("jax_enable_x64", False)  # Use float32 for speed
-jax.config.update("jax_platform_name", "cpu")  # or "gpu" if available
+# jax.config.update("jax_platform_name", "cpu")  # or "gpu" if available
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -260,41 +260,26 @@ class ConnectivityMatrixBuilder:
         
         # Step 2: Find spatial anchors using JAX
         logger.info(f"Finding {self.config.num_anchor} spatial anchors...")
-        if self.config.use_jax:
-            spatial_anchors, anchor_sims = self._compute_similarities_jax(
-                jnp.array(emb_gcn[cell_mask]),
-                jnp.array(emb_gcn),
-                jnp.array(spatial_neighbors),
-                self.config.num_anchor
-            )
-            spatial_anchors = np.array(spatial_anchors)
-            anchor_sims = np.array(anchor_sims)
-        else:
-            spatial_anchors, anchor_sims = self._compute_similarities_numpy(
-                emb_gcn[cell_mask],
-                emb_gcn,
-                spatial_neighbors,
-                self.config.num_anchor
-            )
-        
+        spatial_anchors, anchor_sims = self._compute_similarities_jax(
+            jnp.array(emb_gcn[cell_mask]),
+            jnp.array(emb_gcn),
+            jnp.array(spatial_neighbors),
+            self.config.num_anchor
+        )
+        spatial_anchors = np.array(spatial_anchors)
+        anchor_sims = np.array(anchor_sims)
+
         # Step 3: Find homogeneous spots using JAX
         logger.info(f"Finding {self.config.num_neighbour} homogeneous spots...")
-        if self.config.use_jax:
-            homogeneous_neighbors, homogeneous_weights = self._compute_similarities_jax(
-                jnp.array(emb_indv[cell_mask]),
-                jnp.array(emb_indv),
-                jnp.array(spatial_anchors),
-                self.config.num_neighbour
-            )
-            homogeneous_neighbors = np.array(homogeneous_neighbors)
-            homogeneous_weights = np.array(homogeneous_weights)
-        else:
-            homogeneous_neighbors, homogeneous_weights = self._compute_similarities_numpy(
-                emb_indv[cell_mask],
-                emb_indv,
-                spatial_anchors,
-                self.config.num_neighbour
-            )
+        homogeneous_neighbors, homogeneous_weights = self._compute_similarities_jax(
+            jnp.array(emb_indv[cell_mask]),
+            jnp.array(emb_indv),
+            jnp.array(spatial_anchors),
+            self.config.num_neighbour
+        )
+        homogeneous_neighbors = np.array(homogeneous_neighbors)
+        homogeneous_weights = np.array(homogeneous_weights)
+
         
         # Normalize weights to sum to 1 for each cell
         homogeneous_weights = homogeneous_weights / homogeneous_weights.sum(
@@ -749,11 +734,10 @@ class MarkerScoreCalculator:
         logger.info(f"AnnData dimensions: {n_cells} cells × {adata.n_vars} genes")
         logger.info(f"Rank Zarr dimensions: {n_cells_rank} cells × {n_genes} genes")
         
-        # Allow small mismatch due to filtering
-        if n_cells != n_cells_rank:
-            logger.warning(f"Cell count mismatch: AnnData has {n_cells} cells, Rank Zarr has {n_cells_rank} cells")
-            if abs(n_cells - n_cells_rank) > 100:
-                raise ValueError(f"Large cell count mismatch: difference of {abs(n_cells - n_cells_rank)} cells")
+        # Cells should match exactly since filtering is done before rank zarr creation
+        assert n_cells == n_cells_rank, \
+            f"Cell count mismatch: AnnData has {n_cells} cells, Rank Zarr has {n_cells_rank} cells. " \
+            f"This indicates the filtering was not applied consistently during find_latent_representation."
         
         # Initialize output
         output_zarr = ZarrBackedDense(
