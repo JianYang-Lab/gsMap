@@ -236,13 +236,6 @@ class ZarrBackedDense:
         # Mark as complete when closing in write mode
         if self.mode == 'w':
             self.mark_complete()
-    
-    def __enter__(self):
-        return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
-
 
 # ============================================================================
 # Connectivity Matrix Builder with JAX
@@ -425,22 +418,118 @@ def compute_jaccard_similarity(neighbors_a: np.ndarray, neighbors_b: np.ndarray)
 
 def optimize_row_order(
     neighbor_indices: np.ndarray,
-    method: str = 'greedy'
+    method: Optional[str] = None,
+    neighbor_weights: Optional[np.ndarray] = None
 ) -> np.ndarray:
     """
     Sort rows by shared neighbors to improve cache locality
     
     Args:
         neighbor_indices: (n_cells, k) array of neighbor indices
-        method: 'greedy' or 'spectral'
+        method: None (auto), 'weighted', 'greedy', or 'none'
+        neighbor_weights: Optional (n_cells, k) array of weights for each neighbor
     
     Returns:
         Reordered row indices
+    
+    Complexity:
+        - weighted: O(n*k) where k is number of neighbors - very efficient!
+        - greedy: O(n²) - only for very small datasets
+        - none: O(1) - returns original order
     """
     n_cells = len(neighbor_indices)
     
-    if method == 'greedy':
-        # Greedy approach: iteratively select most similar rows
+    # Auto-select method if None
+    if method is None:
+        if neighbor_weights is not None and n_cells > 2000:
+            method = 'weighted'
+        else:
+            method = 'greedy'
+    
+    if method == 'weighted' and neighbor_weights is not None:
+        # Efficient weighted heuristic: follow highest-weight neighbors
+        # This is O(n*k) complexity - much better than O(n²)!
+        visited = np.zeros(n_cells, dtype=bool)
+        ordered = []
+        
+        # Since weights are softmax normalized (sum to 1), we need a different strategy
+        # Start with cell that has the highest max weight to any single neighbor
+        # This indicates strong connection to at least one cell
+        max_weights = neighbor_weights.max(axis=1)
+        current = np.argmax(max_weights)
+        
+        ordered.append(current)
+        visited[current] = True
+        
+        # Build reverse lookup: for each cell, which cells have it as neighbor
+        reverse_neighbors = [[] for _ in range(n_cells)]
+        for i in range(n_cells):
+            for j, neighbor_idx in enumerate(neighbor_indices[i]):
+                # Check if this neighbor is within our cell set (local index)
+                if 0 <= neighbor_idx < n_cells:
+                    reverse_neighbors[neighbor_idx].append((i, neighbor_weights[i, j]))
+            
+        # Process all cells
+        for _ in range(n_cells - 1):
+            # Get neighbors of current cell sorted by weight
+            neighbors = neighbor_indices[current]
+            weights = neighbor_weights[current]
+            
+            # Sort neighbors by weight (highest first)
+            sorted_idx = np.argsort(weights)[::-1]
+            
+            # Find the unvisited neighbor with highest weight
+            next_cell = None
+            best_weight = -1
+            
+            for idx in sorted_idx:
+                neighbor_idx = neighbors[idx]
+                # Check if this neighbor is within our cells and unvisited
+                if 0 <= neighbor_idx < n_cells and not visited[neighbor_idx]:
+                    if weights[idx] > best_weight:
+                        best_weight = weights[idx]
+                        next_cell = neighbor_idx
+            
+            # If no unvisited direct neighbors, find closest unvisited cell
+            if next_cell is None:
+                # Look at cells that have recently visited cells as neighbors
+                connection_scores = np.zeros(n_cells)
+                
+                # Check connections from last few visited cells
+                for cell_idx in ordered[-min(10, len(ordered)):]:
+                    # Add forward connections (cells that this cell points to)
+                    for j, neighbor_idx in enumerate(neighbor_indices[cell_idx]):
+                        if 0 <= neighbor_idx < n_cells and not visited[neighbor_idx]:
+                            connection_scores[neighbor_idx] += neighbor_weights[cell_idx, j]
+                    
+                    # Add reverse connections (cells that point to this cell)
+                    for reverse_idx, reverse_weight in reverse_neighbors[cell_idx]:
+                        if not visited[reverse_idx]:
+                            connection_scores[reverse_idx] += reverse_weight
+                
+                # Pick the unvisited cell with highest connection score
+                if connection_scores.max() > 0:
+                    unvisited_scores = connection_scores.copy()
+                    unvisited_scores[visited] = -1
+                    next_cell = np.argmax(unvisited_scores)
+                else:
+                    # No connections found, pick cell with highest max weight
+                    unvisited_max_weights = max_weights.copy()
+                    unvisited_max_weights[visited] = -1
+                    next_cell = np.argmax(unvisited_max_weights)
+            
+            ordered.append(next_cell)
+            visited[next_cell] = True
+            current = next_cell
+        
+        return np.array(ordered)
+    
+    elif method == 'greedy':
+        # Original greedy approach - only use for very small datasets
+        # This is O(n²) but gives good quality
+        if n_cells > 1000:
+            logger.warning(f"Greedy method is O(n²) - not recommended for {n_cells} cells")
+        
         remaining = set(range(n_cells))
         ordered = []
         
@@ -454,7 +543,12 @@ def optimize_row_order(
             max_sim = -1
             next_row = None
             
-            for candidate in remaining:
+            # For large datasets, sample candidates
+            candidates = list(remaining)
+            if len(candidates) > 100:
+                candidates = np.random.choice(candidates, min(100, len(candidates)), replace=False)
+            
+            for candidate in candidates:
                 sim = compute_jaccard_similarity(
                     neighbor_indices[current],
                     neighbor_indices[candidate]
@@ -707,9 +801,13 @@ class MarkerScoreCalculator:
         assert neighbor_indices.min() >= 0, \
             f"Found negative neighbor indices (min: {neighbor_indices.min()})"
         
-        # Optimize row order
+        # Optimize row order (auto-selects best method)
         logger.info("Optimizing row order for cache efficiency...")
-        row_order = optimize_row_order(neighbor_indices)
+        row_order = optimize_row_order(
+            neighbor_indices, 
+            method=None,  # Auto-select based on data
+            neighbor_weights=neighbor_weights
+        )
         neighbor_indices = neighbor_indices[row_order]
         neighbor_weights = neighbor_weights[row_order]
         cell_indices_sorted = cell_indices[row_order]
@@ -840,17 +938,17 @@ class MarkerScoreCalculator:
         cell_types = adata.obs[self.config.annotation_key].unique()
         logger.info(f"Processing {len(cell_types)} cell types")
         
-        with output_zarr:
-            for cell_type in cell_types:
-                self.process_cell_type(
-                    adata,
-                    cell_type,
-                    output_zarr,
-                    global_log_gmean,
-                    global_expr_frac,
-                    rank_zarr_shape=(n_cells_rank, n_genes)
-                )
-        
+        for cell_type in cell_types:
+            self.process_cell_type(
+                adata,
+                cell_type,
+                output_zarr,
+                global_log_gmean,
+                global_expr_frac,
+                rank_zarr_shape=(n_cells_rank, n_genes)
+            )
+
+        output_zarr.close()
         logger.info("Marker score calculation complete!")
         
         # Save metadata
