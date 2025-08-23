@@ -65,6 +65,7 @@ class PipelineConfig:
     use_refactored_latent_to_gene: bool = True
     batch_size: int = 1000
     num_read_workers: int = 4
+    gpu_batch_size: int = 300  # Smaller batch size for GPU to avoid OOM
 
 
 def setup_directories(config: PipelineConfig):
@@ -144,7 +145,8 @@ def step2_calculate_gss(config: PipelineConfig, sample_name: Optional[str] = Non
             num_anchor=51,
             num_neighbour=21,
             batch_size=config.batch_size,
-            num_read_workers=config.num_read_workers
+            num_read_workers=config.num_read_workers,
+            gpu_batch_size=config.gpu_batch_size
         )
 
         # Run the refactored calculator
@@ -388,9 +390,9 @@ if __name__ == "__main__":
     # main()
     # # get h5ad files
     config = PipelineConfig()
-    # run_full_pipeline(config)
+    run_full_pipeline(config)
     # step1_find_latent_representations(config)
-    step2_calculate_gss(config, )
+    # step2_calculate_gss(config, )
 
     # step4_spatial_ldsc(config, )
     # step5_3d_visualization(config, )

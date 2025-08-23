@@ -63,6 +63,9 @@ class LatentToGeneConfig:
     num_read_workers: int = 4
     num_write_workers: int = 2
     
+    # GPU memory management
+    gpu_batch_size: int = 500  # Batch size for GPU processing to avoid OOM
+    
     # Score calculation parameters
     min_cells_per_type: int = 10
     
@@ -206,52 +209,61 @@ class ZarrBackedDense:
 # Connectivity Matrix Builder with JAX
 # ============================================================================
 
+# Define the JIT-compiled function outside the class
+@partial(jit, static_argnums=(5, 6))
+def _find_anchors_and_homogeneous_batch_jit(
+    emb_gcn_batch_norm: jnp.ndarray,      # (batch_size, d1) - pre-normalized
+    emb_indv_batch_norm: jnp.ndarray,      # (batch_size, d2) - pre-normalized
+    spatial_neighbors: jnp.ndarray,   # (batch_size, k1)
+    all_emb_gcn_norm: jnp.ndarray,         # (n_all, d1) - pre-normalized
+    all_emb_indv_norm: jnp.ndarray,        # (n_all, d2) - pre-normalized
+    num_anchor: int,
+    num_neighbour: int
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """
+    JIT-compiled function to find anchors and homogeneous neighbors.
+    Processes a batch of cells to manage GPU memory.
+    Expects pre-normalized embeddings for efficiency.
+    """
+    batch_size = emb_gcn_batch_norm.shape[0]
+    
+    # Step 1: Extract spatial neighbors' embeddings (already normalized)
+    spatial_emb_gcn_norm = all_emb_gcn_norm[spatial_neighbors]  # (batch_size, k1, d1)
+    
+    # Step 2: Find spatial anchors via cosine similarity
+    # Compute similarities (embeddings are already normalized)
+    anchor_sims = jnp.einsum('bd,bkd->bk', emb_gcn_batch_norm, spatial_emb_gcn_norm)
+    
+    # Select top anchors
+    top_anchor_idx = jnp.argsort(-anchor_sims, axis=1)[:, :num_anchor]
+    batch_idx = jnp.arange(batch_size)[:, None]
+    spatial_anchors = spatial_neighbors[batch_idx, top_anchor_idx]  # (batch_size, num_anchor)
+    
+    # Step 3: Find homogeneous neighbors from anchors
+    # Extract anchor embeddings (already normalized)
+    anchor_emb_indv_norm = all_emb_indv_norm[spatial_anchors]  # (batch_size, num_anchor, d2)
+    
+    # Compute similarities (embeddings are already normalized)
+    homo_sims = jnp.einsum('bd,bkd->bk', emb_indv_batch_norm, anchor_emb_indv_norm)
+    
+    # Select top homogeneous neighbors
+    top_homo_idx = jnp.argsort(-homo_sims, axis=1)[:, :num_neighbour]
+    homogeneous_neighbors = spatial_anchors[batch_idx, top_homo_idx]  # (batch_size, num_neighbour)
+    homogeneous_weights = homo_sims[batch_idx, top_homo_idx]
+    
+    # Use softmax to normalize weights
+    homogeneous_weights = jax.nn.softmax(homogeneous_weights, axis=1)
+    
+    return homogeneous_neighbors, homogeneous_weights
+
+
 class ConnectivityMatrixBuilder:
-    """Build connectivity matrix using JAX-accelerated computation"""
+    """Build connectivity matrix using JAX-accelerated computation with GPU memory optimization"""
     
     def __init__(self, config: LatentToGeneConfig):
         self.config = config
-        
-    @partial(jit, static_argnums=(0, 4, 5, 6))
-    def _compute_similarities_jax(
-        self,
-        query_emb: jnp.ndarray,
-        target_emb: jnp.ndarray,
-        indices: jnp.ndarray,
-        k: int,
-        metric: str = 'cosine',
-        return_distances: bool = True
-    ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-        """JAX-accelerated similarity computation"""
-        
-        # Extract neighbors' embeddings
-        neighbor_emb = target_emb[indices]  # shape: (n_query, k_candidates, d)
-        
-        if metric == 'cosine':
-            # Normalize embeddings
-            query_norm = query_emb / jnp.linalg.norm(query_emb, axis=1, keepdims=True)
-            neighbor_norm = neighbor_emb / jnp.linalg.norm(
-                neighbor_emb, axis=2, keepdims=True
-            )
-            
-            # Compute cosine similarities
-            similarities = jnp.einsum('nd,nkd->nk', query_norm, neighbor_norm)
-            
-            # Select top k
-            top_k_idx = jnp.argsort(-similarities, axis=1)[:, :k]
-            
-            # Gather top k indices and similarities
-            batch_idx = jnp.arange(len(query_emb))[:, None]
-            top_k_neighbors = indices[batch_idx, top_k_idx]
-            
-            if return_distances:
-                top_k_sims = similarities[batch_idx, top_k_idx]
-                return top_k_neighbors, top_k_sims
-            else:
-                return top_k_neighbors, None
-        
-        else:
-            raise NotImplementedError(f"Metric {metric} not implemented")
+        # Use configured batch size for GPU processing
+        self.gpu_batch_size = config.gpu_batch_size
     
     def build_connectivity_matrix(
         self,
@@ -262,7 +274,7 @@ class ConnectivityMatrixBuilder:
         return_dense: bool = True
     ) -> Union[csr_matrix, np.ndarray]:
         """
-        Build connectivity matrix for a group of cells
+        Build connectivity matrix for a group of cells with GPU memory optimization
         
         Args:
             coords: Spatial coordinates (n_cells, 2 or 3)
@@ -295,33 +307,54 @@ class ConnectivityMatrixBuilder:
         # Convert to global indices
         spatial_neighbors = cell_indices[spatial_neighbors]
         
-        # Step 2: Find spatial anchors using JAX
-        logger.info(f"Finding {self.config.num_anchor} spatial anchors...")
-        spatial_anchors, anchor_sims = self._compute_similarities_jax(
-            jnp.array(emb_gcn[cell_mask]),
-            jnp.array(emb_gcn),
-            jnp.array(spatial_neighbors),
-            self.config.num_anchor
-        )
-        spatial_anchors = np.array(spatial_anchors)
-        anchor_sims = np.array(anchor_sims)
-
-        # Step 3: Find homogeneous spots using JAX
-        logger.info(f"Finding {self.config.num_neighbour} homogeneous spots...")
-        homogeneous_neighbors, homogeneous_weights = self._compute_similarities_jax(
-            jnp.array(emb_indv[cell_mask]),
-            jnp.array(emb_indv),
-            jnp.array(spatial_anchors),
-            self.config.num_neighbour
-        )
-        homogeneous_neighbors = np.array(homogeneous_neighbors)
-        homogeneous_weights = np.array(homogeneous_weights)
-
+        # Step 2 & 3: Find anchors and homogeneous neighbors in batches
+        logger.info(f"Finding anchors and homogeneous neighbors (batch size: {self.gpu_batch_size})...")
         
-        # Normalize weights to sum to 1 for each cell
-        homogeneous_weights = homogeneous_weights / homogeneous_weights.sum(
-            axis=1, keepdims=True
-        )
+        # Pre-normalize embeddings once for all batches
+        logger.debug("Pre-normalizing embeddings...")
+        # L2 normalize for cosine similarity
+        emb_gcn_norm = emb_gcn / np.linalg.norm(emb_gcn, axis=1, keepdims=True)
+        emb_indv_norm = emb_indv / np.linalg.norm(emb_indv, axis=1, keepdims=True)
+        
+        # Handle any NaN from zero vectors
+        emb_gcn_norm = np.nan_to_num(emb_gcn_norm, nan=0.0)
+        emb_indv_norm = np.nan_to_num(emb_indv_norm, nan=0.0)
+        
+        # Convert to JAX arrays once
+        all_emb_gcn_norm_jax = jnp.array(emb_gcn_norm)
+        all_emb_indv_norm_jax = jnp.array(emb_indv_norm)
+        
+        # Process in batches to avoid GPU OOM
+        homogeneous_neighbors_list = []
+        homogeneous_weights_list = []
+        
+        for batch_start in range(0, n_masked, self.gpu_batch_size):
+            batch_end = min(batch_start + self.gpu_batch_size, n_masked)
+            batch_indices = slice(batch_start, batch_end)
+            
+            # Get batch data (already normalized)
+            emb_gcn_batch_norm = emb_gcn_norm[cell_mask][batch_indices]
+            emb_indv_batch_norm = emb_indv_norm[cell_mask][batch_indices]
+            spatial_neighbors_batch = spatial_neighbors[batch_indices]
+            
+            # Process batch with single JIT-compiled function
+            homo_neighbors_batch, homo_weights_batch = _find_anchors_and_homogeneous_batch_jit(
+                jnp.array(emb_gcn_batch_norm),
+                jnp.array(emb_indv_batch_norm),
+                jnp.array(spatial_neighbors_batch),
+                all_emb_gcn_norm_jax,
+                all_emb_indv_norm_jax,
+                self.config.num_anchor,
+                self.config.num_neighbour
+            )
+            
+            # Convert back to numpy and append
+            homogeneous_neighbors_list.append(np.array(homo_neighbors_batch))
+            homogeneous_weights_list.append(np.array(homo_weights_batch))
+        
+        # Concatenate all batches
+        homogeneous_neighbors = np.vstack(homogeneous_neighbors_list)
+        homogeneous_weights = np.vstack(homogeneous_weights_list)
         
         if return_dense:
             # Return dense format: (n_masked, num_neighbour) arrays
