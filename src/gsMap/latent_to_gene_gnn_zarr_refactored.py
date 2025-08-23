@@ -20,6 +20,7 @@ import jax
 import jax.numpy as jnp
 from jax import jit, vmap
 import zarr
+from numba import njit
 from scipy.sparse import csr_matrix, coo_matrix
 from sklearn.neighbors import NearestNeighbors
 import scanpy as sc
