@@ -390,9 +390,9 @@ if __name__ == "__main__":
     # main()
     # # get h5ad files
     config = PipelineConfig()
-    run_full_pipeline(config)
+    # run_full_pipeline(config)
     # step1_find_latent_representations(config)
-    # step2_calculate_gss(config, )
+    step2_calculate_gss(config, )
 
     # step4_spatial_ldsc(config, )
     # step5_3d_visualization(config, )

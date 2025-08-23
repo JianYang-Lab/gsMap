@@ -395,7 +395,7 @@ class ZarrBackedCSR:
         start_ptrs = self._indptr[indices_array]
         end_ptrs = self._indptr[indices_array + 1]
         
-        # Calculate total size needed
+        # Calculate total size needed and build result indptr
         row_nnz = end_ptrs - start_ptrs
         res_indptr = np.zeros(M + 1, dtype=np.int64)
         np.cumsum(row_nnz, out=res_indptr[1:])
@@ -405,54 +405,29 @@ class ZarrBackedCSR:
         if total_nnz == 0:
             return csr_matrix((M, self.ncols), dtype=np.float32)
         
-        # Optimize data fetching by merging consecutive ranges
-        ranges = [(start, end) for start, end in zip(start_ptrs, end_ptrs) if end > start]
+        # Build array of all indices to fetch
+        all_indices = np.empty(total_nnz, dtype=np.int64)
         
-        if not ranges:
-            return csr_matrix((M, self.ncols), dtype=np.float32)
+        # Create ranges for each row's data
+        ranges = [
+            np.arange(start, end)
+            for start, end in zip(start_ptrs, end_ptrs)
+            if end > start
+        ]
         
-        # Merge nearby ranges to reduce I/O
-        merged_ranges = []
-        current_start, current_end = ranges[0]
-        
-        for start, end in ranges[1:]:
-            if start <= current_end + 5000:  # Merge if gap < 5000 elements
-                current_end = max(current_end, end)
+        # Concatenate all ranges efficiently
+        if ranges:
+            if len(ranges) == 1:
+                all_indices[:] = ranges[0]
             else:
-                merged_ranges.append((current_start, current_end))
-                current_start, current_end = start, end
-        merged_ranges.append((current_start, current_end))
+                np.concatenate(ranges, out=all_indices)
         
-        # Fetch data in merged chunks and build mapping
-        all_data = []
-        range_mapping = {}  # Maps global index to (chunk_idx, local_idx)
+        # Fetch all data at once using fancy indexing (Zarr handles this efficiently)
+        data_elements = self._data_indices[all_indices]
         
-        for chunk_idx, (chunk_start, chunk_end) in enumerate(merged_ranges):
-            chunk_data = self._data_indices[chunk_start:chunk_end]
-            all_data.append(chunk_data)
-            # Build mapping for this chunk
-            for global_idx in range(chunk_start, chunk_end):
-                local_idx = global_idx - chunk_start
-                range_mapping[global_idx] = (chunk_idx, local_idx)
-        
-        # Extract needed elements using the mapping
-        sub_indices_list = []
-        sub_data_list = []
-        
-        for start, end in zip(start_ptrs, end_ptrs):
-            for idx in range(start, end):
-                if idx in range_mapping:
-                    chunk_idx, local_idx = range_mapping[idx]
-                    element = all_data[chunk_idx][local_idx]
-                    sub_indices_list.append(element['idx'])
-                    sub_data_list.append(element['val'])
-        
-        if sub_indices_list:
-            sub_indices = np.array(sub_indices_list, dtype=np.uint16)
-            sub_data = np.array(sub_data_list, dtype=np.float32)
-        else:
-            sub_indices = np.array([], dtype=np.uint16)
-            sub_data = np.array([], dtype=np.float32)
+        # Extract indices and values from structured array
+        sub_indices = np.ascontiguousarray(data_elements['idx'])
+        sub_data = np.ascontiguousarray(data_elements['val'])
         
         return csr_matrix(
             (sub_data, sub_indices, res_indptr),

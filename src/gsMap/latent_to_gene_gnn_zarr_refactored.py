@@ -119,10 +119,22 @@ class ZarrBackedDense:
                         return
                     else:
                         logger.warning(f"ZarrBackedDense at {self.path} is incomplete. Deleting and recreating.")
-                        shutil.rmtree(self.path)
-                except Exception:
-                    logger.warning(f"Could not read existing Zarr at {self.path}. Deleting and recreating.")
-                    shutil.rmtree(self.path)
+                        import time
+                        time.sleep(0.1)  # Brief pause to ensure files are released
+                        shutil.rmtree(self.path, ignore_errors=True)
+                        # Double-check deletion
+                        if self.path.exists():
+                            import os
+                            os.system(f"rm -rf {self.path}")
+                except Exception as e:
+                    logger.warning(f"Could not read existing Zarr at {self.path}: {e}. Deleting and recreating.")
+                    import time
+                    time.sleep(0.1)  # Brief pause to ensure files are released
+                    shutil.rmtree(self.path, ignore_errors=True)
+                    # Double-check deletion
+                    if self.path.exists():
+                        import os
+                        os.system(f"rm -rf {self.path}")
 
             store = zarr.DirectoryStore(str(self.path))
             self.zarr_array = zarr.open(
@@ -171,13 +183,24 @@ class ZarrBackedDense:
         self.writer_thread = threading.Thread(target=writer_worker, daemon=True)
         self.writer_thread.start()
     
-    def write_batch(self, data: np.ndarray, row_start: int, col_slice=slice(None)):
-        """Queue batch for async writing"""
+    def write_batch(self, data: np.ndarray, row_indices: Union[int, np.ndarray], col_slice=slice(None)):
+        """Queue batch for async writing
+        
+        Args:
+            data: Data to write
+            row_indices: Either a single row index or array of row indices
+            col_slice: Column slice (default: all columns)
+        """
         if self.mode != 'w':
             logger.warning("Cannot write to read-only ZarrBackedDense")
             return
-        row_end = row_start + data.shape[0]
-        row_slice = slice(row_start, row_end)
+        
+        # Handle both single index and array of indices
+        if isinstance(row_indices, (int, np.integer)):
+            row_slice = slice(row_indices, row_indices + data.shape[0])
+        else:
+            row_slice = row_indices
+        
         self.write_queue.put((data, row_slice, col_slice))
     
     def mark_complete(self):
@@ -370,36 +393,6 @@ class ConnectivityMatrixBuilder:
                 shape=(n_cells, n_cells)
             )
             return connectivity
-    
-    def _compute_similarities_numpy(
-        self,
-        query_emb: np.ndarray,
-        target_emb: np.ndarray,
-        indices: np.ndarray,
-        k: int
-    ) -> Tuple[np.ndarray, np.ndarray]:
-        """Numpy fallback for similarity computation"""
-        n_query = len(query_emb)
-        top_k_neighbors = np.zeros((n_query, k), dtype=np.int64)
-        top_k_sims = np.zeros((n_query, k), dtype=np.float32)
-        
-        for i in range(n_query):
-            neighbor_emb = target_emb[indices[i]]
-            
-            # Cosine similarity
-            query_norm = query_emb[i] / np.linalg.norm(query_emb[i])
-            neighbor_norm = neighbor_emb / np.linalg.norm(
-                neighbor_emb, axis=1, keepdims=True
-            )
-            similarities = neighbor_norm @ query_norm
-            
-            # Top k
-            top_k_idx = np.argsort(-similarities)[:k]
-            top_k_neighbors[i] = indices[i, top_k_idx]
-            top_k_sims[i] = similarities[top_k_idx]
-        
-        return top_k_neighbors, top_k_sims
-
 
 # ============================================================================
 # Row Sorting for Cache Optimization
@@ -758,7 +751,7 @@ class MarkerScoreCalculator:
             
             # Write results (async)
             global_indices = cell_indices_sorted[batch_start:batch_end]
-            output_zarr.write_batch(marker_scores, global_indices[0])
+            output_zarr.write_batch(marker_scores, global_indices)
             
             pbar.update(1)
         
