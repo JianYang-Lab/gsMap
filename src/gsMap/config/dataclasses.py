@@ -374,6 +374,20 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
     homolog_file: Optional[Path] = None
     species: Optional[str] = None
 
+    # Refactored version parameters
+    use_refactored: bool = False  # Flag to use refactored version
+    batch_size: int = 1000
+    num_read_workers: int = 4
+    num_write_workers: int = 2
+    expr_frac_threshold: float = 0.1
+    min_cells_per_type: int = 10
+    chunks_cells: int = 10000
+    chunks_genes: int = 1000
+    use_jax: bool = True
+    cache_size_mb: int = 1000
+    n_neighbors_gcn: int = 10
+    zarr_group_path: str = None
+
 
 @dataclass
 class SpatialLDSCConfig(ConfigWithAutoPaths):

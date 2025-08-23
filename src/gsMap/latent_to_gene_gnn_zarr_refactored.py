@@ -26,7 +26,6 @@ from tqdm import tqdm
 from numba import njit, prange
 import anndata as ad
 from gsMap.find_latent_representation import ZarrBackedCSR
-
 # Configure JAX
 jax.config.update("jax_enable_x64", False)  # Use float32 for speed
 jax.config.update("jax_platform_name", "cpu")  # or "gpu" if available
@@ -35,9 +34,9 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 
-# ============================================================================
-# Configuration
-# ============================================================================
+# # ============================================================================
+# # Configuration
+# # ============================================================================
 
 @dataclass
 class LatentToGeneConfig:
