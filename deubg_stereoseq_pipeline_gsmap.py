@@ -43,7 +43,7 @@ class PipelineConfig:
     gwas_summary: str = "/mnt/d/01_Project/01_Research/202312_gsMap/experiment/20250807_refactor_for_gsmap3d/02_latent2gene_optmization_max_pooling/mouse_e9_5_gwas_config.yaml"
 
     # Project settings
-    project_name: str = "202508115_Mouse_E9.5_dev_v4"
+    project_name: str = "202508115_Mouse_E9.5_dev_v5"
     annotation: str = "mapped_celltype"
     spatial_key: str = "spatial"
 
@@ -389,6 +389,7 @@ if __name__ == "__main__":
     # # get h5ad files
     config = PipelineConfig()
     # run_full_pipeline(config)
+    # step1_find_latent_representations(config)
     step2_calculate_gss(config, )
 
     # step4_spatial_ldsc(config, )

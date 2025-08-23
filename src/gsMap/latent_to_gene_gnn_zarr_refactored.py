@@ -6,6 +6,7 @@ Complete implementation with JAX acceleration and parallel I/O
 
 import logging
 import queue
+import shutil
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -102,8 +103,24 @@ class ZarrBackedDense:
             chunks = (min(1000, shape[0]), min(1000, shape[1]))
         self.chunks = chunks
         
-        # Initialize Zarr array
+        # Initialize Zarr array with integrity checking
         if mode == 'w':
+            if self.path.exists():
+                # Check if it's already complete
+                try:
+                    existing = zarr.open(str(self.path), mode='r')
+                    if 'integrity_mark' in existing.attrs and existing.attrs['integrity_mark'] == 'complete':
+                        logger.warning(f"ZarrBackedDense at {self.path} is already complete. Skipping.")
+                        self.zarr_array = existing
+                        self.mode = 'r'  # Switch to read mode
+                        return
+                    else:
+                        logger.warning(f"ZarrBackedDense at {self.path} is incomplete. Deleting and recreating.")
+                        shutil.rmtree(self.path)
+                except Exception:
+                    logger.warning(f"Could not read existing Zarr at {self.path}. Deleting and recreating.")
+                    shutil.rmtree(self.path)
+
             store = zarr.DirectoryStore(str(self.path))
             self.zarr_array = zarr.open(
                 store,
@@ -113,15 +130,22 @@ class ZarrBackedDense:
                 chunks=chunks,
                 compressor=zarr.Blosc(cname='lz4', clevel=3)
             )
+            # Mark as incomplete initially
+            self.zarr_array.attrs['integrity_mark'] = 'incomplete'
         else:
+            # Read mode - validate integrity
             self.zarr_array = zarr.open(str(self.path), mode='r')
+            if 'integrity_mark' not in self.zarr_array.attrs:
+                raise ValueError(f"ZarrBackedDense at {self.path} is incomplete or corrupted (no integrity mark).")
+            if self.zarr_array.attrs['integrity_mark'] != 'complete':
+                raise ValueError(f"ZarrBackedDense at {self.path} is incomplete (marked as {self.zarr_array.attrs['integrity_mark']}).")
         
-        # Async writing setup
+        # Async writing setup (only if still in write mode)
         self.write_queue = queue.Queue(maxsize=100)
         self.writer_thread = None
         self.stop_writer = threading.Event()
         
-        if mode == 'w':
+        if mode == 'w' and self.mode == 'w':  # Only start writer if we're actually writing
             self._start_writer_thread()
     
     def _start_writer_thread(self):
@@ -146,9 +170,18 @@ class ZarrBackedDense:
     
     def write_batch(self, data: np.ndarray, row_start: int, col_slice=slice(None)):
         """Queue batch for async writing"""
+        if self.mode != 'w':
+            logger.warning("Cannot write to read-only ZarrBackedDense")
+            return
         row_end = row_start + data.shape[0]
         row_slice = slice(row_start, row_end)
         self.write_queue.put((data, row_slice, col_slice))
+    
+    def mark_complete(self):
+        """Mark the zarr array as complete by setting integrity mark."""
+        if self.mode == 'w':
+            self.zarr_array.attrs['integrity_mark'] = 'complete'
+            logger.info(f"Marked ZarrBackedDense at {self.path} as complete")
     
     def close(self):
         """Clean up resources"""
@@ -157,6 +190,10 @@ class ZarrBackedDense:
             self.write_queue.join()
             self.write_queue.put(None)
             self.writer_thread.join(timeout=5)
+        
+        # Mark as complete when closing in write mode
+        if self.mode == 'w':
+            self.mark_complete()
     
     def __enter__(self):
         return self

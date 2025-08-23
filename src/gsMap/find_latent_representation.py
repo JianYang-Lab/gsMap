@@ -171,16 +171,52 @@ class ZarrBackedCSR:
                 f"Please upgrade to zarr>=2.18: pip install 'zarr>=2.18'"
             )
         
-        self.path = path
+        self.path = Path(path)
         self.ncols = ncols
         self.current_row = 0
         self.current_nnz = 0
+        self.mode = mode
         
-        # Simple storage without thread synchronization
+        # Check if file exists and is complete before opening
+        if mode == 'w' and self.path.exists():
+            try:
+                # Open in read mode first to check integrity
+                store = DirectoryStore(self.path)
+                existing = zarr.open(store, mode='r')
+                if 'integrity_mark' in existing.attrs and existing.attrs['integrity_mark'] == 'complete':
+                    logger.warning(f"ZarrBackedCSR at {path} already complete. Switching to read mode.")
+                    self.mode = 'r'
+                    self.zarr_array = existing
+                    self._indptr_zarr = self.zarr_array["indptr"]
+                    self._data_indices = self.zarr_array["data_indices"]
+                    self._indptr = np.array(self._indptr_zarr[:], dtype=np.int64)
+                    self.current_row = len(self._indptr) - 1
+                    self.current_nnz = self._indptr[-1] if len(self._indptr) > 0 else 0
+                    return
+                else:
+                    logger.warning(f"ZarrBackedCSR at {path} was incomplete. Deleting and recreating.")
+                    import shutil
+                    shutil.rmtree(self.path)
+            except Exception as e:
+                logger.warning(f"Could not read existing Zarr at {path}: {e}. Deleting and recreating.")
+                import shutil
+                if self.path.exists():
+                    shutil.rmtree(self.path)
+        
+        # Open zarr array
         store = DirectoryStore(self.path)
         self.zarr_array = zarr.open(store, mode=mode)
-
-        if "indptr" not in self.zarr_array.array_keys():
+        
+        # Check integrity for read mode
+        if mode == 'r':
+            if 'integrity_mark' not in self.zarr_array.attrs:
+                raise ValueError(f"ZarrBackedCSR at {path} is incomplete or corrupted. Missing integrity mark.")
+            if self.zarr_array.attrs['integrity_mark'] != 'complete':
+                raise ValueError(f"ZarrBackedCSR at {path} is incomplete. Integrity mark: {self.zarr_array.attrs.get('integrity_mark')}")
+            logger.debug(f"ZarrBackedCSR loaded successfully with integrity check passed")
+        
+        # Only initialize arrays if in write mode
+        if mode == 'w' and "indptr" not in self.zarr_array.array_keys():
             # Initialize with 0 for CSR format
             self.zarr_array.create(
                 "indptr",
@@ -204,6 +240,7 @@ class ZarrBackedCSR:
             
             self.zarr_array.attrs["ncols"] = ncols
             self.zarr_array.attrs["version"] = "0.1"
+            self.zarr_array.attrs["integrity_mark"] = "incomplete"
         
         # Keep references to zarr arrays
         self._indptr_zarr = self.zarr_array["indptr"]
@@ -300,6 +337,12 @@ class ZarrBackedCSR:
         # Update in-memory indptr
         self._indptr = np.append(self._indptr, new_indptr)
     
+    def mark_complete(self):
+        """Mark the zarr array as complete by setting integrity mark."""
+        if self.mode == 'w':
+            self.zarr_array.attrs['integrity_mark'] = 'complete'
+            logger.info(f"Marked ZarrBackedCSR at {self.path} as complete")
+    
     def close(self):
         """Clean up resources and wait for pending writes."""
         if hasattr(self, 'writer_thread') and self.writer_thread and self.writer_thread.is_alive():
@@ -312,6 +355,10 @@ class ZarrBackedCSR:
             self.writer_thread.join(timeout=5)
             if self.writer_thread.is_alive():
                 logger.warning("Writer thread did not finish in time")
+        
+        # Mark as complete when closing in write mode
+        if self.mode == 'w':
+            self.mark_complete()
 
     def __getitem__(self, indices):
         nrows = len(self._indptr) - 1
