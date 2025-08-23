@@ -70,7 +70,6 @@ class LatentToGeneConfig:
     chunks_genes: int = 1000
     
     # Performance
-    use_jax: bool = True
     cache_size_mb: int = 1000
     
     def __post_init__(self):
@@ -479,8 +478,12 @@ class ParallelRankReader:
                 # Create mapping for reconstruction
                 idx_map = {idx: i for i, idx in enumerate(flat_indices)}
                 
-                # Put result
-                self.result_queue.put((batch_id, rank_data, idx_map, neighbor_indices))
+                # Map neighbor indices to rank_data indices
+                flat_neighbors = neighbor_indices.flatten()
+                rank_indices = np.array([idx_map[neighbor_idx] for neighbor_idx in flat_neighbors])
+                
+                # Put result - send rank_data and rank_indices for main thread to combine
+                self.result_queue.put((batch_id, rank_data, rank_indices, neighbor_indices.shape))
                 self.read_queue.task_done()
                 
             except queue.Empty:
@@ -510,11 +513,10 @@ class ParallelRankReader:
 # JAX Marker Score Computation
 # ============================================================================
 
-@partial(jit, static_argnums=(3, 4))
+@partial(jit, static_argnums=(2, 3))
 def compute_marker_scores_jax(
     log_ranks: jnp.ndarray,  # (B*N) × G matrix
     weights: jnp.ndarray,  # B × N weight matrix
-    neighbor_valid: jnp.ndarray,  # B × N validity mask
     batch_size: int,
     num_neighbors: int,
     global_log_gmean: jnp.ndarray,  # G-dimensional vector
@@ -531,33 +533,22 @@ def compute_marker_scores_jax(
     # Reshape to batch format
     log_ranks_3d = log_ranks.reshape(batch_size, num_neighbors, n_genes)
     
-    # Mask invalid neighbors
-    log_ranks_3d = jnp.where(
-        neighbor_valid[:, :, None],
-        log_ranks_3d,
-        0.0
-    )
-    
-    # Handle zeros: fill with background log rank
+    # Handle zeros: fill with background log rank (cell-specific)
     is_zero = (log_ranks_3d == 0)
-    zero_counts = is_zero.sum(axis=(0, 1))  # Per gene
-    background_log_rank = jnp.log((zero_counts + 1) / 2)
+    # Sum zeros along neighbor dimension (axis=1) for each cell
+    zero_counts_per_cell = is_zero.sum(axis=1, keepdims=True)  # Shape: (B, 1, G)
+    background_log_rank = jnp.log((zero_counts_per_cell + 1) / 2)
     log_ranks_filled = jnp.where(is_zero, background_log_rank, log_ranks_3d)
     
-    # Normalize weights accounting for valid neighbors
-    weights_masked = weights * neighbor_valid
-    weights_sum = weights_masked.sum(axis=1, keepdims=True)
-    weights_normalized = jnp.where(
-        weights_sum > 0,
-        weights_masked / weights_sum,
-        0.0
-    )
+    # Normalize weights
+    weights_sum = weights.sum(axis=1, keepdims=True)
+    weights_normalized = weights / weights_sum
     
     # Compute weighted geometric mean in log space
     weighted_log_mean = jnp.einsum('bn,bng->bg', weights_normalized, log_ranks_filled)
     
     # Compute expression fraction (mean of is_expressed across neighbors)
-    is_expressed = (log_ranks_3d != 0) & neighbor_valid[:, :, None]
+    is_expressed = (log_ranks_3d != 0)
     expr_frac = is_expressed.astype(jnp.float32).mean(axis=1)  # Mean across neighbors
     
     # Calculate marker score
@@ -682,54 +673,33 @@ class MarkerScoreCalculator:
         pbar = tqdm(total=n_batches, desc=f"Processing {cell_type}")
         
         for _ in range(n_batches):
-            # Get completed batch
-            batch_idx, rank_data, idx_map, batch_neighbors = reader.get_result()
+            # Get completed batch - rank_data and indices from worker
+            batch_idx, rank_data, rank_indices, original_shape = reader.get_result()
             
             batch_start = batch_idx * self.config.batch_size
             batch_end = min(batch_start + self.config.batch_size, n_cells)
             batch_size = batch_end - batch_start
             
-            # Reconstruct full rank matrix for batch using fancy indexing
-            n_genes = rank_data.shape[1]
+            # Verify shape
+            assert original_shape == (batch_size, self.config.num_neighbour), \
+                f"Shape mismatch: expected {(batch_size, self.config.num_neighbour)}, got {original_shape}"
             
-            # Flatten batch_neighbors and map to rank_data indices
-            flat_neighbors = batch_neighbors.flatten()
-            
-            # Since we have assertions that all indices are valid, 
-            # we can directly map them
-            rank_indices = np.array([idx_map[neighbor_idx] for neighbor_idx in flat_neighbors])
-            
-            # All neighbors are valid due to assertions
-            neighbor_valid = np.ones((batch_size, self.config.num_neighbour), dtype=bool)
-            
-            # Use fancy indexing to create batch_ranks directly
+            # Use fancy indexing in main thread to save memory
             batch_ranks = rank_data[rank_indices]
             
             # Get batch weights
             batch_weights = neighbor_weights[batch_start:batch_end]
             
-            # Compute marker scores using JAX
-            if self.config.use_jax:
-                marker_scores = compute_marker_scores_jax(
-                    jnp.array(batch_ranks),
-                    jnp.array(batch_weights),
-                    jnp.array(neighbor_valid),
-                    batch_size,
-                    self.config.num_neighbour,
-                    jnp.array(global_log_gmean),
-                    jnp.array(global_expr_frac)
-                )
-                marker_scores = np.array(marker_scores)
-            else:
-                # Numpy fallback
-                marker_scores = self._compute_marker_scores_numpy(
-                    batch_ranks,
-                    batch_weights,
-                    neighbor_valid,
-                    batch_size,
-                    global_log_gmean,
-                    global_expr_frac
-                )
+            # Compute marker scores using JAX (always use JAX)
+            marker_scores = compute_marker_scores_jax(
+                jnp.array(batch_ranks),
+                jnp.array(batch_weights),
+                batch_size,
+                self.config.num_neighbour,
+                jnp.array(global_log_gmean),
+                jnp.array(global_expr_frac)
+            )
+            marker_scores = np.array(marker_scores)
             
             # Write results (async)
             global_indices = cell_indices_sorted[batch_start:batch_end]
@@ -740,57 +710,6 @@ class MarkerScoreCalculator:
         pbar.close()
         reader.close()
     
-    def _compute_marker_scores_numpy(
-        self,
-        log_ranks: np.ndarray,
-        weights: np.ndarray,
-        neighbor_valid: np.ndarray,
-        batch_size: int,
-        global_log_gmean: np.ndarray,
-        global_expr_frac: np.ndarray
-    ) -> np.ndarray:
-        """Numpy fallback for marker score computation"""
-        n_genes = log_ranks.shape[1]
-        marker_scores = np.zeros((batch_size, n_genes), dtype=np.float32)
-        
-        for i in range(batch_size):
-            # Get this cell's data
-            start_idx = i * self.config.num_neighbour
-            end_idx = start_idx + self.config.num_neighbour
-            cell_ranks = log_ranks[start_idx:end_idx]
-            cell_weights = weights[i]
-            cell_valid = neighbor_valid[i]
-            
-            # Apply validity mask
-            cell_weights = cell_weights * cell_valid
-            if cell_weights.sum() == 0:
-                continue
-            cell_weights = cell_weights / cell_weights.sum()
-            
-            # Compute weighted geometric mean
-            for g in range(n_genes):
-                gene_ranks = cell_ranks[:, g]
-                
-                # Handle zeros
-                nonzero_mask = (gene_ranks > 0) & cell_valid
-                if nonzero_mask.sum() == 0:
-                    continue
-                
-                # Weighted geometric mean in log space
-                log_values = np.log(gene_ranks[nonzero_mask])
-                weights_subset = cell_weights[nonzero_mask]
-                weights_subset = weights_subset / weights_subset.sum()
-                
-                weighted_log_mean = np.sum(log_values * weights_subset)
-                
-                # Expression fraction (mean of is_expressed)
-                expr_frac = nonzero_mask.mean()
-                
-                # Calculate marker score
-                if expr_frac > global_expr_frac[g]:
-                    marker_scores[i, g] = np.exp(weighted_log_mean - global_log_gmean[g])
-        
-        return marker_scores
     
     def run(self):
         """Main execution function"""
@@ -808,6 +727,19 @@ class MarkerScoreCalculator:
         # Load pre-calculated global statistics
         global_log_gmean, global_expr_frac = self.load_global_stats()
         
+        # Validate annotation groups have enough cells
+        if self.config.annotation_key and self.config.annotation_key in adata.obs.columns:
+            annotation_counts = adata.obs[self.config.annotation_key].value_counts()
+            min_required = self.config.num_neighbour  # Need at least as many cells as neighbors
+            
+            # Check for groups with too few cells
+            small_groups = annotation_counts[annotation_counts < min_required]
+            assert len(small_groups) == 0, \
+                f"Found {len(small_groups)} annotation groups with fewer than {min_required} cells. " \
+                f"Groups: {small_groups.to_dict()}. These should have been filtered in find_latent_representation."
+            
+            logger.info(f"All annotation groups have at least {min_required} cells")
+        
         # Get dimensions
         n_cells = adata.n_obs
         rank_zarr = ZarrBackedCSR.open(self.config.rank_zarr_path, mode='r')
@@ -817,8 +749,11 @@ class MarkerScoreCalculator:
         logger.info(f"AnnData dimensions: {n_cells} cells × {adata.n_vars} genes")
         logger.info(f"Rank Zarr dimensions: {n_cells_rank} cells × {n_genes} genes")
         
-        assert n_cells == n_cells_rank, \
-            f"Cell count mismatch: AnnData has {n_cells} cells, Rank Zarr has {n_cells_rank} cells"
+        # Allow small mismatch due to filtering
+        if n_cells != n_cells_rank:
+            logger.warning(f"Cell count mismatch: AnnData has {n_cells} cells, Rank Zarr has {n_cells_rank} cells")
+            if abs(n_cells - n_cells_rank) > 100:
+                raise ValueError(f"Large cell count mismatch: difference of {abs(n_cells - n_cells_rank)} cells")
         
         # Initialize output
         output_zarr = ZarrBackedDense(

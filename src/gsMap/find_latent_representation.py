@@ -748,6 +748,24 @@ def run_find_latent_representation(args: FindLatentRepresentationsConfig):
         # Ensure the var_names are the common genes
         concatenated_adata.var_names = common_genes_transfer
         
+        # Filter cells based on annotation group size if annotation is provided
+        if args.annotation is not None and args.annotation in concatenated_adata.obs.columns:
+            min_cells_per_type = 21  # Minimum number of homogeneous neighbors
+            annotation_counts = concatenated_adata.obs[args.annotation].value_counts()
+            valid_annotations = annotation_counts[annotation_counts >= min_cells_per_type].index
+            
+            # Filter cells
+            n_cells_before = concatenated_adata.n_obs
+            mask = concatenated_adata.obs[args.annotation].isin(valid_annotations)
+            concatenated_adata = concatenated_adata[mask, :]
+            n_cells_after = concatenated_adata.n_obs
+            
+            logger.info(f"Filtered cells based on annotation group size (min={min_cells_per_type})")
+            logger.info(f"  - Cells before filtering: {n_cells_before}")
+            logger.info(f"  - Cells after filtering: {n_cells_after}")
+            logger.info(f"  - Cells removed: {n_cells_before - n_cells_after}")
+            logger.info(f"  - Valid annotation groups: {len(valid_annotations)}")
+        
         # Save the concatenated AnnData
         concat_output_path = args.latent_dir / "concatenated_latent_adata.h5ad"
         concatenated_adata.write_h5ad(concat_output_path)

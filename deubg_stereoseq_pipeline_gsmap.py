@@ -65,7 +65,6 @@ class PipelineConfig:
     use_refactored_latent_to_gene: bool = True
     batch_size: int = 1000
     num_read_workers: int = 4
-    use_jax: bool = True
 
 
 def setup_directories(config: PipelineConfig):
@@ -145,8 +144,7 @@ def step2_calculate_gss(config: PipelineConfig, sample_name: Optional[str] = Non
             num_anchor=51,
             num_neighbour=21,
             batch_size=config.batch_size,
-            num_read_workers=config.num_read_workers,
-            use_jax=config.use_jax
+            num_read_workers=config.num_read_workers
         )
 
         # Run the refactored calculator
