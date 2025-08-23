@@ -65,7 +65,6 @@ class PipelineConfig:
     use_refactored_latent_to_gene: bool = True
     batch_size: int = 1000
     num_read_workers: int = 4
-    expr_frac_threshold: float = 0.1
     use_jax: bool = True
 
 
@@ -147,7 +146,6 @@ def step2_calculate_gss(config: PipelineConfig, sample_name: Optional[str] = Non
             num_neighbour=21,
             batch_size=config.batch_size,
             num_read_workers=config.num_read_workers,
-            expr_frac_threshold=config.expr_frac_threshold,
             use_jax=config.use_jax
         )
 

@@ -381,29 +381,33 @@ class ZarrBackedCSR:
                 current_start, current_end = start, end
         merged_ranges.append((current_start, current_end))
         
-        # Fetch data in merged chunks
+        # Fetch data in merged chunks and build mapping
         all_data = []
-        for chunk_start, chunk_end in merged_ranges:
+        range_mapping = {}  # Maps global index to (chunk_idx, local_idx)
+        
+        for chunk_idx, (chunk_start, chunk_end) in enumerate(merged_ranges):
             chunk_data = self._data_indices[chunk_start:chunk_end]
             all_data.append(chunk_data)
+            # Build mapping for this chunk
+            for global_idx in range(chunk_start, chunk_end):
+                local_idx = global_idx - chunk_start
+                range_mapping[global_idx] = (chunk_idx, local_idx)
         
-        # Combine and extract needed elements
-        if len(all_data) == 1:
-            combined_data = all_data[0]
-        else:
-            combined_data = np.concatenate(all_data)
+        # Extract needed elements using the mapping
+        sub_indices_list = []
+        sub_data_list = []
         
-        # Extract only the needed elements
-        needed_indices = []
-        base_offset = merged_ranges[0][0]
         for start, end in zip(start_ptrs, end_ptrs):
-            if end > start:
-                needed_indices.extend(range(start - base_offset, end - base_offset))
+            for idx in range(start, end):
+                if idx in range_mapping:
+                    chunk_idx, local_idx = range_mapping[idx]
+                    element = all_data[chunk_idx][local_idx]
+                    sub_indices_list.append(element['idx'])
+                    sub_data_list.append(element['val'])
         
-        if needed_indices:
-            sub_combined = combined_data[needed_indices]
-            sub_indices = sub_combined['idx']
-            sub_data = sub_combined['val']
+        if sub_indices_list:
+            sub_indices = np.array(sub_indices_list, dtype=np.uint16)
+            sub_data = np.array(sub_data_list, dtype=np.float32)
         else:
             sub_indices = np.array([], dtype=np.uint16)
             sub_data = np.array([], dtype=np.float32)
