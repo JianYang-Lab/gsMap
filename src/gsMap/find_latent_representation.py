@@ -184,19 +184,17 @@ class ZarrBackedCSR:
                 store = DirectoryStore(self.path)
                 existing = zarr.open(store, mode='r')
                 if 'integrity_mark' in existing.attrs and existing.attrs['integrity_mark'] == 'complete':
-                    logger.warning(f"ZarrBackedCSR at {path} already complete. Switching to read mode.")
-                    self.mode = 'r'
-                    self.zarr_array = existing
-                    self._indptr_zarr = self.zarr_array["indptr"]
-                    self._data_indices = self.zarr_array["data_indices"]
-                    self._indptr = np.array(self._indptr_zarr[:], dtype=np.int64)
-                    self.current_row = len(self._indptr) - 1
-                    self.current_nnz = self._indptr[-1] if len(self._indptr) > 0 else 0
-                    return
+                    raise ValueError(
+                        f"ZarrBackedCSR at {path} already exists and is marked as complete. "
+                        f"Please delete it manually if you want to overwrite: rm -rf {path}"
+                    )
                 else:
-                    logger.warning(f"ZarrBackedCSR at {path} was incomplete. Deleting and recreating.")
+                    logger.warning(f"ZarrBackedCSR at {path} exists but is incomplete. Deleting and recreating.")
                     import shutil
                     shutil.rmtree(self.path)
+            except ValueError:
+                # Re-raise the complete file error
+                raise
             except Exception as e:
                 logger.warning(f"Could not read existing Zarr at {path}: {e}. Deleting and recreating.")
                 import shutil

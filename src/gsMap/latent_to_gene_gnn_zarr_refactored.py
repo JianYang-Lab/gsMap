@@ -24,7 +24,7 @@ from scipy.sparse import csr_matrix, coo_matrix
 from sklearn.neighbors import NearestNeighbors
 import scanpy as sc
 from tqdm import tqdm
-from numba import njit, prange
+# Removed numba import - using JAX instead for acceleration
 import anndata as ad
 from gsMap.find_latent_representation import ZarrBackedCSR
 # Configure JAX
@@ -61,7 +61,7 @@ class LatentToGeneConfig:
     # Processing parameters
     batch_size: int = 1000
     num_read_workers: int = 4
-    num_write_workers: int = 2
+    num_write_workers: int = 4  # Increased default write workers
     
     # GPU memory management
     gpu_batch_size: int = 500  # Batch size for GPU processing to avoid OOM
@@ -70,8 +70,8 @@ class LatentToGeneConfig:
     min_cells_per_type: int = 10
     
     # Zarr parameters
-    chunks_cells: int = 10000
-    chunks_genes: int = 1000
+    chunks_cells: Optional[int] = None  # None means use optimal chunking (1, n_genes)
+    chunks_genes: Optional[int] = None  # None means use full gene dimension
     
     # Performance
     cache_size_mb: int = 1000
@@ -95,15 +95,18 @@ class ZarrBackedDense:
         shape: Tuple[int, int],
         dtype=np.float32,
         chunks: Optional[Tuple[int, int]] = None,
-        mode: str = 'w'
+        mode: str = 'w',
+        num_write_workers: int = 4
     ):
         self.path = Path(path)
         self.shape = shape
         self.dtype = dtype
         self.mode = mode
+        self.num_write_workers = num_write_workers
         
+        # Default chunks: (1, n_genes) for optimal row-wise writing
         if chunks is None:
-            chunks = (min(1000, shape[0]), min(1000, shape[1]))
+            chunks = (1, shape[1])
         self.chunks = chunks
         
         # Initialize Zarr array with integrity checking
@@ -113,12 +116,12 @@ class ZarrBackedDense:
                 try:
                     existing = zarr.open(str(self.path), mode='r')
                     if 'integrity_mark' in existing.attrs and existing.attrs['integrity_mark'] == 'complete':
-                        logger.warning(f"ZarrBackedDense at {self.path} is already complete. Skipping.")
-                        self.zarr_array = existing
-                        self.mode = 'r'  # Switch to read mode
-                        return
+                        raise ValueError(
+                            f"ZarrBackedDense at {self.path} already exists and is marked as complete. "
+                            f"Please delete it manually if you want to overwrite: rm -rf {self.path}"
+                        )
                     else:
-                        logger.warning(f"ZarrBackedDense at {self.path} is incomplete. Deleting and recreating.")
+                        logger.warning(f"ZarrBackedDense at {self.path} exists but is incomplete. Deleting and recreating.")
                         import time
                         time.sleep(0.1)  # Brief pause to ensure files are released
                         shutil.rmtree(self.path, ignore_errors=True)
@@ -126,6 +129,9 @@ class ZarrBackedDense:
                         if self.path.exists():
                             import os
                             os.system(f"rm -rf {self.path}")
+                except ValueError:
+                    # Re-raise the complete file error
+                    raise
                 except Exception as e:
                     logger.warning(f"Could not read existing Zarr at {self.path}: {e}. Deleting and recreating.")
                     import time
@@ -157,15 +163,15 @@ class ZarrBackedDense:
         
         # Async writing setup (only if still in write mode)
         self.write_queue = queue.Queue(maxsize=100)
-        self.writer_thread = None
+        self.writer_threads = []
         self.stop_writer = threading.Event()
         
         if mode == 'w' and self.mode == 'w':  # Only start writer if we're actually writing
-            self._start_writer_thread()
+            self._start_writer_threads()
     
-    def _start_writer_thread(self):
-        """Start background writer thread"""
-        def writer_worker():
+    def _start_writer_threads(self):
+        """Start multiple background writer threads"""
+        def writer_worker(worker_id):
             while not self.stop_writer.is_set():
                 try:
                     item = self.write_queue.get(timeout=0.1)
@@ -177,11 +183,15 @@ class ZarrBackedDense:
                 except queue.Empty:
                     continue
                 except Exception as e:
-                    logger.error(f"Writer thread error: {e}")
+                    logger.error(f"Writer thread {worker_id} error: {e}")
                     raise
         
-        self.writer_thread = threading.Thread(target=writer_worker, daemon=True)
-        self.writer_thread.start()
+        # Start multiple writer threads
+        for i in range(self.num_write_workers):
+            thread = threading.Thread(target=writer_worker, args=(i,), daemon=True)
+            thread.start()
+            self.writer_threads.append(thread)
+        logger.info(f"Started {self.num_write_workers} writer threads for ZarrBackedDense")
     
     def write_batch(self, data: np.ndarray, row_indices: Union[int, np.ndarray], col_slice=slice(None)):
         """Queue batch for async writing
@@ -211,11 +221,16 @@ class ZarrBackedDense:
     
     def close(self):
         """Clean up resources"""
-        if self.writer_thread and self.writer_thread.is_alive():
+        if self.writer_threads:
             logger.info("Closing ZarrBackedDense, waiting for writes...")
             self.write_queue.join()
-            self.write_queue.put(None)
-            self.writer_thread.join(timeout=5)
+            self.stop_writer.set()
+            # Send stop signal to all threads
+            for _ in self.writer_threads:
+                self.write_queue.put(None)
+            # Wait for all threads to finish
+            for thread in self.writer_threads:
+                thread.join(timeout=5.0)
         
         # Mark as complete when closing in write mode
         if self.mode == 'w':
@@ -398,7 +413,7 @@ class ConnectivityMatrixBuilder:
 # Row Sorting for Cache Optimization
 # ============================================================================
 
-@njit(parallel=True)
+@njit()
 def compute_jaccard_similarity(neighbors_a: np.ndarray, neighbors_b: np.ndarray) -> float:
     """Compute Jaccard similarity between two neighbor sets"""
     set_a = set(neighbors_a)
@@ -432,7 +447,7 @@ def optimize_row_order(
         current = np.random.choice(list(remaining))
         ordered.append(current)
         remaining.remove(current)
-        
+
         while remaining:
             # Find most similar remaining row
             max_sim = -1
@@ -802,12 +817,22 @@ class MarkerScoreCalculator:
             f"Cell count mismatch: AnnData has {n_cells} cells, Rank Zarr has {n_cells_rank} cells. " \
             f"This indicates the filtering was not applied consistently during find_latent_representation."
         
-        # Initialize output
+        # Initialize output with proper chunking
+        chunks = None
+        if self.config.chunks_cells is not None or self.config.chunks_genes is not None:
+            # Use provided chunks
+            chunks = (
+                self.config.chunks_cells if self.config.chunks_cells is not None else 1,
+                self.config.chunks_genes if self.config.chunks_genes is not None else n_genes
+            )
+        # If chunks is None, ZarrBackedDense will use default (1, n_genes)
+        
         output_zarr = ZarrBackedDense(
             self.config.output_path,
             shape=(n_cells, n_genes),
-            chunks=(self.config.chunks_cells, self.config.chunks_genes),
-            mode='w'
+            chunks=chunks,
+            mode='w',
+            num_write_workers=self.config.num_write_workers
         )
         
         # Process each cell type
