@@ -41,7 +41,7 @@ class PipelineConfig:
     gwas_summary: str = "/storage/yangjianLab/songliyang/GWAS_trait/GWAS_brain_use.yaml"
 
     # Project settings
-    project_name: str = "MERFISH_BRAIN_V1"
+    project_name: str = "MERFISH_BRAIN_saggital_V1"
     annotation: str = "cell_type"
     spatial_key: str = "spatial"
 
@@ -82,11 +82,11 @@ def step1_find_latent_representations(config: PipelineConfig):
 
     # Create file list
     file_list_path = f"{config.workdir}/{config.project_name}/sample_list.txt"
-    # files = get_sample_list(config)
-    #
-    # with open(file_list_path, 'w') as f:
-    #     for file in files:
-    #         f.write(f"{file}\n")
+    files = get_sample_list(config)
+
+    with open(file_list_path, 'w') as f:
+        for file in files:
+            f.write(f"{file}\n")
 
     # Create config for FindLatentRepresentations
     latent_config = FindLatentRepresentationsConfig(
