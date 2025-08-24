@@ -452,9 +452,6 @@ def optimize_row_order(
         visited = np.zeros(n_cells, dtype=bool)
         ordered = []
         
-        # Since weights are softmax normalized (sum to 1), we need a different strategy
-        # Start with cell that has the highest max weight to any single neighbor
-        # This indicates strong connection to at least one cell
         max_weights = neighbor_weights.max(axis=1)
         current = np.argmax(max_weights)
         
@@ -466,8 +463,7 @@ def optimize_row_order(
         for i in range(n_cells):
             for j, neighbor_idx in enumerate(neighbor_indices[i]):
                 # Check if this neighbor is within our cell set (local index)
-                if 0 <= neighbor_idx < n_cells:
-                    reverse_neighbors[neighbor_idx].append((i, neighbor_weights[i, j]))
+                reverse_neighbors[neighbor_idx].append((i, neighbor_weights[i, j]))
             
         # Process all cells
         for _ in range(n_cells - 1):
@@ -485,7 +481,7 @@ def optimize_row_order(
             for idx in sorted_idx:
                 neighbor_idx = neighbors[idx]
                 # Check if this neighbor is within our cells and unvisited
-                if 0 <= neighbor_idx < n_cells and not visited[neighbor_idx]:
+                if  not visited[neighbor_idx]:
                     if weights[idx] > best_weight:
                         best_weight = weights[idx]
                         next_cell = neighbor_idx
@@ -499,7 +495,7 @@ def optimize_row_order(
                 for cell_idx in ordered[-min(10, len(ordered)):]:
                     # Add forward connections (cells that this cell points to)
                     for j, neighbor_idx in enumerate(neighbor_indices[cell_idx]):
-                        if 0 <= neighbor_idx < n_cells and not visited[neighbor_idx]:
+                        if not visited[neighbor_idx]:
                             connection_scores[neighbor_idx] += neighbor_weights[cell_idx, j]
                     
                     # Add reverse connections (cells that point to this cell)
@@ -586,7 +582,7 @@ class ParallelRankReader:
         self.num_workers = num_workers
         
         # Queues for communication
-        self.read_queue = queue.Queue(maxsize=100)
+        self.read_queue = queue.Queue()
         self.result_queue = queue.Queue(maxsize=100)
         
         # Start worker threads
@@ -837,7 +833,7 @@ class MarkerScoreCalculator:
         for _ in range(n_batches):
             # Get completed batch - rank_data and indices from worker
             batch_idx, rank_data, rank_indices, original_shape = reader.get_result()
-            
+            print(f'Got batch {batch_idx} with shape {original_shape}')
             batch_start = batch_idx * self.config.batch_size
             batch_end = min(batch_start + self.config.batch_size, n_cells)
             batch_size = batch_end - batch_start
