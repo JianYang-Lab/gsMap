@@ -4,7 +4,7 @@ Configuration dataclasses for gsMap commands.
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Annotated
+from typing import Optional, Annotated, List
 import yaml
 import logging
 from pathlib import Path
@@ -169,7 +169,10 @@ class FindLatentRepresentationsConfig(ConfigWithAutoPaths):
     
     # Optional - must be after required fields
     project_name: str = None
-    
+
+
+
+
     data_layer: Annotated[str, typer.Option(
         help="Gene expression data layer"
     )] = "count"
@@ -322,15 +325,33 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
         resolve_path=True
     )]
     
-    sample_name: Annotated[str, typer.Option(
-        help="Name of the sample"
+    project_name: Annotated[str, typer.Option(
+        help="Name of the project"
     )]
-    
-    # Optional - must be after required fields
-    project_name: str = None
-    
+
+    sample_h5ad_list: Annotated[Optional[List[Path]], typer.Option(
+        help="Space-separated list of h5ad file paths. Sample names are derived from file names without suffix.",
+        exists=True,
+        file_okay=True,
+    )] = None
+
+    sample_h5ad_yaml: Annotated[Path, typer.Option(
+        help="YAML file with sample names and h5ad paths",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+    )] = None
+
+    sample_h5ad_file: Annotated[Optional[str], typer.Option(
+        help="Each row is a h5ad file path, sample name is the file name without suffix",
+        exists = True,
+        file_okay = True,
+        dir_okay = False,
+    )] = None
+
+
     annotation: Annotated[Optional[str], typer.Option(
-        help="Annotation in adata.obs to use"
+        help="Cell type annotation in adata.obs to use. This would constrain finding homogeneous spots within each cell type"
     )] = None
     
     no_expression_fraction: Annotated[bool, typer.Option(
@@ -338,32 +359,37 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
         help="Skip expression fraction filtering"
     )] = False
     
-    latent_representation: str = "emb_gcn"
+    latent_representation: Annotated[str, typer.Option(
+        help="Key for spatial niche embedding in obsm"
+    )] = "emb_gcn"
     
-    latent_representation_indv: str = "emb"
+    latent_representation_indv: Annotated[str, typer.Option(
+        help="Key for cell identity embedding in obsm"
+    )] = "emb"
     
     spatial_key: Annotated[str, typer.Option(
         help="Spatial key in adata.obsm"
     )] = "spatial"
-    
+
+    num_neighbour_spatial: Annotated[int, typer.Option(
+        help="k1: Number of spatial neighbors for initial graph",
+        min=10,
+        max=500
+    )] = 201
+
     num_anchor: Annotated[int, typer.Option(
-        help="Number of anchor points",
+        help="k2: Number of spatial anchors per cell",
         min=10,
         max=200
     )] = 51
     
     num_neighbour: Annotated[int, typer.Option(
-        help="Number of neighbors",
+        help="k3: Number of homogeneous spots to find",
         min=1,
         max=100
     )] = 21
     
-    num_neighbour_spatial: Annotated[int, typer.Option(
-        help="Number of spatial neighbors",
-        min=10,
-        max=500
-    )] = 201
-    
+
     use_w: Annotated[bool, typer.Option(
         "--use-w",
         help="Use section specific weights for batch effect"
@@ -375,18 +401,146 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
     species: Optional[str] = None
 
     # Refactored version parameters
-    use_refactored: bool = False  # Flag to use refactored version
-    batch_size: int = 1000
-    num_read_workers: int = 4
-    num_write_workers: int = 2
-    expr_frac_threshold: float = 0.1
-    min_cells_per_type: int = 10
-    chunks_cells: int = 10000
-    chunks_genes: int = 1000
-    use_jax: bool = True
-    cache_size_mb: int = 1000
-    n_neighbors_gcn: int = 10
-    zarr_group_path: str = None
+    use_refactored: Annotated[bool, typer.Option(
+        "--use-refactored",
+        help="Use refactored JAX-accelerated implementation"
+    )] = False
+    
+    batch_size: Annotated[int, typer.Option(
+        help="Batch size for data processing",
+        min=100,
+        max=10000
+    )] = 1000
+    
+    num_read_workers: Annotated[int, typer.Option(
+        help="Number of parallel reader threads",
+        min=1,
+        max=16
+    )] = 4
+    
+    num_write_workers: Annotated[int, typer.Option(
+        help="Number of parallel writer threads",
+        min=1,
+        max=16
+    )] = 4
+    
+    gpu_batch_size: Annotated[int, typer.Option(
+        help="Batch size for GPU processing to avoid CUDA OOM",
+        min=100,
+        max=5000
+    )] = 500
+    
+    expr_frac_threshold: Annotated[float, typer.Option(
+        help="Expression fraction threshold for filtering",
+        min=0.0,
+        max=1.0
+    )] = 0.1
+    
+    min_cells_per_type: Annotated[int, typer.Option(
+        help="Minimum cells required per cell type",
+        min=1,
+        max=1000
+    )] = 10
+    
+    chunks_cells: Annotated[Optional[int], typer.Option(
+        help="Chunk size for cells dimension (None for optimal)"
+    )] = None
+    
+    chunks_genes: Annotated[Optional[int], typer.Option(
+        help="Chunk size for genes dimension (None for optimal)"
+    )] = None
+    
+    use_jax: Annotated[bool, typer.Option(
+        "--use-jax/--no-jax",
+        help="Use JAX acceleration for computations"
+    )] = True
+    
+    cache_size_mb: Annotated[int, typer.Option(
+        help="Cache size in MB for data reading",
+        min=100,
+        max=10000
+    )] = 1000
+    
+    n_neighbors_gcn: Annotated[int, typer.Option(
+        help="Number of neighbors for GCN",
+        min=5,
+        max=50
+    )] = 10
+    
+    zarr_group_path: Optional[str] = None
+    
+    def __post_init__(self):
+        """Initialize and validate configuration"""
+        super().__post_init__()
+        from collections import OrderedDict
+        
+        # Create OrderedDict for sample_h5ad_dict
+        self.sample_h5ad_dict = OrderedDict()
+        
+        # Check which options are provided
+        options_provided = []
+        if self.sample_h5ad_list:
+            options_provided.append("sample_h5ad_list")
+        if self.sample_h5ad_yaml:
+            options_provided.append("sample_h5ad_yaml")
+        if self.sample_h5ad_file:
+            options_provided.append("sample_h5ad_file")
+        
+        # Ensure exactly one option is provided
+        assert len(options_provided) == 1, (
+            f"Exactly one input option must be provided. Got {len(options_provided)}: {', '.join(options_provided)}. "
+            f"Please provide only one of: sample_h5ad_yaml, sample_h5ad_list, or sample_h5ad_file"
+        )
+        
+        # Process the provided input option
+        if self.sample_h5ad_yaml:
+            logger.info(f"Using sample_h5ad_yaml: {self.sample_h5ad_yaml}")
+            with open(self.sample_h5ad_yaml) as f:
+                h5ad_data = yaml.safe_load(f)
+                for sample_name, h5ad_path in h5ad_data.items():
+                    self.sample_h5ad_dict[sample_name] = Path(h5ad_path)
+                    
+        elif self.sample_h5ad_list:
+            logger.info(f"Using sample_h5ad_list with {len(self.sample_h5ad_list)} files")
+            for h5ad_path in self.sample_h5ad_list:
+                h5ad_path = Path(h5ad_path)
+                sample_name = h5ad_path.stem
+                if sample_name in self.sample_h5ad_dict:
+                    logger.warning(f"Duplicate sample name: {sample_name}, will be overwritten")
+                self.sample_h5ad_dict[sample_name] = h5ad_path
+                
+        elif self.sample_h5ad_file:
+            logger.info(f"Using sample_h5ad_file: {self.sample_h5ad_file}")
+            with open(self.sample_h5ad_file) as f:
+                for line in f:
+                    line = line.strip()
+                    if line:  # Skip empty lines
+                        h5ad_path = Path(line)
+                        sample_name = h5ad_path.stem
+                        if sample_name in self.sample_h5ad_dict:
+                            logger.warning(f"Duplicate sample name: {sample_name}, will be overwritten")
+                        self.sample_h5ad_dict[sample_name] = h5ad_path
+        
+        # Verify all files exist after collection
+        for sample_name, h5ad_path in self.sample_h5ad_dict.items():
+            if not h5ad_path.exists():
+                raise FileNotFoundError(f"H5AD file not found for sample '{sample_name}': {h5ad_path}")
+        
+        # Log final sample count
+        logger.info(f"Loaded {len(self.sample_h5ad_dict)} samples")
+        
+        # Check if at least one sample is provided
+        if len(self.sample_h5ad_dict) == 0:
+            raise ValueError("No valid samples found in the provided input")
+        
+        # Validate configuration constraints
+        assert self.num_neighbour <= self.num_anchor, \
+            f"num_neighbour ({self.num_neighbour}) must be <= num_anchor ({self.num_anchor})"
+        assert self.num_anchor <= self.num_neighbour_spatial, \
+            f"num_anchor ({self.num_anchor}) must be <= num_neighbour_spatial ({self.num_neighbour_spatial})"
+
+
+
 
 
 @dataclass

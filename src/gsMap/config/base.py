@@ -44,6 +44,42 @@ class ConfigWithAutoPaths:
     
     @property
     @ensure_path_exists
+    def latent2gene_dir(self) -> Path:
+        """Directory for latent to gene outputs"""
+        return self.project_dir / "latent_to_gene"
+    
+    @property
+    @ensure_path_exists
+    def concatenated_latent_adata_path(self) -> Path:
+        """Path to concatenated latent representations"""
+        return self.latent2gene_dir / "concatenated_latent_adata.h5ad"
+    
+    @property
+    @ensure_path_exists
+    def rank_zarr_path(self) -> Path:
+        """Path to rank zarr file"""
+        return self.latent2gene_dir / "ranks.zarr"
+    
+    @property
+    @ensure_path_exists
+    def mean_frac_path(self) -> Path:
+        """Path to mean expression fraction parquet"""
+        return self.latent2gene_dir / "mean_frac.parquet"
+    
+    @property
+    @ensure_path_exists
+    def marker_scores_zarr_path(self) -> Path:
+        """Path to marker scores zarr"""
+        return self.latent2gene_dir / "marker_scores.zarr"
+    
+    @property
+    @ensure_path_exists
+    def latent2gene_metadata_path(self) -> Path:
+        """Path to latent2gene metadata JSON"""
+        return self.latent2gene_dir / "metadata.json"
+    
+    @property
+    @ensure_path_exists
     def zarr_group_path(self) -> Path:
         return self.project_dir / "slice_mean.zarr"
     
