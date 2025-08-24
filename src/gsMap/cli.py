@@ -127,7 +127,7 @@ def latent_to_gene(config: LatentToGeneConfig):
         logger.info(f"Tuned scores will be saved to: {config.tuned_mkscore_feather_path}")
     
     try:
-        from gsMap.latent_to_gene import run_latent_to_gene
+        from gsMap.latent2gene import run_latent_to_gene
         run_latent_to_gene(config)
         logger.info("✓ Gene marker scores computed successfully!")
     except ImportError:

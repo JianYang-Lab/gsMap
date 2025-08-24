@@ -151,14 +151,7 @@ class FindLatentRepresentationsConfig(ConfigWithAutoPaths):
     """Configuration for finding latent representations."""
     
     # Required from parent
-    workdir: Annotated[Path, typer.Option(
-        help="Path to the working directory",
-        exists=True,
-        file_okay=False,
-        dir_okay=True,
-        resolve_path=True
-    )]
-    
+
     sample_name: Annotated[str, typer.Option(
         help="Name of the sample"
     )]

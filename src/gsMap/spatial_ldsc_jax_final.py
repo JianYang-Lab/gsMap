@@ -49,13 +49,13 @@ class ChunkMetadata:
     """Metadata for chunk processing results."""
     
     def __init__(self, chunk_index: int, total_chunks: int, n_spots: int,
-                 n_snps: int, trait_name: str, sample_name: str):
+                 n_snps: int, trait_name: str, project_name: str):
         self.chunk_index = chunk_index
         self.total_chunks = total_chunks
         self.n_spots = n_spots
         self.n_snps = n_snps
         self.trait_name = trait_name
-        self.sample_name = sample_name
+        self.project_name = project_name
         self.timestamp = datetime.now().isoformat()
         self.hostname = os.uname().nodename if hasattr(os, 'uname') else 'unknown'
         self.pid = os.getpid()
@@ -65,7 +65,7 @@ class ChunkMetadata:
     
     def get_filename(self, extension: str = 'csv.gz') -> str:
         """Generate standard filename for chunk results."""
-        return (f"{self.sample_name}_{self.trait_name}_"
+        return (f"{self.project_name}_{self.trait_name}_"
                 f"chunk{self.chunk_index:04d}_of_{self.total_chunks:04d}.{extension}")
 
 
@@ -370,7 +370,7 @@ class ChunkWriter:
             n_spots=len(spot_names),
             n_snps=self.n_snps_used,
             trait_name=self.trait_name,
-            sample_name=self.config.sample_name
+            project_name=self.config.project_name
         )
         
         # Add to write queue (non-blocking)
@@ -424,7 +424,7 @@ class ChunkProducer(threading.Thread):
         n_snps_used = self.data['n_snps_used']
         
         if self.config.ldscore_save_format == "feather":
-            ld_file = f"{self.config.ldscore_save_dir}/{self.config.sample_name}_chunk{chunk_index}/{self.config.sample_name}."
+            ld_file = f"{self.config.ldscore_save_dir}/{self.config.project_name}_chunk{chunk_index}/{self.config.project_name}."
             ref_ld = _read_ref_ld_v2(ld_file)
             ref_ld = ref_ld.iloc[self.data['snp_positions']]
             spatial_ld = ref_ld.values.astype(np.float32)
@@ -632,7 +632,7 @@ def validate_chunk_file(chunk_file: Path) -> bool:
             metadata = json.load(f)
         
         required_fields = ['chunk_index', 'total_chunks', 'n_spots', 'n_snps', 
-                          'trait_name', 'sample_name']
+                          'trait_name', 'project_name']
         for field in required_fields:
             if field not in metadata:
                 logger.error(f"Missing field '{field}' in metadata")
@@ -658,13 +658,13 @@ def validate_chunk_file(chunk_file: Path) -> bool:
         return False
 
 
-def merge_chunk_results(output_dir: Path, sample_name: str, trait_name: str,
+def merge_chunk_results(output_dir: Path, project_name: str, trait_name: str,
                        validate: bool = True, clean_chunks: bool = False) -> pd.DataFrame:
     """Merge all chunk results into a single DataFrame."""
-    logger.info(f"Merging chunk results for {sample_name}_{trait_name}")
+    logger.info(f"Merging chunk results for {project_name}_{trait_name}")
     
     # Find all chunk files
-    pattern = f"{sample_name}_{trait_name}_chunk*.csv.gz"
+    pattern = f"{project_name}_{trait_name}_chunk*.csv.gz"
     chunk_files = sorted(output_dir.glob(pattern))
     
     if not chunk_files:
@@ -826,7 +826,7 @@ def run_spatial_ldsc_single_trait(config: SpatialLDSCConfig,
     """
     logger.info("=" * 70)
     logger.info(f"Running Spatial LDSC (JAX-optimized Final Version)")
-    logger.info(f"Sample: {config.sample_name}, Trait: {trait_name}")
+    logger.info(f"Sample: {config.project_name}, Trait: {trait_name}")
     if config.chunk_range:
         logger.info(f"Chunk range: {config.chunk_range}")
     logger.info("=" * 70)
@@ -882,12 +882,12 @@ def run_spatial_ldsc_single_trait(config: SpatialLDSCConfig,
         logger.info("Processed all chunks - auto-merging results...")
         
         merged_df = merge_chunk_results(
-            output_dir, config.sample_name, trait_name,
+            output_dir, config.project_name, trait_name,
             validate=True, clean_chunks=False
         )
         
         # Save final results
-        final_file = config.ldsc_save_dir / f"{config.sample_name}_{trait_name}.csv.gz"
+        final_file = config.ldsc_save_dir / f"{config.project_name}_{trait_name}.csv.gz"
         merged_df.to_csv(final_file, index=False, compression='gzip')
         logger.info(f"Final results saved to {final_file}")
         
@@ -912,16 +912,16 @@ def merge_results(config: SpatialLDSCConfig, trait_name: str,
     This function is called after all chunks have been processed
     (potentially on different nodes) to create the final result.
     """
-    logger.info(f"Merging results for {config.sample_name}_{trait_name}")
+    logger.info(f"Merging results for {config.project_name}_{trait_name}")
     
     chunks_dir = config.ldsc_save_dir / "chunks"
     
     # Merge chunks
-    merged_df = merge_chunk_results(chunks_dir, config.sample_name, 
+    merged_df = merge_chunk_results(chunks_dir, config.project_name, 
                                    trait_name, validate, clean_chunks)
     
     # Save final results
-    output_file = config.ldsc_save_dir / f"{config.sample_name}_{trait_name}.csv.gz"
+    output_file = config.ldsc_save_dir / f"{config.project_name}_{trait_name}.csv.gz"
     merged_df.to_csv(output_file, index=False, compression='gzip')
     logger.info(f"Saved final results to {output_file}")
     

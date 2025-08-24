@@ -8,7 +8,6 @@ import logging
 import queue
 import shutil
 import threading
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Tuple, List, Union
 from functools import partial
@@ -25,62 +24,18 @@ from scipy.sparse import csr_matrix, coo_matrix
 from sklearn.neighbors import NearestNeighbors
 import scanpy as sc
 from tqdm import tqdm
-# Removed numba import - using JAX instead for acceleration
 import anndata as ad
+
+# Import gsMap components
 from gsMap.find_latent_representation import ZarrBackedCSR
+from gsMap.config.dataclasses import LatentToGeneConfig
+
 # Configure JAX
 jax.config.update("jax_enable_x64", False)  # Use float32 for speed
 # jax.config.update("jax_platform_name", "cpu")  # or "gpu" if available
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
-
-
-# # ============================================================================
-# # Configuration
-# # ============================================================================
-
-@dataclass
-class LatentToGeneConfig:
-    """Configuration for marker score calculation"""
-    # Input paths
-    latent_dir: str  # Directory containing concatenated_latent_adata.h5ad and mean_frac.parquet
-    rank_zarr_path: str
-    output_path: str
-    
-    # Latent representation keys
-    latent_representation: str = "X_morpho_gcn"  # Spatial niche embedding
-    latent_representation_indv: str = "X_morpho_indv"  # Cell identity embedding
-    spatial_key: str = "spatial"
-    annotation_key: str = "cell_type"
-    
-    # Connectivity matrix parameters
-    num_neighbour_spatial: int = 201  # k1: spatial neighbors
-    num_anchor: int = 51  # k2: spatial anchors
-    num_neighbour: int = 21  # k3: homogeneous spots
-    
-    # Processing parameters
-    batch_size: int = 1000
-    num_read_workers: int = 4
-    num_write_workers: int = 4  # Increased default write workers
-    
-    # GPU memory management
-    gpu_batch_size: int = 500  # Batch size for GPU processing to avoid OOM
-    
-    # Score calculation parameters
-    min_cells_per_type: int = 10
-    
-    # Zarr parameters
-    chunks_cells: Optional[int] = None  # None means use optimal chunking (1, n_genes)
-    chunks_genes: Optional[int] = None  # None means use full gene dimension
-    
-    # Performance
-    cache_size_mb: int = 1000
-    
-    def __post_init__(self):
-        """Validate configuration"""
-        assert self.num_neighbour <= self.num_anchor
-        assert self.num_anchor <= self.num_neighbour_spatial
 
 
 # ============================================================================
