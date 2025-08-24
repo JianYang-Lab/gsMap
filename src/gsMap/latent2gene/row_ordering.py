@@ -1,0 +1,162 @@
+"""
+Row ordering optimization for cache efficiency
+"""
+
+import numpy as np
+from typing import Optional
+from numba import njit
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+@njit
+def compute_jaccard_similarity(neighbors_a: np.ndarray, neighbors_b: np.ndarray) -> float:
+    """Compute Jaccard similarity between two neighbor sets"""
+    set_a = set(neighbors_a)
+    set_b = set(neighbors_b)
+    intersection = len(set_a & set_b)
+    union = len(set_a | set_b)
+    return intersection / union if union > 0 else 0.0
+
+
+def optimize_row_order(
+    neighbor_indices: np.ndarray,
+    method: Optional[str] = None,
+    neighbor_weights: Optional[np.ndarray] = None
+) -> np.ndarray:
+    """
+    Sort rows by shared neighbors to improve cache locality
+    
+    Args:
+        neighbor_indices: (n_cells, k) array of neighbor indices  
+        method: None (auto), 'weighted', 'greedy', or 'none'
+        neighbor_weights: Optional (n_cells, k) array of weights for each neighbor
+    
+    Returns:
+        Reordered row indices
+    
+    Complexity:
+        - weighted: O(n*k) where k is number of neighbors - very efficient!
+        - greedy: O(n²) - only for very small datasets
+        - none: O(1) - returns original order
+    """
+    n_cells = len(neighbor_indices)
+    
+    # Auto-select method if None
+    if method is None:
+        if neighbor_weights is not None and n_cells > 2000:
+            method = 'weighted'
+        else:
+            method = 'greedy'
+    
+    if method == 'weighted' and neighbor_weights is not None:
+        # Efficient weighted heuristic: follow highest-weight neighbors
+        visited = np.zeros(n_cells, dtype=bool)
+        ordered = []
+        
+        # Start with cell that has highest max weight to any single neighbor
+        max_weights = neighbor_weights.max(axis=1)
+        current = np.argmax(max_weights)
+        
+        ordered.append(current)
+        visited[current] = True
+        
+        # Build reverse lookup
+        reverse_neighbors = [[] for _ in range(n_cells)]
+        for i in range(n_cells):
+            for j, neighbor_idx in enumerate(neighbor_indices[i]):
+                if 0 <= neighbor_idx < n_cells:
+                    reverse_neighbors[neighbor_idx].append((i, neighbor_weights[i, j]))
+        
+        # Process all cells
+        for _ in range(n_cells - 1):
+            neighbors = neighbor_indices[current]
+            weights = neighbor_weights[current]
+            
+            # Sort neighbors by weight (highest first)
+            sorted_idx = np.argsort(weights)[::-1]
+            
+            # Find the unvisited neighbor with highest weight
+            next_cell = None
+            best_weight = -1
+            
+            for idx in sorted_idx:
+                neighbor_idx = neighbors[idx]
+                if not visited[neighbor_idx]:
+                    if weights[idx] > best_weight:
+                        best_weight = weights[idx]
+                        next_cell = neighbor_idx
+            
+            # If no unvisited direct neighbors, find closest unvisited cell
+            if next_cell is None:
+                connection_scores = np.zeros(n_cells)
+                
+                # Check connections from last few visited cells
+                for cell_idx in ordered[-min(10, len(ordered)):]:
+                    # Add forward connections
+                    for j, neighbor_idx in enumerate(neighbor_indices[cell_idx]):
+                        if not visited[neighbor_idx]:
+                            connection_scores[neighbor_idx] += neighbor_weights[cell_idx, j]
+                    
+                    # Add reverse connections
+                    for reverse_idx, reverse_weight in reverse_neighbors[cell_idx]:
+                        if not visited[reverse_idx]:
+                            connection_scores[reverse_idx] += reverse_weight
+                
+                # Pick the unvisited cell with highest connection score
+                if connection_scores.max() > 0:
+                    unvisited_scores = connection_scores.copy()
+                    unvisited_scores[visited] = -1
+                    next_cell = np.argmax(unvisited_scores)
+                else:
+                    # No connections found, pick cell with highest max weight
+                    unvisited_max_weights = max_weights.copy()
+                    unvisited_max_weights[visited] = -1
+                    next_cell = np.argmax(unvisited_max_weights)
+            
+            ordered.append(next_cell)
+            visited[next_cell] = True
+            current = next_cell
+        
+        return np.array(ordered)
+    
+    elif method == 'greedy':
+        # Original greedy approach - only for small datasets
+        if n_cells > 1000:
+            logger.warning(f"Greedy method is O(n²) - not recommended for {n_cells} cells")
+        
+        remaining = set(range(n_cells))
+        ordered = []
+        
+        current = np.random.choice(list(remaining))
+        ordered.append(current)
+        remaining.remove(current)
+        
+        while remaining:
+            max_sim = -1
+            next_row = None
+            
+            # Sample candidates for large datasets
+            candidates = list(remaining)
+            if len(candidates) > 100:
+                candidates = np.random.choice(candidates, min(100, len(candidates)), replace=False)
+            
+            for candidate in candidates:
+                sim = compute_jaccard_similarity(
+                    neighbor_indices[current],
+                    neighbor_indices[candidate]
+                )
+                if sim > max_sim:
+                    max_sim = sim
+                    next_row = candidate
+            
+            ordered.append(next_row)
+            remaining.remove(next_row)
+            current = next_row
+        
+        return np.array(ordered)
+    
+    else:
+        # Simple sequential order as fallback
+        return np.arange(n_cells)
