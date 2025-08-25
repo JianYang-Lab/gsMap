@@ -101,6 +101,12 @@ class ConfigWithAutoPaths:
     @ensure_path_exists
     def ldsc_dir(self) -> Path:
         return self.project_dir / "spatial_ldsc"
+    
+    @property
+    @ensure_path_exists
+    def ldsc_save_dir(self) -> Path:
+        """Directory for spatial LDSC results"""
+        return self.project_dir / "spatial_ldsc"
 
     #
     #

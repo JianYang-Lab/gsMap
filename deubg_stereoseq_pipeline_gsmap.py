@@ -68,7 +68,7 @@ class PipelineConfig:
     gpu_batch_size: int = 300  # Smaller batch size for GPU to avoid OOM
 
     def __post_init__(self):
-        self.gsMap_resource_dir = str(self.gsMap_resource_dir)
+        self.gsMap_resource_dir = Path(self.gsMap_resource_dir)
         self.gtffile = f"{self.gsMap_resource_dir}/genome_annotation/gtf/gencode.v46lift37.basic.annotation.gtf"
         self.bfile_root = (
             f"{self.gsMap_resource_dir}/LD_Reference_Panel/1000G_EUR_Phase3_plink/1000G.EUR.QC"
@@ -164,7 +164,9 @@ def step2_calculate_gss(config: PipelineConfig, sample_name: Optional[str] = Non
 
 def step3_spatial_ldsc(config: PipelineConfig, sample_name: Optional[str] = None,
                        trait_name: Optional[str] = None):
-
+        print("=" * 80)
+        print("Step 3: Spatial LDSC")
+        print("=" * 80)
 
         spatial_ldsc_config_trait = SpatialLDSCConfig(
             workdir=config.workdir,
@@ -176,12 +178,15 @@ def step3_spatial_ldsc(config: PipelineConfig, sample_name: Optional[str] = None
             num_processes=config.max_processes,
             ldscore_save_format="quick_mode",
             # ldscore_save_dir = config.gsMap_resource_dir,
+            spots_per_chunk_quick_mode = 100,
             quick_mode_resource_dir=config.quick_mode_resource_dir,
             use_jax=True,
         )
 
 
+        print(f"Running spatial LDSC with config: {spatial_ldsc_config_trait}")
         run_spatial_ldsc_jax(spatial_ldsc_config_trait)
+        print("Spatial LDSC completed!")
 
 
 

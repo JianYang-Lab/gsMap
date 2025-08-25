@@ -817,6 +817,7 @@ class SpatialLDSCConfig(ConfigWithAutoPaths):
                 config = yaml.load(f, Loader=yaml.FullLoader)
             for _trait_name, sumstats_file in config.items():
                 assert Path(sumstats_file).exists(), f"{sumstats_file} does not exist."
+                self.sumstats_config_dict[_trait_name] = sumstats_file
         # load the sumstats file
         elif self.sumstats_file is not None:
             self.sumstats_config_dict[self.trait_name] = self.sumstats_file
@@ -831,7 +832,8 @@ class SpatialLDSCConfig(ConfigWithAutoPaths):
                 f"quick_mode_resource_dir is provided: {self.quick_mode_resource_dir}"
             )
             self.ldscore_save_dir = self.quick_mode_resource_dir
-            self.snp_gene_weight_adata_path = f"{self.quick_mode_resource_dir}/quick_mode/snp_gene_weight_matrix.h5ad"
+            # Fix the path - quick_mode_resource_dir already points to quick_mode directory
+            self.snp_gene_weight_adata_path = Path(self.quick_mode_resource_dir) / "snp_gene_weight_matrix.h5ad"
 
         # Handle w_file
         if self.w_file is None:

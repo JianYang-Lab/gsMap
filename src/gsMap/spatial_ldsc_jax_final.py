@@ -765,7 +765,12 @@ class QuickModeLDScore:
             # Open zarr array in read mode - keeps data on disk
             logger.info(f"Opening marker scores zarr array from {mk_score_zarr_array_path}")
             self.mkscore_zarr = zarr.open(str(mk_score_zarr_array_path), mode='r')
-            
+
+            # The zarr array shape should be (n_spots, n_genes)
+            n_spots_zarr, n_genes_zarr = self.mkscore_zarr.shape
+            logger.info(f"Marker scores zarr shape: (n_spots={n_spots_zarr}, n_genes={n_genes_zarr})")
+
+
             # Load concatenated latent adata to get gene names and spot names
             # Use latent2gene_dir instead of latent_dir for the concatenated file
             concat_adata_path = config.latent2gene_dir / "concatenated_latent_adata.h5ad"
@@ -775,23 +780,18 @@ class QuickModeLDScore:
             gene_names_from_adata = concat_adata.var_names.to_numpy()
             self.spot_names_all = concat_adata.obs_names.to_numpy()
             concat_adata.file.close()
+            assert len(self.spot_names_all) == n_spots_zarr
+            assert len(gene_names_from_adata) == n_genes_zarr
             del concat_adata
             
-            # The zarr array shape should be (n_genes, n_spots)
-            n_genes_zarr, n_spots_zarr = self.mkscore_zarr.shape
-            logger.info(f"Marker scores zarr shape: ({n_genes_zarr}, {n_spots_zarr})")
-            
+
             # Load SNP-gene weight data
             snp_gene_weight_adata = ad.read_h5ad(config.snp_gene_weight_adata_path)
             
-            # Align genes between zarr marker scores and SNP-gene weights
-            # Assuming zarr genes are in the same order as concat_adata.var_names
-            zarr_genes = gene_names_from_adata[:n_genes_zarr]  # Exclude MT genes if removed
-            
             # Find common genes between zarr and SNP-gene weights
-            zarr_genes_series = pd.Series(zarr_genes)
+            zarr_genes_series = pd.Series(gene_names_from_adata)
             common_genes_mask = zarr_genes_series.isin(snp_gene_weight_adata.var.index)
-            common_genes = zarr_genes[common_genes_mask]
+            common_genes = gene_names_from_adata[common_genes_mask]
             
             # Get indices for gene alignment
             self.zarr_gene_indices = np.where(common_genes_mask)[0]
@@ -856,8 +856,11 @@ class QuickModeLDScore:
             end = min(start + self.chunk_size, self.n_spots)
             
             # Read only the required chunk from zarr (stays on disk, only loads this chunk)
-            # Select only the aligned genes using zarr_gene_indices
-            mk_score_chunk = self.mkscore_zarr[self.zarr_gene_indices, start:end]
+            # Select spots [start:end] and aligned genes
+            # Shape is (n_spots, n_genes), so we index [spots, genes]
+            mk_score_chunk = self.mkscore_zarr[start:end, self.zarr_gene_indices]
+            # Transpose to (n_genes, n_spots) for matrix multiplication
+            mk_score_chunk = mk_score_chunk.T
             
             # Ensure it's float32 for consistency
             mk_score_chunk = mk_score_chunk.astype(np.float32)
