@@ -756,48 +756,139 @@ class QuickModeLDScore:
     def __init__(self, config: SpatialLDSCConfig, snp_positions: np.ndarray):
         """Initialize quick mode with SNP-gene weights."""
         logger.info("Loading quick mode data...")
-        
-        mk_score = pd.read_feather(config.mkscore_feather_path)
-        mk_score.set_index("HUMAN_GENE_SYM", inplace=True)
-        
-        snp_gene_weight_adata = ad.read_h5ad(config.snp_gene_weight_adata_path)
-        
-        common_genes = mk_score.index.intersection(snp_gene_weight_adata.var.index)
-        
-        self.snp_gene_weight_sparse = snp_gene_weight_adata[snp_positions, common_genes.to_list()].X
-        
-        if hasattr(self.snp_gene_weight_sparse, 'nnz'):
-            logger.info(f"Using sparse SNP-gene matrix "
-                       f"(shape: {self.snp_gene_weight_sparse.shape}, "
-                       f"density: {self.snp_gene_weight_sparse.nnz / np.prod(self.snp_gene_weight_sparse.shape):.2%})")
-        
-        # Convert sparse matrix to CSR format for faster multiplication
-        if hasattr(self.snp_gene_weight_sparse, 'tocsr'):
-            self.snp_gene_weight_sparse = self.snp_gene_weight_sparse.tocsr()
-        
-        self.mk_score = mk_score.loc[common_genes]
-        self.chunk_size = config.spots_per_chunk_quick_mode
-        self.chunk_starts = list(range(0, self.mk_score.shape[1], self.chunk_size))
-        
-        # Pre-convert mk_score to float32 for efficiency
-        self.mk_score_values = self.mk_score.values.astype(np.float32)
+
+        if config.marker_score_format == "zarr":
+            mk_score_zarr_array_path = config.marker_scores_zarr_path
+            from gsMap.latent2gene.zarr_utils import ZarrBackedDense
+            import zarr
+            
+            # Open zarr array in read mode - keeps data on disk
+            logger.info(f"Opening marker scores zarr array from {mk_score_zarr_array_path}")
+            self.mkscore_zarr = zarr.open(str(mk_score_zarr_array_path), mode='r')
+            
+            # Load concatenated latent adata to get gene names and spot names
+            # Use latent2gene_dir instead of latent_dir for the concatenated file
+            concat_adata_path = config.latent2gene_dir / "concatenated_latent_adata.h5ad"
+
+            logger.info(f"Loading gene names and spot names from {concat_adata_path}")
+            concat_adata = ad.read_h5ad(concat_adata_path, backed='r')
+            gene_names_from_adata = concat_adata.var_names.to_numpy()
+            self.spot_names_all = concat_adata.obs_names.to_numpy()
+            concat_adata.file.close()
+            del concat_adata
+            
+            # The zarr array shape should be (n_genes, n_spots)
+            n_genes_zarr, n_spots_zarr = self.mkscore_zarr.shape
+            logger.info(f"Marker scores zarr shape: ({n_genes_zarr}, {n_spots_zarr})")
+            
+            # Load SNP-gene weight data
+            snp_gene_weight_adata = ad.read_h5ad(config.snp_gene_weight_adata_path)
+            
+            # Align genes between zarr marker scores and SNP-gene weights
+            # Assuming zarr genes are in the same order as concat_adata.var_names
+            zarr_genes = gene_names_from_adata[:n_genes_zarr]  # Exclude MT genes if removed
+            
+            # Find common genes between zarr and SNP-gene weights
+            zarr_genes_series = pd.Series(zarr_genes)
+            common_genes_mask = zarr_genes_series.isin(snp_gene_weight_adata.var.index)
+            common_genes = zarr_genes[common_genes_mask]
+            
+            # Get indices for gene alignment
+            self.zarr_gene_indices = np.where(common_genes_mask)[0]
+            snp_gene_indices = [snp_gene_weight_adata.var.index.get_loc(g) for g in common_genes]
+            
+            logger.info(f"Found {len(common_genes)} common genes between marker scores and SNP-gene weights")
+            
+            # Extract SNP-gene weight matrix for common genes
+            self.snp_gene_weight_sparse = snp_gene_weight_adata[snp_positions, snp_gene_indices].X
+            
+            if hasattr(self.snp_gene_weight_sparse, 'nnz'):
+                logger.info(f"Using sparse SNP-gene matrix "
+                           f"(shape: {self.snp_gene_weight_sparse.shape}, "
+                           f"density: {self.snp_gene_weight_sparse.nnz / np.prod(self.snp_gene_weight_sparse.shape):.2%})")
+            
+            # Convert sparse matrix to CSR format for faster multiplication
+            if hasattr(self.snp_gene_weight_sparse, 'tocsr'):
+                self.snp_gene_weight_sparse = self.snp_gene_weight_sparse.tocsr()
+            
+            # Set up chunking for zarr reading
+            self.chunk_size = config.spots_per_chunk_quick_mode
+            self.chunk_starts = list(range(0, n_spots_zarr, self.chunk_size))
+            self.n_spots = n_spots_zarr
+            
+            # Store flag for zarr mode
+            self.use_zarr = True
+            
+        else:
+            # Original feather-based implementation
+            mk_score = pd.read_feather(config.mkscore_feather_path)
+            mk_score.set_index("HUMAN_GENE_SYM", inplace=True)
+
+            snp_gene_weight_adata = ad.read_h5ad(config.snp_gene_weight_adata_path)
+            
+            common_genes = mk_score.index.intersection(snp_gene_weight_adata.var.index)
+            
+            self.snp_gene_weight_sparse = snp_gene_weight_adata[snp_positions, common_genes.to_list()].X
+            
+            if hasattr(self.snp_gene_weight_sparse, 'nnz'):
+                logger.info(f"Using sparse SNP-gene matrix "
+                           f"(shape: {self.snp_gene_weight_sparse.shape}, "
+                           f"density: {self.snp_gene_weight_sparse.nnz / np.prod(self.snp_gene_weight_sparse.shape):.2%})")
+            
+            # Convert sparse matrix to CSR format for faster multiplication
+            if hasattr(self.snp_gene_weight_sparse, 'tocsr'):
+                self.snp_gene_weight_sparse = self.snp_gene_weight_sparse.tocsr()
+            
+            self.mk_score = mk_score.loc[common_genes]
+            self.chunk_size = config.spots_per_chunk_quick_mode
+            self.chunk_starts = list(range(0, self.mk_score.shape[1], self.chunk_size))
+            
+            # Pre-convert mk_score to float32 for efficiency
+            self.mk_score_values = self.mk_score.values.astype(np.float32)
+            self.use_zarr = False
     
     def fetch_ldscore_by_chunk(self, chunk_index: int) -> Tuple[np.ndarray, pd.Index]:
         """Fetch LD score chunk using optimized sparse matrix multiplication."""
         start = self.chunk_starts[chunk_index]
-        end = min(start + self.chunk_size, self.mk_score.shape[1])
         
-        # Use pre-converted float32 values
-        mk_score_chunk = self.mk_score_values[:, start:end]
-        
-        # Efficient sparse matrix multiplication
-        ldscore_chunk = self.snp_gene_weight_sparse @ mk_score_chunk
-        
-        # Convert sparse result to dense if needed
-        if hasattr(ldscore_chunk, 'toarray'):
-            ldscore_chunk = ldscore_chunk.toarray()
-        
-        return ldscore_chunk.astype(np.float32), self.mk_score.columns[start:end]
+        if self.use_zarr:
+            # Zarr-based implementation - read only the needed chunk from disk
+            end = min(start + self.chunk_size, self.n_spots)
+            
+            # Read only the required chunk from zarr (stays on disk, only loads this chunk)
+            # Select only the aligned genes using zarr_gene_indices
+            mk_score_chunk = self.mkscore_zarr[self.zarr_gene_indices, start:end]
+            
+            # Ensure it's float32 for consistency
+            mk_score_chunk = mk_score_chunk.astype(np.float32)
+            
+            # Efficient sparse matrix multiplication
+            ldscore_chunk = self.snp_gene_weight_sparse @ mk_score_chunk
+            
+            # Convert sparse result to dense if needed
+            if hasattr(ldscore_chunk, 'toarray'):
+                ldscore_chunk = ldscore_chunk.toarray()
+            
+            # Use actual spot names from the concatenated adata
+            spot_names = pd.Index(self.spot_names_all[start:end])
+            
+            return ldscore_chunk.astype(np.float32), spot_names
+            
+        else:
+            # Original feather-based implementation
+            end = min(start + self.chunk_size, self.mk_score.shape[1])
+            
+            # Use pre-converted float32 values
+            mk_score_chunk = self.mk_score_values[:, start:end]
+            
+            # Efficient sparse matrix multiplication
+            ldscore_chunk = self.snp_gene_weight_sparse @ mk_score_chunk
+            
+            # Convert sparse result to dense if needed
+            if hasattr(ldscore_chunk, 'toarray'):
+                ldscore_chunk = ldscore_chunk.toarray()
+            
+            return ldscore_chunk.astype(np.float32), self.mk_score.columns[start:end]
 
 
 # ============================================================================

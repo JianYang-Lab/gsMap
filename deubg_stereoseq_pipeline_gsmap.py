@@ -12,6 +12,8 @@ from typing import List, Optional
 import argparse
 import yaml
 
+from gsMap.spatial_ldsc_jax_final import run_spatial_ldsc_jax
+
 # Add gsMap to path
 sys.path.append('/mnt/d/01_Project/01_Research/202312_gsMap/src/gsMap_develop/src')
 sys.path.append('/storage/yangjianLab/chenwenhao/01_Project/01_Research/202312_gsMap/src/gsMap_develop/src')
@@ -21,7 +23,7 @@ from gsMap.config import (
     LatentToGeneConfig,
     MaxPoolingConfig,
     RunLinkModeConfig,
-    ThreeDCombineConfig,
+    ThreeDCombineConfig, GenerateLDScoreConfig, SpatialLDSCConfig,
 )
 from gsMap.find_latent_representation import run_find_latent_representation
 from gsMap.latent2gene import run_latent_to_gene
@@ -37,7 +39,7 @@ class PipelineConfig:
     # Base paths
     workdir: str | Path = "/mnt/d/01_Project/01_Research/202312_gsMap/experiment/20250807_refactor_for_gsmap3d/02_latent2gene_optmization_max_pooling/01_mouse_E9.5_dev_v1"
     data_root: str = "/mnt/d/01_Project/01_Research/202312_gsMap/experiment/20250807_refactor_for_gsmap3d/02_latent2gene_optmization_max_pooling/Mouse_E9.5"
-    gsmap_resource: str = "/mnt/d/01_Project/01_Research/202312_gsMap/data/gsMap_dev_data/online_resource/gsMap_resource"
+    gsMap_resource_dir: str = "/mnt/d/01_Project/01_Research/202312_gsMap/data/gsMap_dev_data/online_resource/gsMap_resource"
     gwas_summary: str = "/mnt/d/01_Project/01_Research/202312_gsMap/experiment/20250807_refactor_for_gsmap3d/02_latent2gene_optmization_max_pooling/mouse_e9_5_gwas_config.yaml"
 
     # Project settings
@@ -64,6 +66,26 @@ class PipelineConfig:
     batch_size: int = 1000
     num_read_workers: int = 4
     gpu_batch_size: int = 300  # Smaller batch size for GPU to avoid OOM
+
+    def __post_init__(self):
+        self.gsMap_resource_dir = str(self.gsMap_resource_dir)
+        self.gtffile = f"{self.gsMap_resource_dir}/genome_annotation/gtf/gencode.v46lift37.basic.annotation.gtf"
+        self.bfile_root = (
+            f"{self.gsMap_resource_dir}/LD_Reference_Panel/1000G_EUR_Phase3_plink/1000G.EUR.QC"
+        )
+        self.keep_snp_root = f"{self.gsMap_resource_dir}/LDSC_resource/hapmap3_snps/hm"
+        self.w_file = f"{self.gsMap_resource_dir}/LDSC_resource/weights_hm3_no_hla/weights."
+        self.snp_gene_weight_adata_path = (
+            f"{self.gsMap_resource_dir}/quick_mode/snp_gene_weight_matrix.h5ad"
+        )
+        self.baseline_annotation_dir = Path(
+            f"{self.gsMap_resource_dir}/quick_mode/baseline"
+        ).resolve()
+        self.SNP_gene_pair_dir = Path(
+            f"{self.gsMap_resource_dir}/quick_mode/SNP_gene_pair"
+        ).resolve()
+
+        self.quick_mode_resource_dir = self.gsMap_resource_dir/"quick_mode"
 
 
 def setup_directories(config: PipelineConfig):
@@ -140,95 +162,27 @@ def step2_calculate_gss(config: PipelineConfig, sample_name: Optional[str] = Non
     run_latent_to_gene(run_latent_to_gene_config)
 
 
-def step3_max_pooling(config: PipelineConfig, sample_name: Optional[str] = None):
-    """Apply max pooling to GSS"""
-    print("=" * 80)
-    print("Step 3: Max Pooling")
-    print("=" * 80)
+def step3_spatial_ldsc(config: PipelineConfig, sample_name: Optional[str] = None,
+                       trait_name: Optional[str] = None):
 
-    file_list_path = f"{config.workdir}/list/{config.project_name}_list"
 
-    with open(file_list_path, 'r') as f:
-        samples = [Path(line.strip()).stem for line in f]
-
-    # If specific sample is provided, only process that one
-    if sample_name:
-        samples = [sample_name] if sample_name in samples else []
-
-    for sample in samples:
-        print(f"Processing sample: {sample}")
-
-        # Create config for MaxPooling
-        pooling_config = MaxPoolingConfig(
+        spatial_ldsc_config_trait = SpatialLDSCConfig(
             workdir=config.workdir,
             project_name=config.project_name,
-            sample_name=sample,
-            spe_file_list=file_list_path,
-            annotation=config.annotation,
-            spatial_key=config.spatial_key
+            sumstats_config_file=config.gwas_summary,
+            w_file=config.w_file,
+            # ldscore_save_dir=spatial_ldsc_config.ldscore_save_dir,
+            # ldsc_save_dir=spatial_ldsc_config.ldsc_save_dir,
+            num_processes=config.max_processes,
+            ldscore_save_format="quick_mode",
+            # ldscore_save_dir = config.gsMap_resource_dir,
+            quick_mode_resource_dir=config.quick_mode_resource_dir,
+            use_jax=True,
         )
 
-        # Run the function
-        run_max_pooling(pooling_config)
-        print(f"Max pooling completed for {sample}!")
 
+        run_spatial_ldsc_jax(spatial_ldsc_config_trait)
 
-def step4_spatial_ldsc(config: PipelineConfig, sample_name: Optional[str] = None,
-                       trait_name: Optional[str] = None):
-    """Run spatial LDSC analysis"""
-    print("=" * 80)
-    print("Step 4: Spatial LDSC")
-    print("=" * 80)
-
-    # Load GWAS summary
-    with open(config.gwas_summary, 'r') as f:
-        gwas_data = yaml.safe_load(f)
-
-    # Filter traits if specified
-    if trait_name:
-        gwas_data = {k: v for k, v in gwas_data.items() if k == trait_name}
-    else:
-        # Default filter for MB_h traits
-        gwas_data = {k: v for k, v in gwas_data.items()}
-
-    file_list_path = f"{config.workdir}/list/{config.project_name}_list"
-
-    with open(file_list_path, 'r') as f:
-        h5ad_files = [line.strip() for line in f]
-
-    # Filter samples if specified
-    if sample_name:
-        h5ad_files = [f for f in h5ad_files if Path(f).stem == sample_name]
-    else:
-        with open(file_list_path, 'r') as f:
-            h5ad_files = [line.strip() for line in f]
-
-    for trait, sumstats_path in gwas_data.items():
-        gwas_file = Path(sumstats_path).stem
-
-        for h5ad_file in h5ad_files:
-            sample = Path(h5ad_file).stem
-            print(f"Processing {sample} for trait {trait}")
-
-            out_file = f"{config.workdir}/{config.project_name}/spatial_ldsc/{sample}/{sample}_{gwas_file}.csv.gz"
-
-            if not Path(out_file).exists():
-                # Create config for RunLinkMode
-                link_config = RunLinkModeConfig(
-                    workdir=config.workdir,
-                    project_name=config.project_name,
-                    sample_name=sample,
-                    spatial_key=config.spatial_key,
-                    annotation=config.annotation,
-                    gsMap_resource_dir=config.gsmap_resource,
-                    trait_name=gwas_file,
-                    sumstats_file=sumstats_path,
-                    max_processes=config.max_processes
-                )
-
-                # Run the function
-                run_pipeline_link(link_config)
-                print(f"LDSC completed for {sample} - {trait}!")
 
 
 def step5_3d_visualization(config: PipelineConfig, trait_name: Optional[str] = None):
@@ -280,11 +234,7 @@ def run_full_pipeline(config: PipelineConfig):
     # Step 2: Calculate GSS
     step2_calculate_gss(config)
 
-    # Step 3: Max pooling
-    step3_max_pooling(config)
-
-    # Step 4: Spatial LDSC
-    step4_spatial_ldsc(config)
+    step3_spatial_ldsc(config)
 
     # Step 5: 3D visualization
     step5_3d_visualization(config)
@@ -334,13 +284,6 @@ def main():
         step1_find_latent_representations(config)
     elif args.step == "gss":
         step2_calculate_gss(config, args.sample)
-    elif args.step == "pooling":
-        step3_max_pooling(config, args.sample)
-    elif args.step == "ldsc":
-        step4_spatial_ldsc(config, args.sample, args.trait)
-    elif args.step == "3d":
-        step5_3d_visualization(config, args.trait)
-
 
 if __name__ == "__main__":
     # main()
@@ -348,8 +291,8 @@ if __name__ == "__main__":
     config = PipelineConfig()
     # run_full_pipeline(config)
     # step1_find_latent_representations(config)
-    step2_calculate_gss(config, )
-
+    # step2_calculate_gss(config, )
+    step3_spatial_ldsc(config)
     # step4_spatial_ldsc(config, )
     # step5_3d_visualization(config, )
 

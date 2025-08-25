@@ -786,7 +786,13 @@ class SpatialLDSCConfig(ConfigWithAutoPaths):
 
     spots_per_chunk_quick_mode: int = 1_000
 
-    snp_gene_weight_dir: str | None = None
+    ldscore_save_dir: str  | Path | None = None
+    quick_mode_resource_dir: str | Path | None = None
+    use_jax: bool = True
+    
+    # Zarr-related attributes for marker score
+    marker_score_format: Literal["zarr", "feather"] = "zarr"
+    mkscore_feather_path: str | Path | None = None
 
     def __post_init__(self):
         super().__post_init__()
@@ -819,6 +825,13 @@ class SpatialLDSCConfig(ConfigWithAutoPaths):
 
         for sumstats_file in self.sumstats_config_dict.values():
             assert Path(sumstats_file).exists(), f"{sumstats_file} does not exist."
+
+        if self.quick_mode_resource_dir is not None:
+            logger.info(
+                f"quick_mode_resource_dir is provided: {self.quick_mode_resource_dir}"
+            )
+            self.ldscore_save_dir = self.quick_mode_resource_dir
+            self.snp_gene_weight_adata_path = f"{self.quick_mode_resource_dir}/quick_mode/snp_gene_weight_matrix.h5ad"
 
         # Handle w_file
         if self.w_file is None:
