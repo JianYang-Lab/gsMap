@@ -337,11 +337,6 @@ class FindLatentRepresentationsConfig(ConfigWithAutoPaths):
         dir_okay = False,
     )] = None
 
-
-    # Optional - must be after required fields
-    project_name: str = None
-
-
     data_layer: Annotated[str, typer.Option(
         help="Gene expression raw counts data layer in h5ad layers, e.g., 'count', 'counts'. Other wise use 'X' for adata.X"
     )] = "X"

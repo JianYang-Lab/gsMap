@@ -154,8 +154,8 @@ class MarkerScoreCalculator:
         adata_path: str,
         rank_zarr_path: str,
         mean_frac_path: str,
-        output_path: Optional[str] = None
-    ) -> str:
+        output_path: Optional[str | Path] = None
+    ) -> str | Path:
         """
         Calculate marker scores for all cell types
         
@@ -247,7 +247,7 @@ class MarkerScoreCalculator:
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
         
-        return str(output_path)
+        return output_path
     
     def _process_cell_type(
         self,

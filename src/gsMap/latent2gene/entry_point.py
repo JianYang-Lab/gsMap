@@ -71,7 +71,7 @@ def run_latent_to_gene(config) -> Dict[str, Any]:
     rank_outputs = rank_calculator.calculate_ranks_and_concatenate(
         sample_h5ad_dict=config.sample_h5ad_dict,
         annotation_key=config.annotation,
-        data_layer="counts"  # TODO: Get from config if available
+        data_layer=config.data_layer,
     )
     
     # Step 2: Calculate marker scores
@@ -128,25 +128,3 @@ def run_latent_to_gene(config) -> Dict[str, Any]:
     logger.info("=" * 60)
     
     return metadata["outputs"]
-
-
-def run_from_cli(args):
-    """
-    Entry point for CLI usage
-    
-    Args:
-        args: Parsed command line arguments
-    """
-    from gsMap.config.dataclasses import LatentToGeneConfig
-    
-    # Create config from CLI args
-    config = LatentToGeneConfig(**vars(args))
-    
-    # Run pipeline
-    outputs = run_latent_to_gene(config)
-    
-    # Print results
-    print("\nPipeline completed successfully!")
-    print("Outputs:")
-    for key, path in outputs.items():
-        print(f"  {key}: {path}")
