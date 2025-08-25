@@ -18,6 +18,7 @@ from scipy.sparse import csr_matrix
 from tqdm import tqdm
 
 import anndata as ad
+from gsMap.config import LatentToGeneConfig
 from .zarr_utils import ZarrBackedCSR
 
 logger = logging.getLogger(__name__)
@@ -137,7 +138,7 @@ def rank_data_jax(X: csr_matrix, n_genes,
 class RankCalculator:
     """Calculate gene expression ranks and create concatenated latent representations"""
     
-    def __init__(self, config):
+    def __init__(self, config: LatentToGeneConfig):
         """
         Initialize RankCalculator with configuration
         
@@ -213,32 +214,9 @@ class RankCalculator:
             # Load the h5ad file (which should already contain latent representations)
             adata = sc.read_h5ad(h5ad_path)
             
-            # Check if this is a latent file or needs loading from separate file
-            has_latent = (
-                hasattr(self.config, 'latent_representation') and 
-                self.config.latent_representation in adata.obsm
-            )
-            
-            if not has_latent:
-                # Try to load from latent directory
-                latent_file = self.latent_dir / f"{sample_name}_latent_adata.h5ad"
-                if not latent_file.exists():
-                    latent_file = self.latent_dir / f"{sample_name}_add_latent.h5ad"
-                if latent_file.exists():
-                    latent_adata = sc.read_h5ad(latent_file)
-                    # Merge latent representations
-                    adata.obsm.update(latent_adata.obsm)
-                else:
-                    logger.warning(f"No latent representation found for {sample_name}, skipping")
-                    continue
-            
             # Add slice information
             adata.obs['slice_id'] = sample_name
             adata.obs['slice_numeric_id'] = st_id
-            
-            # Compute depth if count layer exists
-            if data_layer in ["count", "counts"] and data_layer in adata.layers:
-                adata.obs['depth'] = np.array(adata.layers[data_layer].sum(axis=1)).flatten()
             
             # Filter cells based on annotation group size if annotation is provided
             # This must be done BEFORE adding to rank zarr to maintain index consistency
@@ -277,7 +255,7 @@ class RankCalculator:
                     f"Gene list mismatch in section {st_id}"
             
             # Get expression data for ranking
-            if data_layer in ["count", "counts"]:
+            if data_layer in adata.layers:
                 X = adata.layers[data_layer]
             else:
                 X = adata.X
@@ -305,8 +283,8 @@ class RankCalculator:
                 n_genes,
                 zarr_csr=rank_zarr,
                 metadata=metadata,
-                chunk_size=self.config.batch_size if hasattr(self.config, 'batch_size') else 1000,
-                write_interval=5  # Batch 5 chunks before writing
+                chunk_size=self.config.rank_batch_size,
+                write_interval=self.config.rank_write_interval  # Batch 5 chunks before writing
             )
             
             # Update global sums

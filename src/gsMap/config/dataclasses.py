@@ -10,11 +10,23 @@ import logging
 from pathlib import Path
 import h5py
 
-logger = logging.getLogger("gsMap")
 
 import typer
 
 from .base import ConfigWithAutoPaths
+
+def get_gsMap_logger(logger_name):
+    logger = logging.getLogger(logger_name)
+    logger.setLevel(logging.DEBUG)
+    handler = logging.StreamHandler()
+    handler.setFormatter(
+        logging.Formatter("[{asctime}] {levelname:.5s} | {name} - {message}", style="{")
+    )
+    logger.addHandler(handler)
+    return logger
+
+
+logger = get_gsMap_logger("gsMap")
 
 def inspect_h5ad_structure(filename):
     """
@@ -198,7 +210,7 @@ def verify_homolog_file_format(config):
 
 
 @dataclass
-class RunAllModeConfig(ConfigWithAutoPaths):
+class RunAllModeConfig:
     """Configuration for running the complete gsMap pipeline."""
     
     # Required from parent (no defaults)
@@ -308,13 +320,20 @@ class FindLatentRepresentationsConfig(ConfigWithAutoPaths):
     """Configuration for finding latent representations."""
     
     # Required from parent
+    workdir: Annotated[Path, typer.Option(
+        help="Path to the working directory",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        resolve_path=True
+    )]
+
+    project_name: Annotated[str, typer.Option(
+        help="Name of the project"
+    )]
 
     sample_name: Annotated[str, typer.Option(
         help="Name of the sample"
-    )]
-    
-    spe_file_list: Annotated[str, typer.Option(
-        help="List of input ST (.h5ad) files"
     )]
 
     h5ad_path: Annotated[Optional[List[Path]], typer.Option(
@@ -346,7 +365,7 @@ class FindLatentRepresentationsConfig(ConfigWithAutoPaths):
     )] = "spatial"
     
     annotation: Annotated[Optional[str], typer.Option(
-        help="Annotation in adata.obs to use"
+        help="Annotation of cell type in adata.obs to use"
     )] = None
     
     # Feature extraction parameters
@@ -483,23 +502,7 @@ class FindLatentRepresentationsConfig(ConfigWithAutoPaths):
         
         # Process h5ad inputs
         self.sample_h5ad_dict = process_h5ad_inputs(self, input_options)
-        
-        # Fallback to spe_file_list for backward compatibility
-        if not self.sample_h5ad_dict and self.spe_file_list:
-            from collections import OrderedDict
-            self.sample_h5ad_dict = OrderedDict()
-            logger.info(f"Using spe_file_list for backward compatibility")
-            if isinstance(self.spe_file_list, str):
-                file_list = self.spe_file_list.split()
-            else:
-                file_list = self.spe_file_list
-            for h5ad_path in file_list:
-                h5ad_path = Path(h5ad_path)
-                sample_name = h5ad_path.stem
-                if sample_name in self.sample_h5ad_dict:
-                    logger.warning(f"Duplicate sample name: {sample_name}, will be overwritten")
-                self.sample_h5ad_dict[sample_name] = h5ad_path
-        
+
         if not self.sample_h5ad_dict:
             raise ValueError(
                 "At least one of h5ad_yaml, h5ad_path, h5ad_list_file, or spe_file_list must be provided"
@@ -566,7 +569,6 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
         dir_okay = False,
     )] = None
 
-
     annotation: Annotated[Optional[str], typer.Option(
         help="Cell type annotation in adata.obs to use. This would constrain finding homogeneous spots within each cell type"
     )] = None
@@ -617,23 +619,9 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
         help="Use section specific weights for batch effect"
     )] = False
     
-    # Additional fields
-    gM_slices: Optional[str] = None
-    homolog_file: Optional[Path] = None
-    species: Optional[str] = None
+    rank_batch_size:int = 1000
+    rank_write_interval:int = 10
 
-    # Refactored version parameters
-    use_refactored: Annotated[bool, typer.Option(
-        "--use-refactored",
-        help="Use refactored JAX-accelerated implementation"
-    )] = False
-    
-    batch_size: Annotated[int, typer.Option(
-        help="Batch size for data processing",
-        min=100,
-        max=10000
-    )] = 1000
-    
     num_read_workers: Annotated[int, typer.Option(
         help="Number of parallel reader threads",
         min=1,

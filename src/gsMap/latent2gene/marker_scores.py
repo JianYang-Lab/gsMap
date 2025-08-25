@@ -1,18 +1,25 @@
 """
 Marker score calculation using homogeneous neighbors
-Implements weighted geometric mean calculation in log space
+Implements weighted geometric mean calculation in log space with JAX acceleration
 """
 
 import logging
 import queue
 import threading
+import json
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
+from functools import partial
+
 import numpy as np
 import pandas as pd
 import scanpy as sc
+import anndata as ad
 from tqdm import tqdm
-from numba import njit
+from scipy.sparse import csr_matrix
+import jax
+import jax.numpy as jnp
+from jax import jit
 
 from .zarr_utils import ZarrBackedDense, ZarrBackedCSR
 from .connectivity import ConnectivityMatrixBuilder
@@ -22,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 class ParallelRankReader:
-    """Parallel reader for rank zarr data with caching"""
+    """Multi-threaded reader for log-rank data"""
     
     def __init__(
         self,
@@ -43,97 +50,128 @@ class ParallelRankReader:
         self._start_workers()
     
     def _start_workers(self):
-        """Start worker threads for parallel reading"""
+        """Start worker threads"""
         for i in range(self.num_workers):
             worker = threading.Thread(
-                target=self._worker_loop,
+                target=self._worker,
                 args=(i,),
                 daemon=True
             )
             worker.start()
             self.workers.append(worker)
     
-    def _worker_loop(self, worker_id: int):
-        """Worker loop for reading rank data"""
+    def _worker(self, worker_id: int):
+        """Worker thread for reading batches"""
+        logger.info(f"Reader worker {worker_id} started")
+        
         while not self.stop_workers.is_set():
             try:
+                # Get batch request
                 item = self.read_queue.get(timeout=0.1)
                 if item is None:
                     break
                 
-                batch_idx, neighbor_indices, neighbor_weights = item
-                batch_size, k = neighbor_indices.shape
+                batch_id, neighbor_indices = item
                 
-                # Pre-allocate output
-                rank_data = np.zeros((batch_size, k), dtype=np.float32)
-                rank_indices = np.zeros((batch_size, k), dtype=np.int32)
+                # Flatten and deduplicate indices for efficient reading
+                flat_indices = np.unique(neighbor_indices.flatten())
                 
-                # Read rank data for each neighbor
-                for i in range(batch_size):
-                    for j in range(k):
-                        neighbor_idx = neighbor_indices[i, j]
-                        # Get rank data from zarr
-                        indices, values = self.rank_zarr[neighbor_idx]
-                        if len(indices) > 0:
-                            # Store gene indices and their ranks
-                            rank_indices[i, j] = indices[0]  # Top ranked gene
-                            rank_data[i, j] = values[0]  # Its rank value
+                # Validate indices are within bounds
+                max_idx = self.rank_zarr.shape[0] - 1
+                assert flat_indices.max() <= max_idx, \
+                    f"Worker {worker_id}: Indices exceed bounds (max: {flat_indices.max()}, limit: {max_idx})"
                 
-                # Put result in queue
-                self.result_queue.put((batch_idx, rank_data, rank_indices, (batch_size, k)))
+                # Read from Zarr (batch access)
+                rank_data = self.rank_zarr[flat_indices]
+                
+                # Convert to dense array if sparse
+                if hasattr(rank_data, 'toarray'):
+                    rank_data = rank_data.toarray()
+                
+                # Create mapping for reconstruction
+                idx_map = {idx: i for i, idx in enumerate(flat_indices)}
+                
+                # Map neighbor indices to rank_data indices
+                flat_neighbors = neighbor_indices.flatten()
+                rank_indices = np.array([idx_map[neighbor_idx] for neighbor_idx in flat_neighbors])
+                
+                # Put result - send rank_data and rank_indices for main thread to combine
+                self.result_queue.put((batch_id, rank_data, rank_indices, neighbor_indices.shape))
+                self.read_queue.task_done()
                 
             except queue.Empty:
                 continue
             except Exception as e:
-                logger.error(f"Worker {worker_id} error: {e}")
+                logger.error(f"Reader worker {worker_id} error: {e}")
                 raise
     
-    def submit_batch(self, batch_idx: int, neighbor_indices: np.ndarray, neighbor_weights: np.ndarray):
+    def submit_batch(self, batch_id: int, neighbor_indices: np.ndarray):
         """Submit batch for reading"""
-        self.read_queue.put((batch_idx, neighbor_indices, neighbor_weights))
+        self.read_queue.put((batch_id, neighbor_indices))
     
     def get_result(self):
-        """Get completed result"""
+        """Get next completed batch"""
         return self.result_queue.get()
     
     def close(self):
-        """Close reader and cleanup"""
+        """Clean up resources"""
         self.stop_workers.set()
         for _ in range(self.num_workers):
             self.read_queue.put(None)
         for worker in self.workers:
-            worker.join(timeout=1.0)
+            worker.join(timeout=5)
 
 
-@njit
-def calculate_weighted_geometric_mean(
-    rank_values: np.ndarray,
-    weights: np.ndarray,
-    zero_fill: float = 1e-10
-) -> float:
+@partial(jit, static_argnums=(2, 3))
+def compute_marker_scores_jax(
+    log_ranks: jnp.ndarray,  # (B*N) × G matrix
+    weights: jnp.ndarray,  # B × N weight matrix
+    batch_size: int,
+    num_neighbors: int,
+    global_log_gmean: jnp.ndarray,  # G-dimensional vector
+    global_expr_frac: jnp.ndarray  # G-dimensional vector
+) -> jnp.ndarray:
     """
-    Calculate weighted geometric mean in log space
+    JAX-accelerated marker score computation
     
-    Args:
-        rank_values: Rank values for neighbors
-        weights: Softmax weights (sum to 1)
-        zero_fill: Small value to replace zeros
-        
     Returns:
-        Weighted geometric mean
+        B × G marker scores
     """
-    # Replace zeros with small value
-    rank_values = np.where(rank_values > 0, rank_values, zero_fill)
+    n_genes = log_ranks.shape[1]
     
-    # Calculate in log space for numerical stability
-    log_values = np.log(rank_values)
-    weighted_log_mean = np.sum(weights * log_values)
+    # Reshape to batch format
+    log_ranks_3d = log_ranks.reshape(batch_size, num_neighbors, n_genes)
     
-    return np.exp(weighted_log_mean)
+    # Handle zeros: fill with background log rank (cell-specific)
+    is_zero = (log_ranks_3d == 0)
+    # Sum zeros along neighbor dimension (axis=1) for each cell
+    zero_counts_per_cell = is_zero.sum(axis=1, keepdims=True)  # Shape: (B, 1, G)
+    background_log_rank = jnp.log((zero_counts_per_cell + 1) / 2)
+    log_ranks_filled = jnp.where(is_zero, background_log_rank, log_ranks_3d)
+    
+    # Normalize weights (already softmax normalized, but ensure sum to 1)
+    weights_sum = weights.sum(axis=1, keepdims=True)
+    weights_normalized = weights / weights_sum
+    
+    # Compute weighted geometric mean in log space
+    weighted_log_mean = jnp.einsum('bn,bng->bg', weights_normalized, log_ranks_filled)
+    
+    # Compute expression fraction (mean of is_expressed across neighbors)
+    is_expressed = (log_ranks_3d != 0)
+    expr_frac = is_expressed.astype(jnp.float32).mean(axis=1)  # Mean across neighbors
+    
+    # Calculate marker score
+    marker_score = jnp.exp(weighted_log_mean - global_log_gmean)
+    
+    # Apply expression fraction filter
+    frac_mask = expr_frac > global_expr_frac
+    marker_score = jnp.where(frac_mask, marker_score, 0.0)
+    
+    return marker_score
 
 
 class MarkerScoreCalculator:
-    """Calculate marker scores for each cell type"""
+    """Main class for calculating marker scores"""
     
     def __init__(self, config):
         """
@@ -144,20 +182,165 @@ class MarkerScoreCalculator:
         """
         self.config = config
         self.connectivity_builder = ConnectivityMatrixBuilder(config)
-        self.output_dir = Path(config.workdir) / "latent_to_gene"
-        if config.project_name:
-            self.output_dir = Path(config.workdir) / config.project_name / "latent_to_gene"
-        self.output_dir.mkdir(parents=True, exist_ok=True)
         
+    def load_global_stats(self, mean_frac_path: str) -> Tuple[np.ndarray, np.ndarray]:
+        """Load pre-calculated global geometric mean and expression fraction from parquet"""
+        
+        logger.info("Loading global statistics from parquet...")
+        parquet_path = Path(mean_frac_path)
+        
+        if not parquet_path.exists():
+            raise FileNotFoundError(f"Global stats file not found: {parquet_path}")
+        
+        # Load the dataframe
+        mean_frac_df = pd.read_parquet(parquet_path)
+        
+        # Extract global log geometric mean and expression fraction
+        global_log_gmean = mean_frac_df['G_Mean'].values.astype(np.float32)
+        global_expr_frac = mean_frac_df['frac'].values.astype(np.float32)
+        
+        logger.info(f"Loaded global stats for {len(global_log_gmean)} genes")
+        
+        return global_log_gmean, global_expr_frac
+    
+    def process_cell_type(
+        self,
+        adata: ad.AnnData,
+        cell_type: str,
+        output_zarr: ZarrBackedDense,
+        global_log_gmean: np.ndarray,
+        global_expr_frac: np.ndarray,
+        rank_zarr_path: str,
+        annotation_key: str
+    ):
+        """Process a single cell type"""
+        
+        # Get cells of this type
+        cell_mask = adata.obs[annotation_key] == cell_type
+        cell_indices = np.where(cell_mask)[0]
+        n_cells = len(cell_indices)
+        
+        min_cells = getattr(self.config, 'min_cells_per_type', 21)
+        if n_cells < min_cells:
+            logger.warning(f"Skipping {cell_type}: only {n_cells} cells (min: {min_cells})")
+            return
+        
+        logger.info(f"Processing {cell_type}: {n_cells} cells")
+        
+        # Open rank zarr to get dimensions
+        rank_zarr = ZarrBackedCSR.open(rank_zarr_path, mode='r')
+        rank_zarr_shape = rank_zarr.shape
+        
+        # Validate dimensions
+        n_cells_total = adata.n_obs
+        n_cells_rank = rank_zarr_shape[0]
+        
+        assert n_cells_total == n_cells_rank, \
+            f"Dimension mismatch: AnnData has {n_cells_total} cells, rank zarr has {n_cells_rank} cells"
+        
+        # Extract embeddings and coordinates
+        coords = adata.obsm[self.config.spatial_key]
+        emb_gcn = adata.obsm[self.config.latent_representation_niche].astype(np.float32)
+        emb_indv = adata.obsm[self.config.latent_representation_cell].astype(np.float32)
+        
+        # Build connectivity matrix
+        logger.info("Building connectivity matrix...")
+        neighbor_indices, neighbor_weights = self.connectivity_builder.build_connectivity_matrix(
+            coords=coords,
+            emb_gcn=emb_gcn,
+            emb_indv=emb_indv,
+            cell_mask=cell_mask,
+            return_dense=True
+        )
+        
+        # Validate neighbor indices are within bounds
+        max_valid_idx = rank_zarr_shape[0] - 1
+        assert neighbor_indices.max() <= max_valid_idx, \
+            f"Neighbor indices exceed bounds (max: {neighbor_indices.max()}, limit: {max_valid_idx})"
+        assert neighbor_indices.min() >= 0, \
+            f"Found negative neighbor indices (min: {neighbor_indices.min()})"
+        
+        # Optimize row order (auto-selects best method)
+        logger.info("Optimizing row order for cache efficiency...")
+        row_order = optimize_row_order(
+            neighbor_indices,
+            cell_indices = cell_indices,
+            method=None,  # Auto-select based on data
+            neighbor_weights=neighbor_weights
+        )
+        neighbor_indices = neighbor_indices[row_order]
+        neighbor_weights = neighbor_weights[row_order]
+        cell_indices_sorted = cell_indices[row_order]
+        
+        # Initialize parallel reader
+        reader = ParallelRankReader(
+            rank_zarr_path,
+            num_workers=self.config.num_read_workers
+        )
+        
+        # Process in batches
+        batch_size = getattr(self.config, 'batch_size', 1000)
+        n_batches = (n_cells + batch_size - 1) // batch_size
+        
+        # Submit all read requests
+        logger.info(f"Submitting {n_batches} batches for reading...")
+        for batch_idx in range(n_batches):
+            batch_start = batch_idx * batch_size
+            batch_end = min(batch_start + batch_size, n_cells)
+            
+            batch_neighbors = neighbor_indices[batch_start:batch_end]
+            reader.submit_batch(batch_idx, batch_neighbors)
+        
+        # Process results as they complete
+        logger.info("Processing batches...")
+        pbar = tqdm(total=n_batches, desc=f"Processing {cell_type}")
+        
+        for _ in range(n_batches):
+            # Get completed batch - rank_data and indices from worker
+            batch_idx, rank_data, rank_indices, original_shape = reader.get_result()
+            batch_start = batch_idx * batch_size
+            batch_end = min(batch_start + batch_size, n_cells)
+            actual_batch_size = batch_end - batch_start
+            
+            # Verify shape
+            assert original_shape == (actual_batch_size, self.config.num_neighbour), \
+                f"Shape mismatch: expected {(actual_batch_size, self.config.num_neighbour)}, got {original_shape}"
+            
+            # Use fancy indexing in main thread to save memory
+            batch_ranks = rank_data[rank_indices]
+            
+            # Get batch weights
+            batch_weights = neighbor_weights[batch_start:batch_end]
+            
+            # Compute marker scores using JAX
+            marker_scores = compute_marker_scores_jax(
+                jnp.array(batch_ranks),
+                jnp.array(batch_weights),
+                actual_batch_size,
+                self.config.num_neighbour,
+                jnp.array(global_log_gmean),
+                jnp.array(global_expr_frac)
+            )
+            marker_scores = np.array(marker_scores)
+            
+            # Write results (async)
+            global_indices = cell_indices_sorted[batch_start:batch_end]
+            output_zarr.write_batch(marker_scores, global_indices)
+            
+            pbar.update(1)
+        
+        pbar.close()
+        reader.close()
+    
     def calculate_marker_scores(
         self,
         adata_path: str,
         rank_zarr_path: str,
         mean_frac_path: str,
-        output_path: Optional[str | Path] = None
-    ) -> str | Path:
+        output_path: Optional[Union[str, Path]] = None
+    ) -> Union[str, Path]:
         """
-        Calculate marker scores for all cell types
+        Main execution function for marker score calculation
         
         Args:
             adata_path: Path to concatenated latent adata
@@ -168,40 +351,55 @@ class MarkerScoreCalculator:
         Returns:
             Path to output marker score zarr file
         """
+        logger.info("Starting marker score calculation...")
+        
+        # Use config path if not specified
         if output_path is None:
-            output_path = self.output_dir / "marker_scores.zarr"
+            output_path = Path(self.config.marker_scores_zarr_path)
         else:
             output_path = Path(output_path)
         
-        # Load data
-        logger.info("Loading concatenated latent representations...")
+        # Load concatenated AnnData
+        logger.info(f"Loading concatenated AnnData from {adata_path}")
+        
+        if not Path(adata_path).exists():
+            raise FileNotFoundError(f"Concatenated AnnData not found: {adata_path}")
+        
         adata = sc.read_h5ad(adata_path)
         
-        # Load mean expression fractions
-        mean_frac_df = pd.read_parquet(mean_frac_path)
-        global_expr_frac = mean_frac_df['mean_expr_frac'].values
+        # Load pre-calculated global statistics
+        global_log_gmean, global_expr_frac = self.load_global_stats(mean_frac_path)
         
-        # Calculate global log geometric mean for baseline
-        global_log_gmean = np.log(global_expr_frac + 1e-10)
+        # Get annotation key
+        annotation_key = self.config.annotation
+        
+        # Note: Cell filtering by annotation group size is already done during rank calculation,
+        # so all groups here should have sufficient cells
         
         # Get dimensions
         n_cells = adata.n_obs
-        n_genes = len(mean_frac_df)
-        
-        # Open rank zarr
         rank_zarr = ZarrBackedCSR.open(rank_zarr_path, mode='r')
         n_cells_rank = rank_zarr.shape[0]
+        n_genes = rank_zarr.shape[1]
         
+        logger.info(f"AnnData dimensions: {n_cells} cells × {adata.n_vars} genes")
+        logger.info(f"Rank Zarr dimensions: {n_cells_rank} cells × {n_genes} genes")
+        
+        # Cells should match exactly since filtering is done before rank zarr creation
         assert n_cells == n_cells_rank, \
-            f"Cell count mismatch: AnnData has {n_cells} cells, Rank Zarr has {n_cells_rank} cells."
+            f"Cell count mismatch: AnnData has {n_cells} cells, Rank Zarr has {n_cells_rank} cells. " \
+            f"This indicates the filtering was not applied consistently during rank calculation."
         
-        # Initialize output zarr
+        # Initialize output with proper chunking
         chunks = None
-        if self.config.chunks_cells is not None or self.config.chunks_genes is not None:
-            chunks = (
-                self.config.chunks_cells if self.config.chunks_cells is not None else 1,
-                self.config.chunks_genes if self.config.chunks_genes is not None else n_genes
-            )
+        if hasattr(self.config, 'chunks_cells') and hasattr(self.config, 'chunks_genes'):
+            if self.config.chunks_cells is not None or self.config.chunks_genes is not None:
+                # Use provided chunks
+                chunks = (
+                    self.config.chunks_cells if self.config.chunks_cells is not None else 1,
+                    self.config.chunks_genes if self.config.chunks_genes is not None else n_genes
+                )
+        # If chunks is None, ZarrBackedDense will use default (1, n_genes)
         
         output_zarr = ZarrBackedDense(
             output_path,
@@ -212,8 +410,7 @@ class MarkerScoreCalculator:
         )
         
         # Process each cell type
-        annotation_key = self.config.annotation or "cell_type"
-        if annotation_key in adata.obs.columns:
+        if annotation_key and annotation_key in adata.obs.columns:
             cell_types = adata.obs[annotation_key].unique()
         else:
             logger.warning(f"Annotation {annotation_key} not found, processing all cells as one type")
@@ -223,132 +420,40 @@ class MarkerScoreCalculator:
         logger.info(f"Processing {len(cell_types)} cell types")
         
         for cell_type in cell_types:
-            self._process_cell_type(
+            self.process_cell_type(
                 adata,
                 cell_type,
                 output_zarr,
                 global_log_gmean,
                 global_expr_frac,
-                rank_zarr_shape=(n_cells_rank, n_genes)
+                rank_zarr_path,
+                annotation_key
             )
         
         output_zarr.close()
-        logger.info(f"Marker score calculation complete! Saved to {output_path}")
+        logger.info("Marker score calculation complete!")
         
         # Save metadata
         metadata = {
             'n_cells': n_cells,
             'n_genes': n_genes,
+            'config': {
+                'num_neighbour_spatial': self.config.num_neighbour_spatial,
+                'num_anchor': self.config.num_anchor,
+                'num_neighbour': self.config.num_neighbour,
+                'batch_size': getattr(self.config, 'batch_size', 1000),
+                'num_read_workers': self.config.num_read_workers,
+                'num_write_workers': self.config.num_write_workers
+            },
             'global_log_gmean': global_log_gmean.tolist(),
             'global_expr_frac': global_expr_frac.tolist()
         }
-        metadata_path = output_path.parent / f"{output_path.stem}_metadata.json"
-        import json
+        
+        metadata_path = output_path.parent / f'{output_path.stem}_metadata.json'
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
         
-        return output_path
-    
-    def _process_cell_type(
-        self,
-        adata,
-        cell_type: str,
-        output_zarr: ZarrBackedDense,
-        global_log_gmean: np.ndarray,
-        global_expr_frac: np.ndarray,
-        rank_zarr_shape: Tuple[int, int]
-    ):
-        """Process a single cell type"""
+        logger.info(f"Results saved to {output_path}")
+        logger.info(f"Metadata saved to {metadata_path}")
         
-        # Get cells of this type
-        annotation_key = self.config.annotation or "cell_type"
-        cell_mask = adata.obs[annotation_key] == cell_type
-        cell_indices = np.where(cell_mask)[0]
-        n_cells = len(cell_indices)
-        
-        if n_cells < self.config.min_cells_per_type:
-            logger.warning(f"Skipping {cell_type}: only {n_cells} cells")
-            return
-        
-        logger.info(f"Processing {cell_type}: {n_cells} cells")
-        
-        # Build connectivity matrix
-        logger.info("Building connectivity matrix...")
-        neighbor_indices, neighbor_weights = self.connectivity_builder.build_connectivity_matrix(
-            coords=adata.obsm[self.config.spatial_key],
-            emb_gcn=adata.obsm[self.config.latent_representation_niche].astype(np.float32),
-            emb_indv=adata.obsm[self.config.latent_representation_cell].astype(np.float32),
-            cell_mask=cell_mask,
-            return_dense=True
-        )
-        
-        # Optimize row order for cache efficiency
-        logger.info("Optimizing row order for cache efficiency...")
-        row_order = optimize_row_order(
-            neighbor_indices,
-            method=None,  # Auto-select
-            neighbor_weights=neighbor_weights
-        )
-        neighbor_indices = neighbor_indices[row_order]
-        neighbor_weights = neighbor_weights[row_order]
-        cell_indices_sorted = cell_indices[row_order]
-        
-        # Initialize parallel reader
-        reader = ParallelRankReader(
-            self.config.rank_zarr_path or rank_zarr_shape,
-            num_workers=self.config.num_read_workers
-        )
-        
-        # Process in batches
-        n_batches = (n_cells + self.config.batch_size - 1) // self.config.batch_size
-        
-        # Submit all batches for reading
-        for batch_idx in range(n_batches):
-            batch_start = batch_idx * self.config.batch_size
-            batch_end = min(batch_start + self.config.batch_size, n_cells)
-            batch_indices = neighbor_indices[batch_start:batch_end]
-            batch_weights = neighbor_weights[batch_start:batch_end]
-            
-            reader.submit_batch(batch_idx, batch_indices, batch_weights)
-        
-        # Process results as they complete
-        logger.info("Processing batches...")
-        pbar = tqdm(total=n_batches, desc=f"Processing {cell_type}")
-        
-        for _ in range(n_batches):
-            # Get completed batch
-            batch_idx, rank_data, rank_indices, original_shape = reader.get_result()
-            
-            batch_start = batch_idx * self.config.batch_size
-            batch_end = min(batch_start + self.config.batch_size, n_cells)
-            batch_size = batch_end - batch_start
-            
-            # Calculate marker scores
-            batch_scores = np.zeros((batch_size, rank_zarr_shape[1]), dtype=np.float32)
-            
-            for i in range(batch_size):
-                cell_weights = neighbor_weights[batch_start + i]
-                cell_rank_data = rank_data[i]
-                
-                # Calculate weighted geometric mean for each gene
-                for gene_idx in range(rank_zarr_shape[1]):
-                    # Get ranks for this gene across neighbors
-                    gene_ranks = cell_rank_data  # Simplified for this example
-                    
-                    # Calculate weighted geometric mean
-                    score = calculate_weighted_geometric_mean(
-                        gene_ranks,
-                        cell_weights,
-                        zero_fill=global_expr_frac[gene_idx] + 1e-10
-                    )
-                    batch_scores[i, gene_idx] = score
-            
-            # Write batch to zarr
-            global_indices = cell_indices_sorted[batch_start:batch_end]
-            output_zarr.write_batch(batch_scores, global_indices)
-            
-            pbar.update(1)
-        
-        pbar.close()
-        reader.close()
-        logger.info(f"Completed processing {cell_type}")
+        return str(output_path)

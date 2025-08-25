@@ -1,7 +1,7 @@
 """
 Base configuration classes and utilities for gsMap.
 """
-
+from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
 from typing import Optional, Annotated, List
@@ -20,7 +20,6 @@ def ensure_path_exists(func):
                 result.mkdir(parents=True, exist_ok=True, mode=0o755)
         return result
     return wrapper
-
 
 class ConfigWithAutoPaths:
     """Base configuration class with automatic path generation."""
