@@ -221,7 +221,7 @@ class RankCalculator:
             # Filter cells based on annotation group size if annotation is provided
             # This must be done BEFORE adding to rank zarr to maintain index consistency
             if annotation_key and annotation_key in adata.obs.columns:
-                min_cells_per_type = getattr(self.config, 'min_cells_per_type', 21)  # Minimum number of homogeneous neighbors
+                min_cells_per_type = getattr(self.config, 'num_anchor', 21)  # Minimum number of homogeneous neighbors
                 annotation_counts = adata.obs[annotation_key].value_counts()
                 valid_annotations = annotation_counts[annotation_counts >= min_cells_per_type].index
                 

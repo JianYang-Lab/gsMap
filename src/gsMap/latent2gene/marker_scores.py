@@ -214,6 +214,7 @@ class MarkerScoreCalculator:
         global_log_gmean: np.ndarray,
         global_expr_frac: np.ndarray,
         rank_zarr: ZarrBackedCSR,
+        reader: ParallelRankReader,
         coords: np.ndarray,
         emb_gcn: np.ndarray,
         emb_indv: np.ndarray,
@@ -264,12 +265,6 @@ class MarkerScoreCalculator:
         neighbor_indices = neighbor_indices[row_order]
         neighbor_weights = neighbor_weights[row_order]
         cell_indices_sorted = cell_indices[row_order]
-        
-        # Initialize parallel reader with opened rank_zarr
-        reader = ParallelRankReader(
-            rank_zarr,
-            num_workers=self.config.num_read_workers
-        )
         
         # Process in batches
         batch_size = getattr(self.config, 'batch_size', 1000)
@@ -323,7 +318,6 @@ class MarkerScoreCalculator:
             pbar.update(1)
         
         pbar.close()
-        reader.close()
     
     def calculate_marker_scores(
         self,
@@ -425,6 +419,13 @@ class MarkerScoreCalculator:
         emb_indv_norm = np.linalg.norm(emb_indv, axis=1, keepdims=True)
         emb_indv = emb_indv / (emb_indv_norm + 1e-8)
         
+        # Initialize parallel reader once for all cell types
+        logger.info("Initializing parallel reader...")
+        reader = ParallelRankReader(
+            rank_zarr,
+            num_workers=self.config.num_read_workers
+        )
+        
         for cell_type in cell_types:
             self.process_cell_type(
                 adata,
@@ -433,11 +434,15 @@ class MarkerScoreCalculator:
                 global_log_gmean,
                 global_expr_frac,
                 rank_zarr,
+                reader,
                 coords,
                 emb_gcn,
                 emb_indv,
                 annotation_key
             )
+        
+        # Close the shared reader after all cell types are processed
+        reader.close()
         
         output_zarr.close()
         logger.info("Marker score calculation complete!")

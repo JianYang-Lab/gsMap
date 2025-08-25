@@ -645,13 +645,7 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
         min=0.0,
         max=1.0
     )] = 0.1
-    
-    min_cells_per_type: Annotated[int, typer.Option(
-        help="Minimum cells required per cell type",
-        min=1,
-        max=1000
-    )] = 10
-    
+
     chunks_cells: Annotated[Optional[int], typer.Option(
         help="Chunk size for cells dimension (None for optimal)"
     )] = None
