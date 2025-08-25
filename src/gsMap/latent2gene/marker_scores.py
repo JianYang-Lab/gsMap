@@ -33,11 +33,14 @@ class ParallelRankReader:
     
     def __init__(
         self,
-        rank_zarr_path: str,
+        rank_zarr: Union[ZarrBackedCSR, str],
         num_workers: int = 4,
         cache_size_mb: int = 1000
     ):
-        self.rank_zarr = ZarrBackedCSR.open(rank_zarr_path, mode='r')
+        if isinstance(rank_zarr, str):
+            self.rank_zarr = ZarrBackedCSR.open(rank_zarr, mode='r')
+        else:
+            self.rank_zarr = rank_zarr
         self.num_workers = num_workers
         
         # Queues for communication
@@ -210,7 +213,10 @@ class MarkerScoreCalculator:
         output_zarr: ZarrBackedDense,
         global_log_gmean: np.ndarray,
         global_expr_frac: np.ndarray,
-        rank_zarr_path: str,
+        rank_zarr: ZarrBackedCSR,
+        coords: np.ndarray,
+        emb_gcn: np.ndarray,
+        emb_indv: np.ndarray,
         annotation_key: str
     ):
         """Process a single cell type"""
@@ -227,21 +233,8 @@ class MarkerScoreCalculator:
         
         logger.info(f"Processing {cell_type}: {n_cells} cells")
         
-        # Open rank zarr to get dimensions
-        rank_zarr = ZarrBackedCSR.open(rank_zarr_path, mode='r')
+        # Get rank zarr shape
         rank_zarr_shape = rank_zarr.shape
-        
-        # Validate dimensions
-        n_cells_total = adata.n_obs
-        n_cells_rank = rank_zarr_shape[0]
-        
-        assert n_cells_total == n_cells_rank, \
-            f"Dimension mismatch: AnnData has {n_cells_total} cells, rank zarr has {n_cells_rank} cells"
-        
-        # Extract embeddings and coordinates
-        coords = adata.obsm[self.config.spatial_key]
-        emb_gcn = adata.obsm[self.config.latent_representation_niche].astype(np.float32)
-        emb_indv = adata.obsm[self.config.latent_representation_cell].astype(np.float32)
         
         # Build connectivity matrix
         logger.info("Building connectivity matrix...")
@@ -272,9 +265,9 @@ class MarkerScoreCalculator:
         neighbor_weights = neighbor_weights[row_order]
         cell_indices_sorted = cell_indices[row_order]
         
-        # Initialize parallel reader
+        # Initialize parallel reader with opened rank_zarr
         reader = ParallelRankReader(
-            rank_zarr_path,
+            rank_zarr,
             num_workers=self.config.num_read_workers
         )
         
@@ -373,12 +366,9 @@ class MarkerScoreCalculator:
         # Get annotation key
         annotation_key = self.config.annotation
         
-        # Note: Cell filtering by annotation group size is already done during rank calculation,
-        # so all groups here should have sufficient cells
-        
-        # Get dimensions
-        n_cells = adata.n_obs
+        # Open rank zarr and get dimensions
         rank_zarr = ZarrBackedCSR.open(rank_zarr_path, mode='r')
+        n_cells = adata.n_obs
         n_cells_rank = rank_zarr.shape[0]
         n_genes = rank_zarr.shape[1]
         
@@ -419,6 +409,22 @@ class MarkerScoreCalculator:
         
         logger.info(f"Processing {len(cell_types)} cell types")
         
+        # Load shared data structures once
+        logger.info("Loading shared data structures...")
+        coords = adata.obsm[self.config.spatial_key]
+        emb_gcn = adata.obsm[self.config.latent_representation_niche].astype(np.float32)
+        emb_indv = adata.obsm[self.config.latent_representation_cell].astype(np.float32)
+        
+        # Normalize embeddings
+        logger.info("Normalizing embeddings...")
+        # L2 normalize niche embeddings
+        emb_gcn_norm = np.linalg.norm(emb_gcn, axis=1, keepdims=True)
+        emb_gcn = emb_gcn / (emb_gcn_norm + 1e-8)
+        
+        # L2 normalize individual embeddings
+        emb_indv_norm = np.linalg.norm(emb_indv, axis=1, keepdims=True)
+        emb_indv = emb_indv / (emb_indv_norm + 1e-8)
+        
         for cell_type in cell_types:
             self.process_cell_type(
                 adata,
@@ -426,7 +432,10 @@ class MarkerScoreCalculator:
                 output_zarr,
                 global_log_gmean,
                 global_expr_frac,
-                rank_zarr_path,
+                rank_zarr,
+                coords,
+                emb_gcn,
+                emb_indv,
                 annotation_key
             )
         

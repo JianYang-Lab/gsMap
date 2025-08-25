@@ -6,7 +6,6 @@ import numpy as np
 from typing import Optional
 from numba import njit
 import logging
-import networkx as nx
 
 logger = logging.getLogger(__name__)
 
@@ -33,123 +32,33 @@ def optimize_row_order(
     Args:
         neighbor_indices: (n_cells, k) array of neighbor indices (global indices)
         cell_indices: (n_cells,) array of global indices for each cell
-        method: None (auto), 'weighted', 'greedy', 'graph', or 'none'
+        method: None (auto), 'weighted', 'greedy', or 'none'
         neighbor_weights: Optional (n_cells, k) array of weights for each neighbor
     
     Returns:
         Reordered row indices (local indices 0 to n_cells-1)
     
     Complexity:
-        - graph: O(n*k + n) - graph traversal approach
         - weighted: O(n*k) where k is number of neighbors - very efficient!
         - greedy: O(n²) - only for very small datasets
         - none: O(1) - returns original order
     """
     n_cells = len(neighbor_indices)
     
+    # Create mapping from global to local indices
+    global_to_local = {global_idx: local_idx for local_idx, global_idx in enumerate(cell_indices)}
+    
     # Auto-select method if None
     if method is None:
-        # Use graph method by default for better handling of global indices
-        method = 'graph'
-    
-    if method == 'graph':
-        # Build directed graph from neighbor relationships
-        G = nx.DiGraph()
-        
-        # Create mapping from global to local indices
-        global_to_local = {global_idx: local_idx for local_idx, global_idx in enumerate(cell_indices)}
-        
-        # Add all cells as nodes (using local indices)
-        G.add_nodes_from(range(n_cells))
-        
-        # Add edges based on neighbor relationships
-        for i in range(n_cells):
-            for j, neighbor_global_idx in enumerate(neighbor_indices[i]):
-                # Check if neighbor is in our cell set
-                if neighbor_global_idx in global_to_local:
-                    neighbor_local_idx = global_to_local[neighbor_global_idx]
-                    weight = neighbor_weights[i, j] if neighbor_weights is not None else 1.0
-                    G.add_edge(i, neighbor_local_idx, weight=weight)
-        
-        # Try to find a good traversal order
-        visited = set()
-        ordered = []
-        
-        # Start with node with highest weighted degree
-        if neighbor_weights is not None:
-            weighted_degrees = dict(G.degree(weight='weight'))
-            if weighted_degrees:
-                start_node = max(weighted_degrees, key=weighted_degrees.get)
-            else:
-                start_node = 0
+        if neighbor_weights is not None and n_cells > 2000:
+            method = 'weighted'
         else:
-            degrees = dict(G.degree())
-            start_node = max(degrees, key=degrees.get) if degrees else 0
-        
-        # BFS/DFS hybrid traversal prioritizing high-weight connections
-        stack = [start_node]
-        visited.add(start_node)
-        ordered.append(start_node)
-        
-        while len(ordered) < n_cells:
-            if stack:
-                current = stack[-1]
-                
-                # Get unvisited neighbors sorted by edge weight
-                neighbors = []
-                for neighbor in G.neighbors(current):
-                    if neighbor not in visited:
-                        weight = G[current][neighbor].get('weight', 1.0)
-                        neighbors.append((neighbor, weight))
-                
-                if neighbors:
-                    # Sort by weight and pick highest
-                    neighbors.sort(key=lambda x: x[1], reverse=True)
-                    next_node = neighbors[0][0]
-                    visited.add(next_node)
-                    ordered.append(next_node)
-                    stack.append(next_node)
-                else:
-                    # No unvisited neighbors, backtrack
-                    stack.pop()
-            else:
-                # Stack empty, find next unvisited node with highest connectivity
-                unvisited = set(range(n_cells)) - visited
-                if unvisited:
-                    # Pick unvisited node with most connections to visited nodes
-                    best_node = None
-                    best_score = -1
-                    
-                    for node in unvisited:
-                        score = 0
-                        # Count connections to visited nodes
-                        for visited_node in visited:
-                            if G.has_edge(node, visited_node):
-                                score += G[node][visited_node].get('weight', 1.0)
-                            if G.has_edge(visited_node, node):
-                                score += G[visited_node][node].get('weight', 1.0)
-                        
-                        if score > best_score:
-                            best_score = score
-                            best_node = node
-                    
-                    if best_node is None:
-                        # No connections, just pick any unvisited
-                        best_node = next(iter(unvisited))
-                    
-                    visited.add(best_node)
-                    ordered.append(best_node)
-                    stack.append(best_node)
-        
-        return np.array(ordered)
+            method = 'greedy'
     
-    elif method == 'weighted' and neighbor_weights is not None:
+    if method == 'weighted' and neighbor_weights is not None:
         # Efficient weighted heuristic: follow highest-weight neighbors
         visited = np.zeros(n_cells, dtype=bool)
         ordered = []
-        
-        # Create mapping from global to local indices
-        global_to_local = {global_idx: local_idx for local_idx, global_idx in enumerate(cell_indices)}
         
         # Start with cell that has highest max weight to any single neighbor
         max_weights = neighbor_weights.max(axis=1)
@@ -226,9 +135,6 @@ def optimize_row_order(
         # Original greedy approach - only for small datasets
         if n_cells > 1000:
             logger.warning(f"Greedy method is O(n²) - not recommended for {n_cells} cells")
-        
-        # Create mapping from global to local indices
-        global_to_local = {global_idx: local_idx for local_idx, global_idx in enumerate(cell_indices)}
         
         # Convert neighbor indices to sets of local indices for Jaccard computation
         neighbor_sets = []

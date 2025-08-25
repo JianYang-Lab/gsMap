@@ -158,22 +158,19 @@ class ConnectivityMatrixBuilder:
         if cell_mask is not None:
             cell_indices = np.where(cell_mask)[0]
             n_cells = len(cell_indices)
-            logger.info(f"Processing {n_cells} cells of type")
         else:
             cell_indices = np.arange(n_total)
             n_cells = n_total
-        
-        # Pre-normalize embeddings for efficiency
-        emb_gcn_norm = emb_gcn / (np.linalg.norm(emb_gcn, axis=1, keepdims=True) + 1e-8)
-        
+
         # Convert to JAX arrays
-        emb_gcn_norm_jax = jnp.array(emb_gcn_norm)
+        emb_gcn_norm_jax = jnp.array(emb_gcn)
         emb_indv_jax = jnp.array(emb_indv)
         
         # Process in batches to avoid GPU OOM
         all_indices = []
         all_weights = []
-        
+
+        logger.info(f"Fining the homogeneous neighbors in batches of {self.gpu_batch_size}...")
         for batch_start in range(0, n_cells, self.gpu_batch_size):
             batch_end = min(batch_start + self.gpu_batch_size, n_cells)
             batch_cell_indices = cell_indices[batch_start:batch_end]
