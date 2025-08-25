@@ -190,7 +190,6 @@ def run_find_latent_representation(args: FindLatentRepresentationsConfig):
     # Configure the inference
     infer = InferenceData(hvg, batch_size, gsmap_embedding_model, label_name, args)
 
-    print(args.zarr_group_path)
 
     for st_id, st_file in enumerate(spe_file_list):
         st_name = (Path(st_file).name).split(".h5ad")[0]

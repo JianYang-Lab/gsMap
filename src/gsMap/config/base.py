@@ -91,11 +91,17 @@ class ConfigWithAutoPaths:
     def latent2gene_metadata_path(self) -> Path:
         """Path to latent2gene metadata JSON"""
         return self.latent2gene_dir / "metadata.json"
-    
+
+    ## ---- LD score paths
+
+
+    ## ---- Spatial LDSC paths
+
     @property
     @ensure_path_exists
-    def zarr_group_path(self) -> Path:
-        return self.project_dir / "slice_mean.zarr"
+    def ldsc_dir(self) -> Path:
+        return self.project_dir / "spatial_ldsc"
+
     #
     #
     # @property

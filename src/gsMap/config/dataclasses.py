@@ -4,7 +4,7 @@ Configuration dataclasses for gsMap commands.
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Annotated, List
+from typing import Optional, Annotated, List, Literal
 import yaml
 import logging
 from pathlib import Path
@@ -626,13 +626,13 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
         help="Number of parallel reader threads",
         min=1,
         max=16
-    )] = 4
+    )] = 10
     
     num_write_workers: Annotated[int, typer.Option(
         help="Number of parallel writer threads",
         min=1,
         max=16
-    )] = 4
+    )] = 10
     
     gpu_batch_size: Annotated[int, typer.Option(
         help="Batch size for GPU processing to avoid CUDA OOM",
@@ -755,12 +755,8 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
 
 
 
-
 @dataclass
 class SpatialLDSCConfig(ConfigWithAutoPaths):
-    """Configuration for spatial LDSC analysis."""
-    
-    # Required from parent
     workdir: Annotated[Path, typer.Option(
         help="Path to the working directory",
         exists=True,
@@ -768,62 +764,103 @@ class SpatialLDSCConfig(ConfigWithAutoPaths):
         dir_okay=True,
         resolve_path=True
     )]
-    
-    sample_name: Annotated[str, typer.Option(
-        help="Name of the sample"
+
+    project_name: Annotated[str, typer.Option(
+        help="Name of the project"
     )]
-    
-    sumstats_file: Annotated[Path, typer.Option(
-        help="Path to GWAS summary statistics file",
-        exists=True,
-        file_okay=True,
-        dir_okay=False,
-        resolve_path=True
-    )]
-    
-    trait_name: Annotated[str, typer.Option(
-        help="Name of the trait being analyzed"
-    )]
-    
-    # Optional - must be after required fields
-    project_name: str = None
-    
-    w_file: Optional[str] = None
-    
-    n_blocks: Annotated[int, typer.Option(
-        help="Number of blocks for jackknife resampling",
-        min=10,
-        max=500
-    )] = 200
-    
-    chisq_max: Annotated[Optional[int], typer.Option(
-        help="Maximum chi-square value for filtering SNPs"
-    )] = None
-    
-    num_processes: Annotated[int, typer.Option(
-        help="Number of processes for parallel computing",
-        min=1,
-        max=50
-    )] = 4
-    
-    use_additional_baseline_annotation: Annotated[bool, typer.Option(
-        "--use-baseline/--no-baseline",
-        help="Use additional baseline annotations when provided"
-    )] = True
-    
-    use_jax: Annotated[bool, typer.Option(
-        "--use-jax/--no-jax",
-        help="Use JAX-accelerated implementation"
-    )] = True
-    
-    # Hidden parameters
-    sumstats_config_file: Optional[str] = None
+
+    w_file: str | None = None
+    # ldscore_save_dir: str
+    use_additional_baseline_annotation: bool = True
+    trait_name: str | None = None
+    sumstats_file: str | None = None
+    sumstats_config_file: str | None = None
+    num_processes: int = 4
     not_M_5_50: bool = False
-    all_chunk: Optional[int] = None
-    chunk_range: Optional[tuple[int, int]] = None
-    ldscore_save_format: str = "feather"
-    spots_per_chunk_quick_mode: int = 1000
-    snp_gene_weight_adata_path: Optional[str] = None
+    n_blocks: int = 200
+    chisq_max: int | None = None
+    all_chunk: int | None = None
+    chunk_range: tuple[int, int] | None = None
+
+    ldscore_save_format: Literal["feather", "quick_mode"] = "feather"
+
+    spots_per_chunk_quick_mode: int = 1_000
+
+    snp_gene_weight_dir: str | None = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.sumstats_file is None and self.sumstats_config_file is None:
+            raise ValueError("One of sumstats_file and sumstats_config_file must be provided.")
+        if self.sumstats_file is not None and self.sumstats_config_file is not None:
+            raise ValueError(
+                "Only one of sumstats_file and sumstats_config_file must be provided."
+            )
+        if self.sumstats_file is not None and self.trait_name is None:
+            raise ValueError("trait_name must be provided if sumstats_file is provided.")
+        if self.sumstats_config_file is not None and self.trait_name is not None:
+            raise ValueError(
+                "trait_name must not be provided if sumstats_config_file is provided."
+            )
+        self.sumstats_config_dict = {}
+        # load the sumstats config file
+        if self.sumstats_config_file is not None:
+            import yaml
+
+            with open(self.sumstats_config_file) as f:
+                config = yaml.load(f, Loader=yaml.FullLoader)
+            for _trait_name, sumstats_file in config.items():
+                assert Path(sumstats_file).exists(), f"{sumstats_file} does not exist."
+        # load the sumstats file
+        elif self.sumstats_file is not None:
+            self.sumstats_config_dict[self.trait_name] = self.sumstats_file
+        else:
+            raise ValueError("One of sumstats_file and sumstats_config_file must be provided.")
+
+        for sumstats_file in self.sumstats_config_dict.values():
+            assert Path(sumstats_file).exists(), f"{sumstats_file} does not exist."
+
+        # Handle w_file
+        if self.w_file is None:
+            w_ld_dir = Path(self.ldscore_save_dir) / "w_ld"
+            if w_ld_dir.exists():
+                self.w_file = str(w_ld_dir / "weights.")
+                logger.info(f"Using weights generated in the generate_ldscore step: {self.w_file}")
+            else:
+                raise ValueError(
+                    "No w_file provided and no weights found in generate_ldscore output. "
+                    "Either provide --w_file or run generate_ldscore first."
+                )
+        else:
+            logger.info(f"Using provided weights file: {self.w_file}")
+
+        if self.use_additional_baseline_annotation:
+            self.process_additional_baseline_annotation()
+
+    def process_additional_baseline_annotation(self):
+        additional_baseline_annotation = Path(self.ldscore_save_dir) / "additional_baseline"
+        dir_exists = additional_baseline_annotation.exists()
+
+        if not dir_exists:
+            self.use_additional_baseline_annotation = False
+        else:
+            logger.info(
+                "------Additional baseline annotation is provided. It will be used with the default baseline annotation."
+            )
+            logger.info(
+                f"------Additional baseline annotation directory: {additional_baseline_annotation}"
+            )
+
+            chrom_list = range(1, 23)
+            for chrom in chrom_list:
+                baseline_annotation_path = (
+                    additional_baseline_annotation / f"baseline.{chrom}.l2.ldscore.feather"
+                )
+                if not baseline_annotation_path.exists():
+                    raise FileNotFoundError(
+                        f"baseline.{chrom}.annot.gz is not found in {additional_baseline_annotation}."
+                    )
+        return None
 
 
 @dataclass
@@ -944,11 +981,9 @@ class GenerateLDScoreConfig(ConfigWithAutoPaths):
         dir_okay=True,
         resolve_path=True
     )]
-    
-    sample_name: Annotated[str, typer.Option(
-        help="Name of the sample"
-    )]
-    
+
+
+
     chrom: Annotated[str, typer.Option(
         help='Chromosome id (1-22) or "all"'
     )]
@@ -963,7 +998,11 @@ class GenerateLDScoreConfig(ConfigWithAutoPaths):
         file_okay=True,
         dir_okay=False
     )]
-    
+
+    sample_name: Annotated[str, typer.Option(
+        help="Name of the sample"
+    )] = None
+
     # Optional - must be after required fields
     project_name: str = None
     
