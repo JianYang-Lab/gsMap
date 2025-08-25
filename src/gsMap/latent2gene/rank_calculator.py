@@ -16,10 +16,10 @@ import scanpy as sc
 from jax import jit
 from scipy.sparse import csr_matrix
 from tqdm import tqdm
-
+import jax.scipy
 import anndata as ad
 from gsMap.config import LatentToGeneConfig
-from .zarr_utils import ZarrBackedCSR
+from .zarr_utils import ZarrBackedDense
 
 logger = logging.getLogger(__name__)
 
@@ -29,35 +29,37 @@ def jax_process_chunk(dense_matrix, n_genes):
     """JAX-optimized processing: ranking + accumulator calculations."""
     n_rows, n_cols = dense_matrix.shape
 
-    # Vectorized ranking
-    # Add small noise to break ties consistently
-    noise = jax.random.uniform(jax.random.PRNGKey(0), dense_matrix.shape) * 1e-10
-    matrix_with_noise = dense_matrix + noise
-
-    # Get argsort for each row
-    sorted_indices = jnp.argsort(matrix_with_noise, axis=1)
-
-    # Create ranks
-    ranks = jnp.zeros_like(dense_matrix)
-    row_indices = jnp.arange(n_rows)[:, None]
-    col_ranks = jnp.arange(1, n_cols + 1)[None, :]
-
-    ranks = ranks.at[row_indices, sorted_indices].set(col_ranks)
-
-    # Handle zeros by setting their rank to 1
-    ranks = jnp.where(dense_matrix != 0, ranks, 1.0)
-
-    # Compute log ranks
-    log_ranks = jnp.log(ranks)
-
-    # Compute accumulators for fill_zero logic
+    # # Vectorized ranking
+    # # Add small noise to break ties consistently
+    # noise = jax.random.uniform(jax.random.PRNGKey(0), dense_matrix.shape) * 1e-10
+    # matrix_with_noise = dense_matrix + noise
+    #
+    # # Get argsort for each row
+    # sorted_indices = jnp.argsort(matrix_with_noise, axis=1)
+    #
+    # # Create ranks
+    # ranks = jnp.zeros_like(dense_matrix)
+    # row_indices = jnp.arange(n_rows)[:, None]
+    # col_ranks = jnp.arange(1, n_cols + 1)[None, :]
+    #
+    # ranks = ranks.at[row_indices, sorted_indices].set(col_ranks)
+    #
+    # # Handle zeros by setting their rank to 1
+    # ranks = jnp.where(dense_matrix != 0, ranks, 1.0)
+    #
+    # # Compute log ranks
+    # log_ranks = jnp.log(ranks)
+    #
+    # # Compute accumulators for fill_zero logic
     nonzero_mask = dense_matrix != 0
-    n_nonzero_per_row = nonzero_mask.sum(axis=1, keepdims=True)
-    zero_log_ranks = jnp.log((n_genes - n_nonzero_per_row + 1) / 2)
+    # n_nonzero_per_row = nonzero_mask.sum(axis=1, keepdims=True)
+    # zero_log_ranks = jnp.log((n_genes - n_nonzero_per_row + 1) / 2)
 
+    ranks = jax.scipy.stats.rankdata(dense_matrix, method='average', axis=1)
+    log_ranks = jnp.log(ranks)
     # Sum log ranks (with fill_zero)
     sum_log_ranks = log_ranks.sum(axis=0)
-    sum_log_ranks += zero_log_ranks.sum() - (zero_log_ranks * nonzero_mask).sum(axis=0)
+    # sum_log_ranks += zero_log_ranks.sum() - (zero_log_ranks * nonzero_mask).sum(axis=0)
 
     # Sum fraction (count of non-zeros)
     sum_frac = nonzero_mask.sum(axis=0)
@@ -66,19 +68,21 @@ def jax_process_chunk(dense_matrix, n_genes):
 
 
 def rank_data_jax(X: csr_matrix, n_genes,
-                  zarr_csr=None,
+                  zarr_dense=None,
                   metadata: Optional[Dict[str, Any]] = None,
                   chunk_size: int = 1000,
-                  write_interval: int = 10):
-    """JAX-optimized rank calculation with batched writing.
+                  write_interval: int = 10,
+                  current_row_offset: int = 0):
+    """JAX-optimized rank calculation with batched writing to dense zarr.
 
     Args:
         X: Input sparse matrix
         n_genes: Total number of genes
-        zarr_csr: Optional ZarrBackedCSR instance for writing
+        zarr_dense: Optional ZarrBackedDense instance for writing
         metadata: Optional metadata dictionary
         chunk_size: Size of chunks for processing
         write_interval: How often to write chunks to zarr
+        current_row_offset: Offset for writing to zarr (for multiple sections)
 
     Returns:
         Tuple of (sum_log_ranks, sum_frac) as numpy arrays
@@ -94,6 +98,7 @@ def rank_data_jax(X: csr_matrix, n_genes,
     # Process in chunks to manage memory
     chunk_size = min(chunk_size, n_rows)
     pending_chunks = []  # Buffer for batching writes
+    pending_indices = []  # Track global indices for writing
     chunks_processed = 0
 
     # Setup progress bar
@@ -118,20 +123,33 @@ def rank_data_jax(X: csr_matrix, n_genes,
             # Convert JAX array to numpy
             chunk_log_ranks_np = np.array(chunk_log_ranks)
             pending_chunks.append(chunk_log_ranks_np)
+            # Calculate global indices for this chunk
+            global_start = current_row_offset + start_idx
+            global_end = current_row_offset + end_idx
+            pending_indices.append((global_start, global_end))
             chunks_processed += 1
 
             # Write to zarr periodically
-            if zarr_csr and chunks_processed % write_interval == 0:
-                # Combine pending chunks and convert to CSR
-                zarr_csr.append_batch(np.vstack(pending_chunks))
+            if zarr_dense and chunks_processed % write_interval == 0:
+                # Combine pending chunks for batch write
+                combined_data = np.vstack(pending_chunks)
+                # Calculate row indices for batch write
+                start_row = pending_indices[0][0]
+                end_row = pending_indices[-1][1]
+                # Write as a contiguous block
+                zarr_dense.write_batch(combined_data, row_indices=slice(start_row, end_row))
                 pending_chunks = []
+                pending_indices = []
 
             # Update progress bar
             pbar.update(end_idx - start_idx)
 
     # Write any remaining chunks
-    if zarr_csr and pending_chunks:
-        zarr_csr.append_batch(np.vstack(pending_chunks))
+    if zarr_dense and pending_chunks:
+        combined_data = np.vstack(pending_chunks)
+        start_row = pending_indices[0][0]
+        end_row = pending_indices[-1][1]
+        zarr_dense.write_batch(combined_data, row_indices=slice(start_row, end_row))
 
     return np.array(sum_log_ranks), np.array(sum_frac)
 
@@ -207,6 +225,28 @@ class RankCalculator:
         sum_log_ranks = None
         sum_frac = None
         total_cells = 0
+        rank_zarr = None
+        current_row_offset = 0  # Track current position in rank zarr
+        
+        # First pass: count total cells to initialize zarr
+        logger.info("Counting total cells across all sections...")
+        total_cells_expected = 0
+        for sample_name, h5ad_path in sample_h5ad_dict.items():
+            adata_temp = sc.read_h5ad(h5ad_path)
+            
+            # Apply same filtering logic as in main loop
+            if annotation_key and annotation_key in adata_temp.obs.columns:
+                min_cells_per_type = getattr(self.config, 'num_anchor', 21)
+                annotation_counts = adata_temp.obs[annotation_key].value_counts()
+                valid_annotations = annotation_counts[annotation_counts >= min_cells_per_type].index
+                if len(valid_annotations) < len(annotation_counts):
+                    mask = adata_temp.obs[annotation_key].isin(valid_annotations)
+                    adata_temp = adata_temp[mask]
+            
+            total_cells_expected += adata_temp.n_obs
+            del adata_temp
+        
+        logger.info(f"Expected total cells after filtering: {total_cells_expected}")
         
         for st_id, (sample_name, h5ad_path) in enumerate(tqdm(sample_h5ad_dict.items(), desc="Processing sections")):
             logger.info(f"Processing {sample_name} ({st_id + 1}/{len(sample_h5ad_dict)})...")
@@ -244,8 +284,15 @@ class RankCalculator:
             if gene_list is None:
                 gene_list = adata.var_names.tolist()
                 n_genes = len(gene_list)
-                # Initialize rank zarr
-                rank_zarr = ZarrBackedCSR(str(rank_zarr_path), ncols=n_genes, mode='w')
+                # Initialize rank zarr as dense matrix
+                rank_zarr = ZarrBackedDense(
+                    str(rank_zarr_path),
+                    shape=(total_cells_expected, n_genes),
+                    dtype=np.float32,
+                    chunks=(min(1000, total_cells_expected), n_genes),  # Row-wise chunks
+                    mode='w',
+                    num_write_workers=self.config.num_write_workers
+                )
                 # Initialize global accumulators
                 sum_log_ranks = np.zeros(n_genes, dtype=np.float64)
                 sum_frac = np.zeros(n_genes, dtype=np.float64)
@@ -274,23 +321,25 @@ class RankCalculator:
             # Get number of cells after filtering
             n_cells = X.shape[0]
             
-            # Use JAX rank calculation
+            # Use JAX rank calculation with dense zarr
             logger.debug(f"Processing {n_cells} cells with JAX")
             metadata = {'name': sample_name, 'cells': n_cells, 'study_id': st_id}
             
             batch_sum_log_ranks, batch_frac = rank_data_jax(
                 X, 
                 n_genes,
-                zarr_csr=rank_zarr,
+                zarr_dense=rank_zarr,
                 metadata=metadata,
                 chunk_size=self.config.rank_batch_size,
-                write_interval=self.config.rank_write_interval  # Batch 5 chunks before writing
+                write_interval=self.config.rank_write_interval,  # Batch 5 chunks before writing
+                current_row_offset=current_row_offset  # Pass offset for proper indexing
             )
             
             # Update global sums
             sum_log_ranks += batch_sum_log_ranks
             sum_frac += batch_frac
             total_cells += n_cells
+            current_row_offset += n_cells  # Update offset for next section
             
             # Create minimal AnnData with empty X matrix but keep obs and obsm
             minimal_adata = ad.AnnData(

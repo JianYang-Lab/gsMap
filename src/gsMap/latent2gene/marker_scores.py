@@ -21,7 +21,7 @@ import jax
 import jax.numpy as jnp
 from jax import jit
 
-from .zarr_utils import ZarrBackedDense, ZarrBackedCSR
+from .zarr_utils import ZarrBackedDense
 from .connectivity import ConnectivityMatrixBuilder
 from .row_ordering import optimize_row_order
 
@@ -29,18 +29,23 @@ logger = logging.getLogger(__name__)
 
 
 class ParallelRankReader:
-    """Multi-threaded reader for log-rank data"""
+    """Multi-threaded reader for log-rank data from dense zarr"""
     
     def __init__(
         self,
-        rank_zarr: Union[ZarrBackedCSR, str],
+        rank_zarr: Union[ZarrBackedDense, str],
         num_workers: int = 4,
         cache_size_mb: int = 1000
     ):
         if isinstance(rank_zarr, str):
-            self.rank_zarr = ZarrBackedCSR.open(rank_zarr, mode='r')
+            # Open as ZarrBackedDense in read mode
+            import zarr
+            z = zarr.open(str(rank_zarr), mode='r')
+            self.rank_zarr = z  # Direct zarr array access for reading
+            self.shape = z.shape
         else:
-            self.rank_zarr = rank_zarr
+            self.rank_zarr = rank_zarr.zarr_array if hasattr(rank_zarr, 'zarr_array') else rank_zarr
+            self.shape = rank_zarr.shape if hasattr(rank_zarr, 'shape') else self.rank_zarr.shape
         self.num_workers = num_workers
         
         # Queues for communication
@@ -64,7 +69,7 @@ class ParallelRankReader:
             self.workers.append(worker)
     
     def _worker(self, worker_id: int):
-        """Worker thread for reading batches"""
+        """Worker thread for reading batches from dense zarr"""
         logger.info(f"Reader worker {worker_id} started")
         
         while not self.stop_workers.is_set():
@@ -80,16 +85,17 @@ class ParallelRankReader:
                 flat_indices = np.unique(neighbor_indices.flatten())
                 
                 # Validate indices are within bounds
-                max_idx = self.rank_zarr.shape[0] - 1
+                max_idx = self.shape[0] - 1
                 assert flat_indices.max() <= max_idx, \
                     f"Worker {worker_id}: Indices exceed bounds (max: {flat_indices.max()}, limit: {max_idx})"
                 
-                # Read from Zarr (batch access)
+                # Read from Dense Zarr (direct array access)
+                # Dense zarr stores log-ranks directly
                 rank_data = self.rank_zarr[flat_indices]
                 
-                # Convert to dense array if sparse
-                if hasattr(rank_data, 'toarray'):
-                    rank_data = rank_data.toarray()
+                # Ensure we have a numpy array
+                if not isinstance(rank_data, np.ndarray):
+                    rank_data = np.array(rank_data)
                 
                 # Create mapping for reconstruction
                 idx_map = {idx: i for i, idx in enumerate(flat_indices)}
@@ -145,31 +151,35 @@ def compute_marker_scores_jax(
     # Reshape to batch format
     log_ranks_3d = log_ranks.reshape(batch_size, num_neighbors, n_genes)
     
-    # Handle zeros: fill with background log rank (cell-specific)
-    is_zero = (log_ranks_3d == 0)
-    # Sum zeros along neighbor dimension (axis=1) for each cell
-    zero_counts_per_cell = is_zero.sum(axis=1, keepdims=True)  # Shape: (B, 1, G)
-    background_log_rank = jnp.log((zero_counts_per_cell + 1) / 2)
-    log_ranks_filled = jnp.where(is_zero, background_log_rank, log_ranks_3d)
-    
-    # Normalize weights (already softmax normalized, but ensure sum to 1)
-    weights_sum = weights.sum(axis=1, keepdims=True)
-    weights_normalized = weights / weights_sum
+    # # Handle zeros: fill with background log rank (cell-specific)
+    # is_zero = (log_ranks_3d == 0)
+    # # Sum zeros along neighbor dimension (axis=1) for each cell
+    # zero_counts_per_cell = is_zero.sum(axis=1, keepdims=True)  # Shape: (B, 1, G)
+    # background_log_rank = jnp.log((zero_counts_per_cell + 1) / 2)
+    # log_ranks_filled = jnp.where(is_zero, background_log_rank, log_ranks_3d)
+    #
+    # # Normalize weights (already softmax normalized, but ensure sum to 1)
+    # weights_sum = weights.sum(axis=1, keepdims=True)
+    # weights_normalized = weights / weights_sum
     
     # Compute weighted geometric mean in log space
-    weighted_log_mean = jnp.einsum('bn,bng->bg', weights_normalized, log_ranks_filled)
+    weighted_log_mean = jnp.einsum('bn,bng->bg', weights, log_ranks_3d)
     
     # Compute expression fraction (mean of is_expressed across neighbors)
-    is_expressed = (log_ranks_3d != 0)
+    # is_expressed = (log_ranks_3d != 0)
+    is_expressed = (log_ranks_3d != log_ranks_3d.min(axis=-1, keepdims=True))  # Treat min log rank as non-expressed
     expr_frac = is_expressed.astype(jnp.float32).mean(axis=1)  # Mean across neighbors
     
     # Calculate marker score
     marker_score = jnp.exp(weighted_log_mean - global_log_gmean)
-    
+    marker_score = jnp.where(marker_score < 1.0, 0.0, marker_score)
+
     # Apply expression fraction filter
     frac_mask = expr_frac > global_expr_frac
     marker_score = jnp.where(frac_mask, marker_score, 0.0)
-    
+
+    marker_score = jnp.exp(marker_score **1.5) - 1.0
+
     return marker_score
 
 
@@ -213,7 +223,7 @@ class MarkerScoreCalculator:
         output_zarr: ZarrBackedDense,
         global_log_gmean: np.ndarray,
         global_expr_frac: np.ndarray,
-        rank_zarr: ZarrBackedCSR,
+        rank_zarr,  # Now a zarr array directly
         reader: ParallelRankReader,
         coords: np.ndarray,
         emb_gcn: np.ndarray,
@@ -235,7 +245,7 @@ class MarkerScoreCalculator:
         logger.info(f"Processing {cell_type}: {n_cells} cells")
         
         # Get rank zarr shape
-        rank_zarr_shape = rank_zarr.shape
+        rank_zarr_shape = rank_zarr.shape if hasattr(rank_zarr, 'shape') else reader.shape
         
         # Build connectivity matrix
         logger.info("Building connectivity matrix...")
@@ -361,7 +371,8 @@ class MarkerScoreCalculator:
         annotation_key = self.config.annotation
         
         # Open rank zarr and get dimensions
-        rank_zarr = ZarrBackedCSR.open(rank_zarr_path, mode='r')
+        import zarr
+        rank_zarr = zarr.open(str(rank_zarr_path), mode='r')
         n_cells = adata.n_obs
         n_cells_rank = rank_zarr.shape[0]
         n_genes = rank_zarr.shape[1]
