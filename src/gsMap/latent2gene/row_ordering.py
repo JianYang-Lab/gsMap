@@ -133,7 +133,7 @@ def optimize_row_order(
     
     elif method == 'greedy':
         # Original greedy approach - only for small datasets
-        if n_cells > 1000:
+        if n_cells > 5000:
             logger.warning(f"Greedy method is O(n²) - not recommended for {n_cells} cells")
         
         # Convert neighbor indices to sets of local indices for Jaccard computation

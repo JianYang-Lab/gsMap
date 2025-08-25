@@ -24,9 +24,7 @@ from gsMap.config import (
     ThreeDCombineConfig,
 )
 from gsMap.find_latent_representation import run_find_latent_representation
-from gsMap.latent_to_gene_gnn import run_latent_to_gene
-from gsMap.latent_to_gene_gnn_zarr_refactored import MarkerScoreCalculator
-from gsMap.latent_to_gene_gnn_zarr_refactored import LatentToGeneConfig as RefactoredLatentToGeneConfig
+from gsMap.latent2gene import run_latent_to_gene
 from gsMap.max_pooling import run_max_pooling
 from gsMap.run_link_mode import run_pipeline_link
 from gsMap.three_d_combine import three_d_combine
@@ -65,6 +63,7 @@ class PipelineConfig:
     use_refactored_latent_to_gene: bool = True
     batch_size: int = 1000
     num_read_workers: int = 4
+    gpu_batch_size: int = 300  # Smaller batch size for GPU to avoid OOM
 
 
 def setup_directories(config: PipelineConfig):
@@ -97,13 +96,13 @@ def step1_find_latent_representations(config: PipelineConfig):
 
     # Create config for FindLatentRepresentations
     latent_config = FindLatentRepresentationsConfig(
-        spe_file_list=file_list_path,
+        h5ad_list_file=file_list_path,
         workdir=config.workdir,
         project_name=config.project_name,
         annotation=config.annotation,
         spatial_key=config.spatial_key,
         data_layer=config.data_layer,
-        homolog_file=config.homolog_file,
+        homolog_file=Path(config.homolog_file),
         n_cell_training=config.n_cell_training,
         sample_name="all",
         use_tf=False,
@@ -120,66 +119,25 @@ def step2_calculate_gss(config: PipelineConfig, sample_name: Optional[str] = Non
     print("Step 2: Calculating GSS")
     print("=" * 80)
 
-    if config.use_refactored_latent_to_gene:
-        # Use the refactored version that processes all samples at once
-        print("Using refactored JAX-accelerated latent_to_gene implementation")
-        
-        latent_dir = Path(config.workdir) / config.project_name / "find_latent_representations"
-        rank_zarr_path = latent_dir / "ranks.zarr"
-        output_path = Path(config.workdir) / config.project_name / "latent_to_gene" / "marker_scores.zarr"
-        
-        # Create output directory
-        output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Create refactored config
-        refactored_config = RefactoredLatentToGeneConfig(
-            latent_dir=str(latent_dir),
-            rank_zarr_path=str(rank_zarr_path),
-            output_path=str(output_path),
-            latent_representation="emb_gcn",
-            latent_representation_indv="emb",
-            spatial_key=config.spatial_key,
-            annotation_key=config.annotation,
-            num_neighbour_spatial=201,
-            num_anchor=51,
-            num_neighbour=21,
-            batch_size=config.batch_size,
-            num_read_workers=config.num_read_workers
-        )
+    # Create refactored config
+    run_latent_to_gene_config = LatentToGeneConfig(
 
-        # Run the refactored calculator
-        calculator = MarkerScoreCalculator(refactored_config)
-        calculator.run()
-        print("GSS calculation completed for all samples!")
-        
-    else:
-        # Use the original version
-        file_list_path = f"{config.workdir}/list/{config.project_name}_list"
+        workdir=config.workdir,
+        project_name=config.project_name,
+        latent_representation_niche="emb_gcn",
+        latent_representation_cell="emb",
+        spatial_key=config.spatial_key,
+        annotation=config.annotation,
+        num_neighbour_spatial=201,
+        num_anchor=51,
+        num_neighbour=21,
+        num_read_workers=config.num_read_workers,
+        gpu_batch_size=config.gpu_batch_size,
 
-        with open(file_list_path, 'r') as f:
-            samples = [Path(line.strip()).stem for line in f]
+    )
 
-        # If specific sample is provided, only process that one
-        if sample_name:
-            samples = [sample_name] if sample_name in samples else []
-
-        for sample in samples:
-            print(f"Processing sample: {sample}")
-            mk_file = f"{config.workdir}/{config.project_name}/latent_to_gene/mk_score/{sample}_gene_marker_score.feather"
-
-            if not Path(mk_file).exists():
-                # Create config for LatentToGene
-                gss_config = LatentToGeneConfig(
-                    workdir=config.workdir,
-                    project_name=config.project_name,
-                    sample_name=sample,
-                    annotation=config.annotation,
-                    spatial_key=config.spatial_key
-                )
-
-                # Run the function
-                run_latent_to_gene(gss_config)
-                print(f"GSS calculation completed for {sample}!")
+    run_latent_to_gene(run_latent_to_gene_config)
 
 
 def step3_max_pooling(config: PipelineConfig, sample_name: Optional[str] = None):
@@ -388,9 +346,9 @@ if __name__ == "__main__":
     # main()
     # # get h5ad files
     config = PipelineConfig()
-    run_full_pipeline(config)
+    # run_full_pipeline(config)
     # step1_find_latent_representations(config)
-    # step2_calculate_gss(config, )
+    step2_calculate_gss(config, )
 
     # step4_spatial_ldsc(config, )
     # step5_3d_visualization(config, )

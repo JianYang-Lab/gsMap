@@ -97,7 +97,6 @@ def run_latent_to_gene(config) -> Dict[str, Any]:
             "num_neighbour_spatial": config.num_neighbour_spatial,
             "num_anchor": config.num_anchor,
             "num_neighbour": config.num_neighbour,
-            "batch_size": config.batch_size,
             "gpu_batch_size": config.gpu_batch_size,
             "num_read_workers": config.num_read_workers,
             "num_write_workers": config.num_write_workers
