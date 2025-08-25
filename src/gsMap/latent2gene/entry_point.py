@@ -37,19 +37,17 @@ def run_latent_to_gene(config) -> Dict[str, Any]:
     logger.info("Starting latent to gene conversion pipeline")
     logger.info("=" * 60)
     
-    # Setup output directory
-    output_dir = Path(config.workdir) / "latent_to_gene"
-    if config.project_name:
-        output_dir = Path(config.workdir) / config.project_name / "latent_to_gene"
+    # Setup output directory using config paths
+    output_dir = Path(config.latent2gene_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Check if all outputs already exist
+    # Check if all outputs already exist using config paths
     expected_outputs = {
-        "concatenated_latent_adata": output_dir / "concatenated_latent_adata.h5ad",
-        "rank_zarr": output_dir / "ranks.zarr",
-        "mean_frac": output_dir / "mean_frac.parquet",
-        "marker_scores": output_dir / "marker_scores.zarr",
-        "metadata": output_dir / "metadata.json"
+        "concatenated_latent_adata": Path(config.concatenated_latent_adata_path),
+        "rank_zarr": Path(config.rank_zarr_path),
+        "mean_frac": Path(config.mean_frac_path),
+        "marker_scores": Path(config.marker_scores_zarr_path),
+        "metadata": Path(config.latent2gene_metadata_path)
     }
     
     if all(Path(p).exists() for p in expected_outputs.values()):
@@ -67,37 +65,13 @@ def run_latent_to_gene(config) -> Dict[str, Any]:
     
     rank_calculator = RankCalculator(config)
     
-    # Get list of spatial files from latent directory
-    latent_dir = Path(config.latent_dir)
-    spe_files = []
-    
-    # Look for original spatial files based on latent file names
-    for latent_file in latent_dir.glob("*_latent_adata.h5ad"):
-        # Reconstruct original filename
-        stem = latent_file.stem.replace("_latent_adata", "")
-        # Try to find corresponding spatial file
-        possible_paths = [
-            latent_dir.parent / f"{stem}.h5ad",
-            latent_dir.parent.parent / "spatial_data" / f"{stem}.h5ad",
-            latent_dir.parent.parent / f"{stem}.h5ad"
-        ]
-        
-        for path in possible_paths:
-            if path.exists():
-                spe_files.append(str(path))
-                break
-        else:
-            logger.warning(f"Could not find spatial file for {latent_file}")
-    
-    if not spe_files:
-        raise FileNotFoundError(f"No spatial files found corresponding to latent files in {latent_dir}")
-    
-    logger.info(f"Found {len(spe_files)} spatial files to process")
+    # Use sample_h5ad_dict from config (already validated in config.__post_init__)
+    logger.info(f"Found {len(config.sample_h5ad_dict)} samples to process")
     
     rank_outputs = rank_calculator.calculate_ranks_and_concatenate(
-        spe_file_list=spe_files,
+        sample_h5ad_dict=config.sample_h5ad_dict,
         annotation_key=config.annotation,
-        data_layer="counts"  # Or from config if available
+        data_layer="counts"  # TODO: Get from config if available
     )
     
     # Step 2: Calculate marker scores
@@ -119,7 +93,7 @@ def run_latent_to_gene(config) -> Dict[str, Any]:
         "config": {
             "workdir": str(config.workdir),
             "project_name": config.project_name,
-            "sample_name": config.sample_name,
+            "samples": list(config.sample_h5ad_dict.keys()),
             "num_neighbour_spatial": config.num_neighbour_spatial,
             "num_anchor": config.num_anchor,
             "num_neighbour": config.num_neighbour,
@@ -134,7 +108,7 @@ def run_latent_to_gene(config) -> Dict[str, Any]:
             "mean_frac": str(rank_outputs["mean_frac"]),
             "marker_scores": str(marker_scores_path)
         },
-        "n_sections": len(spe_files)
+        "n_sections": len(config.sample_h5ad_dict)
     }
     
     # Load marker scores metadata if it exists

@@ -12,6 +12,7 @@ import scanpy as sc
 import anndata as ad
 from scipy.sparse import csr_matrix
 from tqdm import tqdm
+import gc
 
 from .zarr_utils import ZarrBackedCSR
 from .jax_rank_processing import jax_process_chunk, rank_data_jax
@@ -31,14 +32,12 @@ class RankCalculator:
         """
         self.config = config
         self.latent_dir = Path(config.latent_dir)
-        self.output_dir = Path(config.workdir) / "latent_to_gene"
-        if config.project_name:
-            self.output_dir = Path(config.workdir) / config.project_name / "latent_to_gene"
+        self.output_dir = Path(config.latent2gene_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
     def calculate_ranks_and_concatenate(
         self,
-        spe_file_list: List[str],
+        sample_h5ad_dict: Optional[Dict[str, Path]] = None,
         annotation_key: Optional[str] = None,
         data_layer: str = "counts"
     ) -> Dict[str, Any]:
@@ -48,8 +47,8 @@ class RankCalculator:
         This combines the rank calculation and concatenation logic from find_latent_representation.py
         
         Args:
-            spe_file_list: List of spatial transcriptomics h5ad files
-            annotation_key: Optional annotation to filter cells
+            sample_h5ad_dict: Optional dict of sample_name -> h5ad path. If None, uses config.sample_h5ad_dict
+            annotation_key: Optional annotation to filter cells. If None, uses config.annotation
             data_layer: Data layer to use for expression
             
         Returns:
@@ -59,26 +58,30 @@ class RankCalculator:
                 - mean_frac: Path to mean expression fraction parquet
         """
         
-        # Output paths
-        concat_adata_path = self.output_dir / "concatenated_latent_adata.h5ad"
-        rank_zarr_path = self.output_dir / "ranks.zarr"
-        mean_frac_path = self.output_dir / "mean_frac.parquet"
+        # Use provided sample_h5ad_dict or get from config
+        if sample_h5ad_dict is None:
+            sample_h5ad_dict = self.config.sample_h5ad_dict
+        
+        # Use provided annotation_key or get from config
+        if annotation_key is None:
+            annotation_key = self.config.annotation
+            
+        # Output paths from config
+        concat_adata_path = Path(self.config.concatenated_latent_adata_path)
+        rank_zarr_path = Path(self.config.rank_zarr_path)
+        mean_frac_path = Path(self.config.mean_frac_path)
         
         # Check if outputs already exist
         if concat_adata_path.exists() and rank_zarr_path.exists() and mean_frac_path.exists():
             logger.info(f"Rank outputs already exist in {self.output_dir}")
             return {
-                "concatenated_latent_adata": concat_adata_path,
-                "rank_zarr": rank_zarr_path,
-                "mean_frac": mean_frac_path
+                "concatenated_latent_adata": str(concat_adata_path),
+                "rank_zarr": str(rank_zarr_path),
+                "mean_frac": str(mean_frac_path)
             }
         
         logger.info("Starting rank calculation and concatenation...")
-        
-        # Load latent representations
-        latent_files = list(self.latent_dir.glob("*_latent_adata.h5ad"))
-        if not latent_files:
-            raise FileNotFoundError(f"No latent representation files found in {self.latent_dir}")
+        logger.info(f"Processing {len(sample_h5ad_dict)} samples")
         
         # Process each section
         adata_list = []
@@ -90,48 +93,54 @@ class RankCalculator:
         sum_frac = None
         total_cells = 0
         
-        for st_id, st_file in enumerate(tqdm(spe_file_list, desc="Processing sections")):
-            st_name = Path(st_file).stem
-            logger.info(f"Processing {st_name} ({st_id + 1}/{len(spe_file_list)})...")
+        for st_id, (sample_name, h5ad_path) in enumerate(tqdm(sample_h5ad_dict.items(), desc="Processing sections")):
+            logger.info(f"Processing {sample_name} ({st_id + 1}/{len(sample_h5ad_dict)})...")
             
-            # Load spatial data
-            st_adata = sc.read_h5ad(st_file)
+            # Load the h5ad file (which should already contain latent representations)
+            adata = sc.read_h5ad(h5ad_path)
             
-            # Load corresponding latent representation
-            latent_file = self.latent_dir / f"{st_name}_latent_adata.h5ad"
-            if not latent_file.exists():
-                # Try alternative naming pattern
-                latent_file = self.latent_dir / f"{st_name}_add_latent.h5ad"
+            # Check if this is a latent file or needs loading from separate file
+            has_latent = (
+                hasattr(self.config, 'latent_representation') and 
+                self.config.latent_representation in adata.obsm
+            )
+            
+            if not has_latent:
+                # Try to load from latent directory
+                latent_file = self.latent_dir / f"{sample_name}_latent_adata.h5ad"
                 if not latent_file.exists():
-                    logger.warning(f"Latent file not found for {st_file}, skipping")
+                    latent_file = self.latent_dir / f"{sample_name}_add_latent.h5ad"
+                if latent_file.exists():
+                    latent_adata = sc.read_h5ad(latent_file)
+                    # Merge latent representations
+                    adata.obsm.update(latent_adata.obsm)
+                else:
+                    logger.warning(f"No latent representation found for {sample_name}, skipping")
                     continue
             
-            latent_adata = sc.read_h5ad(latent_file)
-            
             # Add slice information
-            latent_adata.obs['slice_id'] = st_name
-            latent_adata.obs['slice_numeric_id'] = st_id
+            adata.obs['slice_id'] = sample_name
+            adata.obs['slice_numeric_id'] = st_id
             
             # Compute depth if count layer exists
-            if data_layer in ["count", "counts"] and data_layer in st_adata.layers:
-                latent_adata.obs['depth'] = np.array(st_adata.layers[data_layer].sum(axis=1)).flatten()
+            if data_layer in ["count", "counts"] and data_layer in adata.layers:
+                adata.obs['depth'] = np.array(adata.layers[data_layer].sum(axis=1)).flatten()
             
             # Filter cells based on annotation group size if annotation is provided
             # This must be done BEFORE adding to rank zarr to maintain index consistency
-            if annotation_key and annotation_key in st_adata.obs.columns:
-                min_cells_per_type = 21  # Minimum number of homogeneous neighbors
-                annotation_counts = st_adata.obs[annotation_key].value_counts()
+            if annotation_key and annotation_key in adata.obs.columns:
+                min_cells_per_type = getattr(self.config, 'min_cells_per_type', 21)  # Minimum number of homogeneous neighbors
+                annotation_counts = adata.obs[annotation_key].value_counts()
                 valid_annotations = annotation_counts[annotation_counts >= min_cells_per_type].index
                 
                 # Check if any filtering is needed
                 if len(valid_annotations) < len(annotation_counts):
-                    n_cells_before = st_adata.n_obs
-                    mask = st_adata.obs[annotation_key].isin(valid_annotations)
-                    st_adata = st_adata[mask].copy()
-                    latent_adata = latent_adata[mask].copy()
-                    n_cells_after = st_adata.n_obs
+                    n_cells_before = adata.n_obs
+                    mask = adata.obs[annotation_key].isin(valid_annotations)
+                    adata = adata[mask].copy()
+                    n_cells_after = adata.n_obs
                     
-                    logger.info(f"  Filtered {st_name} based on annotation group size (min={min_cells_per_type})")
+                    logger.info(f"  Filtered {sample_name} based on annotation group size (min={min_cells_per_type})")
                     logger.info(f"    - Cells before: {n_cells_before}, after: {n_cells_after}, removed: {n_cells_before - n_cells_after}")
                     
                     # Log which groups were removed
@@ -141,7 +150,7 @@ class RankCalculator:
             
             # Get gene list (should be consistent across sections)
             if gene_list is None:
-                gene_list = st_adata.var_names.tolist()
+                gene_list = adata.var_names.tolist()
                 n_genes = len(gene_list)
                 # Initialize rank zarr
                 rank_zarr = ZarrBackedCSR(str(rank_zarr_path), ncols=n_genes, mode='w')
@@ -150,14 +159,14 @@ class RankCalculator:
                 sum_frac = np.zeros(n_genes, dtype=np.float64)
             else:
                 # Verify gene list consistency
-                assert st_adata.var_names.tolist() == gene_list, \
+                assert adata.var_names.tolist() == gene_list, \
                     f"Gene list mismatch in section {st_id}"
             
             # Get expression data for ranking
             if data_layer in ["count", "counts"]:
-                X = st_adata.layers[data_layer]
+                X = adata.layers[data_layer]
             else:
-                X = st_adata.X
+                X = adata.X
             
             # Efficient sparse matrix conversion
             if not hasattr(X, 'tocsr'):
@@ -175,7 +184,7 @@ class RankCalculator:
             
             # Use JAX rank calculation
             logger.debug(f"Processing {n_cells} cells with JAX")
-            metadata = {'name': Path(st_file).stem, 'cells': n_cells, 'study_id': st_id}
+            metadata = {'name': sample_name, 'cells': n_cells, 'study_id': st_id}
             
             batch_sum_log_ranks, batch_frac = rank_data_jax(
                 X, 
@@ -193,18 +202,17 @@ class RankCalculator:
             
             # Create minimal AnnData with empty X matrix but keep obs and obsm
             minimal_adata = ad.AnnData(
-                X=csr_matrix((latent_adata.n_obs, n_genes), dtype=np.float32),
-                obs=latent_adata.obs.copy(),
+                X=csr_matrix((adata.n_obs, n_genes), dtype=np.float32),
+                obs=adata.obs.copy(),
                 var=pd.DataFrame(index=gene_list),
-                obsm=latent_adata.obsm.copy()  # Keep all latent representations
+                obsm=adata.obsm.copy()  # Keep all latent representations
             )
             
             adata_list.append(minimal_adata)
             n_total_cells += n_cells
             
             # Clean up memory
-            del st_adata, X, latent_adata, minimal_adata
-            import gc
+            del adata, X, minimal_adata
             gc.collect()
             
         # Close rank zarr
@@ -253,7 +261,7 @@ class RankCalculator:
             gc.collect()
         
         return {
-            "concatenated_latent_adata": concat_adata_path,
-            "rank_zarr": rank_zarr_path,
-            "mean_frac": mean_frac_path
+            "concatenated_latent_adata": str(concat_adata_path),
+            "rank_zarr": str(rank_zarr_path),
+            "mean_frac": str(mean_frac_path)
         }

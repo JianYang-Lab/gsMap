@@ -24,7 +24,8 @@ def ensure_path_exists(func):
 
 class ConfigWithAutoPaths:
     """Base configuration class with automatic path generation."""
-    # These will be provided by subclasses
+
+    # Required from parent
     workdir: Annotated[Path, typer.Option(
         help="Path to the working directory",
         exists=True,
@@ -33,7 +34,9 @@ class ConfigWithAutoPaths:
         resolve_path=True
     )]
 
-    project_name: str
+    project_name: Annotated[str, typer.Option(
+        help="Name of the project"
+    )]
 
     def __post_init__(self):
         if self.workdir is None:

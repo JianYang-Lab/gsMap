@@ -276,8 +276,8 @@ class MarkerScoreCalculator:
         logger.info("Building connectivity matrix...")
         neighbor_indices, neighbor_weights = self.connectivity_builder.build_connectivity_matrix(
             coords=adata.obsm[self.config.spatial_key],
-            emb_gcn=adata.obsm[self.config.latent_representation].astype(np.float32),
-            emb_indv=adata.obsm[self.config.latent_representation_indv].astype(np.float32),
+            emb_gcn=adata.obsm[self.config.latent_representation_niche].astype(np.float32),
+            emb_indv=adata.obsm[self.config.latent_representation_cell].astype(np.float32),
             cell_mask=cell_mask,
             return_dense=True
         )

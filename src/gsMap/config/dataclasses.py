@@ -8,12 +8,169 @@ from typing import Optional, Annotated, List
 import yaml
 import logging
 from pathlib import Path
+import h5py
 
 logger = logging.getLogger("gsMap")
 
 import typer
 
 from .base import ConfigWithAutoPaths
+
+def inspect_h5ad_structure(filename):
+    """
+    Inspect the structure of an h5ad file without loading data.
+    
+    Returns dict with keys present in each slot.
+    """
+    structure = {}
+    
+    with h5py.File(filename, 'r') as f:
+        # Check main slots
+        slots = ['obs', 'var', 'obsm', 'varm', 'obsp', 'varp', 'uns', 'layers', 'X', 'raw']
+        
+        for slot in slots:
+            if slot in f:
+                if slot in ['obsm', 'varm', 'obsp', 'varp', 'layers', 'uns']:
+                    # These are groups containing multiple keys
+                    structure[slot] = list(f[slot].keys())
+                elif slot in ['obs', 'var']:
+                    # These are dataframes - get column names
+                    if 'column-order' in f[slot].attrs:
+                        structure[slot] = list(f[slot].attrs['column-order'])
+                    else:
+                        structure[slot] = list(f[slot].keys())
+                else:
+                    # X, raw - just note they exist
+                    structure[slot] = True
+    
+    return structure
+
+
+def validate_h5ad_structure(sample_h5ad_dict, required_fields, optional_fields=None):
+    """
+    Validate h5ad files have required structure.
+    
+    Args:
+        sample_h5ad_dict: OrderedDict of {sample_name: h5ad_path}
+        required_fields: Dict of {field_name: (slot, field_key, error_msg_template)}
+            e.g., {'spatial': ('obsm', 'spatial', 'Spatial key')}
+        optional_fields: Dict of {field_name: (slot, field_key)} for fields to warn about
+    
+    Returns:
+        None, raises ValueError if required fields are missing
+    """
+    for sample_name, h5ad_path in sample_h5ad_dict.items():
+        if not h5ad_path.exists():
+            raise FileNotFoundError(f"H5AD file not found for sample '{sample_name}': {h5ad_path}")
+        
+        # Inspect h5ad structure
+        structure = inspect_h5ad_structure(h5ad_path)
+        
+        # Check required fields
+        for field_name, (slot, field_key, error_msg) in required_fields.items():
+            if field_key is None:  # Skip if field not specified
+                continue
+                
+            # Special handling for data_layer
+            if field_name == 'data_layer' and field_key != 'X':
+                if 'layers' not in structure or field_key not in structure.get('layers', []):
+                    logger.warning(
+                        f"Data layer '{field_key}' not found in layers for sample '{sample_name}'. "
+                        f"Available layers: {structure.get('layers', [])}"
+                    )
+            elif field_name == 'data_layer' and field_key == 'X':
+                if 'X' not in structure:
+                    raise ValueError(f"X matrix not found in h5ad file for sample '{sample_name}'")
+            else:
+                # Standard validation for obsm, obs, etc.
+                if slot not in structure or field_key not in structure.get(slot, []):
+                    available = structure.get(slot, [])
+                    raise ValueError(
+                        f"{error_msg} '{field_key}' not found in {slot} for sample '{sample_name}'. "
+                        f"Available keys in {slot}: {available}"
+                    )
+        
+        # Check optional fields (warn only)
+        if optional_fields:
+            for field_name, (slot, field_key) in optional_fields.items():
+                if field_key is None:  # Skip if field not specified
+                    continue
+                    
+                if slot not in structure or field_key not in structure.get(slot, []):
+                    available = structure.get(slot, [])
+                    logger.warning(
+                        f"Optional field '{field_key}' not found in {slot} for sample '{sample_name}'. "
+                        f"Available keys in {slot}: {available}"
+                    )
+
+
+def process_h5ad_inputs(config, input_options):
+    """
+    Process h5ad input options and create sample_h5ad_dict.
+    
+    Args:
+        config: Configuration object with h5ad input fields
+        input_options: Dict mapping option names to (field_name, processing_type)
+            e.g., {'h5ad_yaml': ('h5ad_yaml', 'yaml'), 
+                   'h5ad': ('h5ad', 'list'),
+                   'h5ad_list_file': ('h5ad_list_file', 'file')}
+    
+    Returns:
+        OrderedDict of {sample_name: h5ad_path}
+    """
+    from collections import OrderedDict
+    
+    sample_h5ad_dict = OrderedDict()
+    
+    # Check which options are provided
+    options_provided = []
+    for option_name, (field_name, _) in input_options.items():
+        if hasattr(config, field_name) and getattr(config, field_name):
+            options_provided.append(option_name)
+    
+    # Ensure at most one option is provided
+    if len(options_provided) > 1:
+        assert False, (
+            f"At most one input option can be provided. Got {len(options_provided)}: {', '.join(options_provided)}. "
+            f"Please provide only one of: {', '.join(input_options.keys())}"
+        )
+    
+    # Process the provided input option
+    for option_name, (field_name, processing_type) in input_options.items():
+        field_value = getattr(config, field_name, None)
+        if not field_value:
+            continue
+            
+        if processing_type == 'yaml':
+            logger.info(f"Using {option_name}: {field_value}")
+            with open(field_value) as f:
+                h5ad_data = yaml.safe_load(f)
+                for sample_name, h5ad_path in h5ad_data.items():
+                    sample_h5ad_dict[sample_name] = Path(h5ad_path)
+                    
+        elif processing_type == 'list':
+            logger.info(f"Using {option_name} with {len(field_value)} files")
+            for h5ad_path in field_value:
+                h5ad_path = Path(h5ad_path)
+                sample_name = h5ad_path.stem
+                if sample_name in sample_h5ad_dict:
+                    logger.warning(f"Duplicate sample name: {sample_name}, will be overwritten")
+                sample_h5ad_dict[sample_name] = h5ad_path
+                
+        elif processing_type == 'file':
+            logger.info(f"Using {option_name}: {field_value}")
+            with open(field_value) as f:
+                for line in f:
+                    line = line.strip()
+                    if line:  # Skip empty lines
+                        h5ad_path = Path(line)
+                        sample_name = h5ad_path.stem
+                        if sample_name in sample_h5ad_dict:
+                            logger.warning(f"Duplicate sample name: {sample_name}, will be overwritten")
+                        sample_h5ad_dict[sample_name] = h5ad_path
+        break
+    
+    return sample_h5ad_dict
 
 def verify_homolog_file_format(config):
     if config.homolog_file is not None:
@@ -159,16 +316,35 @@ class FindLatentRepresentationsConfig(ConfigWithAutoPaths):
     spe_file_list: Annotated[str, typer.Option(
         help="List of input ST (.h5ad) files"
     )]
-    
+
+    h5ad_path: Annotated[Optional[List[Path]], typer.Option(
+        help="Space-separated list of h5ad file paths. Sample names are derived from file names without suffix.",
+        exists=True,
+        file_okay=True,
+    )] = None
+
+    h5ad_yaml: Annotated[Path, typer.Option(
+        help="YAML file with sample names and h5ad paths",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+    )] = None
+
+    h5ad_list_file: Annotated[Optional[str], typer.Option(
+        help="Each row is a h5ad file path, sample name is the file name without suffix",
+        exists = True,
+        file_okay = True,
+        dir_okay = False,
+    )] = None
+
+
     # Optional - must be after required fields
     project_name: str = None
 
 
-
-
     data_layer: Annotated[str, typer.Option(
-        help="Gene expression data layer"
-    )] = "count"
+        help="Gene expression raw counts data layer in h5ad layers, e.g., 'count', 'counts'. Other wise use 'X' for adata.X"
+    )] = "X"
     
     spatial_key: Annotated[str, typer.Option(
         help="Spatial key in adata.obsm storing spatial coordinates"
@@ -302,6 +478,59 @@ class FindLatentRepresentationsConfig(ConfigWithAutoPaths):
 
     def __post_init__(self):
         super().__post_init__()
+        
+        # Define input options
+        input_options = {
+            'h5ad_yaml': ('h5ad_yaml', 'yaml'),
+            'h5ad_path': ('h5ad_path', 'list'),
+            'h5ad_list_file': ('h5ad_list_file', 'file'),
+        }
+        
+        # Process h5ad inputs
+        self.sample_h5ad_dict = process_h5ad_inputs(self, input_options)
+        
+        # Fallback to spe_file_list for backward compatibility
+        if not self.sample_h5ad_dict and self.spe_file_list:
+            from collections import OrderedDict
+            self.sample_h5ad_dict = OrderedDict()
+            logger.info(f"Using spe_file_list for backward compatibility")
+            if isinstance(self.spe_file_list, str):
+                file_list = self.spe_file_list.split()
+            else:
+                file_list = self.spe_file_list
+            for h5ad_path in file_list:
+                h5ad_path = Path(h5ad_path)
+                sample_name = h5ad_path.stem
+                if sample_name in self.sample_h5ad_dict:
+                    logger.warning(f"Duplicate sample name: {sample_name}, will be overwritten")
+                self.sample_h5ad_dict[sample_name] = h5ad_path
+        
+        if not self.sample_h5ad_dict:
+            raise ValueError(
+                "At least one of h5ad_yaml, h5ad_path, h5ad_list_file, or spe_file_list must be provided"
+            )
+        
+        # Define required and optional fields for validation
+        required_fields = {
+            'data_layer': ('layers', self.data_layer, 'Data layer'),
+            'spatial_key': ('obsm', self.spatial_key, 'Spatial key'),
+        }
+        
+        # Add annotation as required if provided
+        if self.annotation:
+            required_fields['annotation'] = ('obs', self.annotation, 'Annotation')
+        
+        # Validate h5ad structure
+        validate_h5ad_structure(self.sample_h5ad_dict, required_fields)
+        
+        # Log final sample count
+        logger.info(f"Loaded and validated {len(self.sample_h5ad_dict)} samples")
+        
+        # Check if at least one sample is provided
+        if len(self.sample_h5ad_dict) == 0:
+            raise ValueError("No valid samples found in the provided input")
+        
+        # Verify homolog file format if provided
         verify_homolog_file_format(self)
 
 
@@ -322,20 +551,20 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
         help="Name of the project"
     )]
 
-    sample_h5ad_list: Annotated[Optional[List[Path]], typer.Option(
+    h5ad: Annotated[Optional[List[Path]], typer.Option(
         help="Space-separated list of h5ad file paths. Sample names are derived from file names without suffix.",
         exists=True,
         file_okay=True,
     )] = None
 
-    sample_h5ad_yaml: Annotated[Path, typer.Option(
+    h5ad_yaml: Annotated[Path, typer.Option(
         help="YAML file with sample names and h5ad paths",
         exists=True,
         file_okay=True,
         dir_okay=False,
     )] = None
 
-    sample_h5ad_file: Annotated[Optional[str], typer.Option(
+    h5ad_list_file: Annotated[Optional[str], typer.Option(
         help="Each row is a h5ad file path, sample name is the file name without suffix",
         exists = True,
         file_okay = True,
@@ -351,14 +580,19 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
         "--no-expression-fraction",
         help="Skip expression fraction filtering"
     )] = False
+
+    data_layer: Annotated[str, typer.Option(
+        help="Gene expression raw counts data layer in h5ad layers, e.g., 'count', 'counts'. Other wise use 'X' for adata.X"
+    )] = "X"
+
     
-    latent_representation: Annotated[str, typer.Option(
+    latent_representation_niche: Annotated[str, typer.Option(
         help="Key for spatial niche embedding in obsm"
-    )] = "emb_gcn"
-    
-    latent_representation_indv: Annotated[str, typer.Option(
+    )] = "emb_niche"
+
+    latent_representation_cell: Annotated[str, typer.Option(
         help="Key for cell identity embedding in obsm"
-    )] = "emb"
+    )] = "emb_cell"
     
     spatial_key: Annotated[str, typer.Option(
         help="Spatial key in adata.obsm"
@@ -467,60 +701,69 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
         super().__post_init__()
         from collections import OrderedDict
         
-        # Create OrderedDict for sample_h5ad_dict
-        self.sample_h5ad_dict = OrderedDict()
+        # Define input options
+        input_options = {
+            'h5ad_yaml': ('h5ad_yaml', 'yaml'),
+            'h5ad': ('h5ad', 'list'),
+            'h5ad_list_file': ('h5ad_list_file', 'file'),
+        }
         
-        # Check which options are provided
-        options_provided = []
-        if self.sample_h5ad_list:
-            options_provided.append("sample_h5ad_list")
-        if self.sample_h5ad_yaml:
-            options_provided.append("sample_h5ad_yaml")
-        if self.sample_h5ad_file:
-            options_provided.append("sample_h5ad_file")
+        # Process h5ad inputs
+        self.sample_h5ad_dict = process_h5ad_inputs(self, input_options)
         
-        # Ensure exactly one option is provided
-        assert len(options_provided) == 1, (
-            f"Exactly one input option must be provided. Got {len(options_provided)}: {', '.join(options_provided)}. "
-            f"Please provide only one of: sample_h5ad_yaml, sample_h5ad_list, or sample_h5ad_file"
-        )
-        
-        # Process the provided input option
-        if self.sample_h5ad_yaml:
-            logger.info(f"Using sample_h5ad_yaml: {self.sample_h5ad_yaml}")
-            with open(self.sample_h5ad_yaml) as f:
-                h5ad_data = yaml.safe_load(f)
-                for sample_name, h5ad_path in h5ad_data.items():
-                    self.sample_h5ad_dict[sample_name] = Path(h5ad_path)
-                    
-        elif self.sample_h5ad_list:
-            logger.info(f"Using sample_h5ad_list with {len(self.sample_h5ad_list)} files")
-            for h5ad_path in self.sample_h5ad_list:
-                h5ad_path = Path(h5ad_path)
-                sample_name = h5ad_path.stem
-                if sample_name in self.sample_h5ad_dict:
-                    logger.warning(f"Duplicate sample name: {sample_name}, will be overwritten")
-                self.sample_h5ad_dict[sample_name] = h5ad_path
+        # Auto-detect from latent directory if no inputs provided
+        if not self.sample_h5ad_dict:
+            self.sample_h5ad_dict = OrderedDict()
+            latent_dir = self.latent_dir
+            logger.info(f"No input options provided. Auto-detecting h5ad files from latent directory: {latent_dir}")
+            
+            # Look for latent files and derive sample names
+            latent_files = list(latent_dir.glob("*_latent_adata.h5ad"))
+            if not latent_files:
+                # Try alternative pattern
+                latent_files = list(latent_dir.glob("*_add_latent.h5ad"))
+            
+            if not latent_files:
+                raise ValueError(
+                    f"No h5ad files found in latent directory {latent_dir}. "
+                    f"Please run the find latent representation first. "
+                    f"Or provide one of: h5ad_yaml, h5ad, or h5ad_list_file, which points to h5ad files which contain the latent embedding."
+                )
+            
+            for latent_file in latent_files:
+                # Extract sample name by removing suffix patterns
+                filename = latent_file.stem
+                if filename.endswith("_latent_adata"):
+                    sample_name = filename[:-len("_latent_adata")]
+                elif filename.endswith("_add_latent"):
+                    sample_name = filename[:-len("_add_latent")]
+                else:
+                    sample_name = filename
                 
-        elif self.sample_h5ad_file:
-            logger.info(f"Using sample_h5ad_file: {self.sample_h5ad_file}")
-            with open(self.sample_h5ad_file) as f:
-                for line in f:
-                    line = line.strip()
-                    if line:  # Skip empty lines
-                        h5ad_path = Path(line)
-                        sample_name = h5ad_path.stem
-                        if sample_name in self.sample_h5ad_dict:
-                            logger.warning(f"Duplicate sample name: {sample_name}, will be overwritten")
-                        self.sample_h5ad_dict[sample_name] = h5ad_path
+                # Use the latent file itself as the h5ad path
+                self.sample_h5ad_dict[sample_name] = latent_file
+                
+            logger.info(f"Auto-detected {len(self.sample_h5ad_dict)} samples from latent directory")
         
-        # Verify all files exist after collection
-        for sample_name, h5ad_path in self.sample_h5ad_dict.items():
-            if not h5ad_path.exists():
-                raise FileNotFoundError(f"H5AD file not found for sample '{sample_name}': {h5ad_path}")
+        # Define required and optional fields for validation
+        required_fields = {
+            'latent_representation_cell': ('obsm', self.latent_representation_cell, 'Latent representation of cell identity'),
+            'spatial_key': ('obsm', self.spatial_key, 'Spatial key'),
+        }
+        
+        # Add annotation as required if provided
+        if self.annotation:
+            required_fields['annotation'] = ('obs', self.annotation, 'Annotation')
+        
+        # Optional fields
+        if self.latent_representation_niche:
+            required_fields['latent_representation_niche'] = ('obsm', self.latent_representation_niche, 'Latent representation of spatial niche')
+        
+        # Validate h5ad structure
+        validate_h5ad_structure(self.sample_h5ad_dict, required_fields,)
         
         # Log final sample count
-        logger.info(f"Loaded {len(self.sample_h5ad_dict)} samples")
+        logger.info(f"Loaded and validated {len(self.sample_h5ad_dict)} samples")
         
         # Check if at least one sample is provided
         if len(self.sample_h5ad_dict) == 0:
