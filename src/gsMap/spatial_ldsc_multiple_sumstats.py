@@ -366,23 +366,28 @@ def determine_total_chunks(config):
 
 def determine_cell_indices_range(config, total_chunk_number_found):
     """Determine the range of cell indices (chunks) to process."""
-    if config.all_chunk is None:
-        if config.cell_indices_range is not None:
-            if not (1 <= config.cell_indices_range[0] <= total_chunk_number_found) or not (
-                1 <= config.cell_indices_range[1] <= total_chunk_number_found
-            ):
-                raise ValueError("Cell indices range out of bound. It should be in [1, all_chunk]")
-            start_chunk, end_chunk = config.cell_indices_range
-            logger.info(
-                f"Cell indices range provided, using chunked files from {start_chunk} to {end_chunk}"
-            )
-        else:
-            start_chunk, end_chunk = 1, total_chunk_number_found
+    if config.cell_indices_range is not None:
+        # Convert cell indices to chunk indices (both 0-based)
+        start_cell, end_cell = config.cell_indices_range  # 0-based [start, end)
+        chunk_size = config.spots_per_chunk_quick_mode if hasattr(config, 'spots_per_chunk_quick_mode') else 1000
+        
+        # Calculate which chunks contain these cells
+        start_chunk = start_cell // chunk_size  # 0-based chunk index
+        end_chunk = (end_cell - 1) // chunk_size if end_cell > 0 else 0  # 0-based, inclusive
+        
+        # Validate chunk indices
+        if start_chunk >= total_chunk_number_found:
+            raise ValueError(f"cell_indices_range start ({start_cell}) maps to chunk {start_chunk} which is >= total chunks ({total_chunk_number_found})")
+        if end_chunk >= total_chunk_number_found:
+            logger.warning(f"cell_indices_range end ({end_cell}) maps to chunk {end_chunk} which is >= total chunks ({total_chunk_number_found}). Capping to last chunk.")
+            end_chunk = total_chunk_number_found - 1
+        
+        logger.info(f"Cell range [{start_cell}, {end_cell}) maps to chunks {start_chunk}-{end_chunk} (0-based)")
+        # Convert to 1-based for compatibility with existing code that expects 1-based chunks
+        return start_chunk + 1, end_chunk + 1
     else:
-        all_chunk = config.all_chunk
-        logger.info(f"Using {all_chunk} chunked files by provided argument")
-        start_chunk, end_chunk = 1, all_chunk
-    return start_chunk, end_chunk
+        # Process all chunks (return 1-based for compatibility)
+        return 1, total_chunk_number_found
 
 
 def load_ldscore_chunk(

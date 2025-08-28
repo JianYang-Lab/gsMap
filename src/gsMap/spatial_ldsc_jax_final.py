@@ -373,9 +373,9 @@ class ChunkWriter:
     def write_chunk(self, chunk_idx: int, betas: np.ndarray, ses: np.ndarray,
                    spot_names: pd.Index) -> None:
         """Queue a chunk for asynchronous writing to disk."""
-        # Get spot range if quick_handler is available
+        # Get spot range if quick_handler is available  
         if self.quick_handler and hasattr(self.quick_handler, 'get_chunk_spot_range'):
-            start_spot, end_spot, total_spots = self.quick_handler.get_chunk_spot_range(chunk_idx - 1)
+            start_spot, end_spot, total_spots = self.quick_handler.get_chunk_spot_range(chunk_idx)  # chunk_idx is already 0-based
         else:
             start_spot, end_spot, total_spots = None, None, None
         
@@ -453,7 +453,7 @@ class ChunkProducer(threading.Thread):
         elif self.config.ldscore_save_format == "quick_mode":
             if self.quick_handler is None:
                 raise ValueError("quick_handler required for quick mode")
-            spatial_ld, spot_names = self.quick_handler.fetch_ldscore_by_chunk(chunk_index - 1)
+            spatial_ld, spot_names = self.quick_handler.fetch_ldscore_by_chunk(chunk_index)  # chunk_index is already 0-based
         else:
             raise ValueError(f"Unsupported format: {self.config.ldscore_save_format}")
         
@@ -1017,13 +1017,30 @@ def run_spatial_ldsc_single_trait(config: SpatialLDSCConfig,
     config.total_chunks = total_chunks
     logger.info(f"Total chunks: {total_chunks}")
     
-    # Determine chunk range
+    # Determine chunk indices to process
     if config.cell_indices_range:
-        start_chunk, end_chunk = config.cell_indices_range
+        # Convert cell indices to chunk indices
+        start_cell, end_cell = config.cell_indices_range  # 0-based [start, end)
+        chunk_size = config.spots_per_chunk_quick_mode
+        
+        # Calculate which chunks contain these cells
+        start_chunk = start_cell // chunk_size  # 0-based chunk index
+        end_chunk = (end_cell - 1) // chunk_size if end_cell > 0 else 0  # 0-based, inclusive
+        
+        # Validate chunk indices
+        if start_chunk >= total_chunks:
+            raise ValueError(f"cell_indices_range start ({start_cell}) maps to chunk {start_chunk} which is >= total chunks ({total_chunks})")
+        if end_chunk >= total_chunks:
+            logger.warning(f"cell_indices_range end ({end_cell}) maps to chunk {end_chunk} which is >= total chunks ({total_chunks}). Capping to last chunk.")
+            end_chunk = total_chunks - 1
+        
+        # Create list of 0-based chunk indices
+        chunk_indices = list(range(start_chunk, end_chunk + 1))
+        logger.info(f"Cell range [{start_cell}, {end_cell}) maps to chunks {start_chunk}-{end_chunk} (0-based)")
     else:
-        start_chunk, end_chunk = 1, total_chunks
-    
-    chunk_indices = list(range(start_chunk, end_chunk + 1))
+        # Process all chunks (0-based indexing)
+        start_chunk, end_chunk = 0, total_chunks - 1
+        chunk_indices = list(range(0, total_chunks))
     
     # Process chunks with queue and writer
     start_time = time.time()
@@ -1038,7 +1055,7 @@ def run_spatial_ldsc_single_trait(config: SpatialLDSCConfig,
     # Auto-merge if we processed all chunks
     # Skip auto-merge if cell_indices_range is specified and it's not covering all chunks
     should_merge = (config.cell_indices_range is None) or \
-                   (start_chunk == 1 and end_chunk == total_chunks)
+                   (start_chunk == 0 and end_chunk == total_chunks - 1)
     
     if should_merge:
         logger.info("Processed all chunks - auto-merging results...")

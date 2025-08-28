@@ -28,6 +28,44 @@ def get_gsMap_logger(logger_name):
 
 logger = get_gsMap_logger("gsMap")
 
+def get_anndata_shape(h5ad_path: str):
+    """Get the shape (n_obs, n_vars) of an AnnData file without loading it."""
+    with h5py.File(h5ad_path, 'r') as f:
+        # 1. Verify it's a valid AnnData file by checking metadata
+        if f.attrs.get('encoding-type') != 'anndata':
+            logger.error(f"File '{h5ad_path}' does not appear to be a valid AnnData file.")
+            return None
+
+        # 2. Determine n_obs and n_vars from the primary metadata sources
+        if 'obs' not in f or 'var' not in f:
+            logger.error("AnnData file is missing 'obs' or 'var' group.")
+            return None
+
+        # Get the name of the index column from attributes
+        obs_index_key = f['obs'].attrs.get('_index', None)
+        var_index_key = f['var'].attrs.get('_index', None)
+
+        if not obs_index_key or obs_index_key not in f['obs']:
+            logger.error("Could not determine index for 'obs'.")
+            return None
+        if not var_index_key or var_index_key not in f['var']:
+            logger.error("Could not determine index for 'var'.")
+            return None
+
+        # The shape is the length of these index arrays
+        obs_obj = f['obs'][obs_index_key]
+        if isinstance(obs_obj, h5py.Group):
+            obs_obj = obs_obj['categories']
+        n_obs = obs_obj.shape[0]
+
+        var_obj  = f['var'][var_index_key]
+        if isinstance(var_obj, h5py.Group):
+            var_obj = var_obj['categories']
+        n_vars = var_obj.shape[0]
+
+        return n_obs, n_vars
+
+
 def inspect_h5ad_structure(filename):
     """
     Inspect the structure of an h5ad file without loading data.
@@ -770,8 +808,7 @@ class SpatialLDSCConfig(ConfigWithAutoPaths):
     not_M_5_50: bool = False
     n_blocks: int = 200
     chisq_max: int | None = None
-    all_chunk: int | None = None
-    cell_indices_range: tuple[int, int] | None = None  # Range of cell indices to process
+    cell_indices_range: tuple[int, int] | None = None  # 0-based range [start, end) of cell indices to process
     sample_name: str | None = None  # Field for filtering by sample name
 
     ldscore_save_format: Literal["feather", "quick_mode"] = "feather"
@@ -789,12 +826,50 @@ class SpatialLDSCConfig(ConfigWithAutoPaths):
     def __post_init__(self):
         super().__post_init__()
         
-        # Validate exclusivity between sample_name and cell_indices_range
-        if self.sample_name is not None and self.cell_indices_range is not None:
-            raise ValueError(
-                "Only one of sample_name or cell_indices_range can be provided, not both. "
-                "Use sample_name to filter by sample, or cell_indices_range to process specific cell indices."
-            )
+
+        # Validate cell_indices_range is 0-based
+        if self.cell_indices_range is not None:
+            # Validate exclusivity between sample_name and cell_indices_range
+
+            if self.sample_name is not None:
+                raise ValueError(
+                    "Only one of sample_name or cell_indices_range can be provided, not both. "
+                    "Use sample_name to filter by sample, or cell_indices_range to process specific cell indices."
+                )
+
+            start, end = self.cell_indices_range
+            
+            # Check that indices are 0-based
+            if start < 0:
+                raise ValueError(f"cell_indices_range start must be >= 0, got {start}")
+            if start == 1:
+                logger.warning(
+                    "cell_indices_range appears to be 1-based (start=1). "
+                    "Please ensure indices are 0-based. Adjusting start to 0."
+                )
+                start = 0
+
+            # Check that start < end
+            if start >= end:
+                raise ValueError(f"cell_indices_range start ({start}) must be less than end ({end})")
+            
+            # Validate against actual data shape if in quick_mode
+            if self.ldscore_save_format == "quick_mode" and self.quick_mode_resource_dir is not None:
+                # Check if concatenated latent adata exists
+                concat_adata_path = Path(self.workdir) / self.project_name / "latent2gene" / "concatenated_latent_adata.h5ad"
+                assert concat_adata_path.exists(), f"Concatenated latent adata not found at {concat_adata_path}. The latent to gene step must be run first."
+                shape = get_anndata_shape(str(concat_adata_path))
+                if shape is not None:
+                    n_obs, _ = shape
+                    if end > n_obs:
+                        logger.warning(
+                            f"cell_indices_range end ({end}) exceeds number of observations ({n_obs}) "
+                            f"Set end to {n_obs}."
+                            )
+                        end = n_obs
+            self.cell_indices_range = (start, end)
+            logger.info(f"Processing cell_indices_range: [{start}, {end})")
+
         
         if self.sumstats_file is None and self.sumstats_config_file is None:
             raise ValueError("One of sumstats_file and sumstats_config_file must be provided.")
