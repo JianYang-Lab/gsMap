@@ -769,6 +769,7 @@ class SpatialLDSCConfig(ConfigWithAutoPaths):
         help="Name of the project"
     )]
 
+
     w_file: str | None = None
     # ldscore_save_dir: str
     use_additional_baseline_annotation: bool = True
@@ -781,6 +782,7 @@ class SpatialLDSCConfig(ConfigWithAutoPaths):
     chisq_max: int | None = None
     all_chunk: int | None = None
     chunk_range: tuple[int, int] | None = None
+    sample_name: str | None = None  # New field for filtering by sample name
 
     ldscore_save_format: Literal["feather", "quick_mode"] = "feather"
 
@@ -796,6 +798,14 @@ class SpatialLDSCConfig(ConfigWithAutoPaths):
 
     def __post_init__(self):
         super().__post_init__()
+        
+        # Validate exclusivity between sample_name and chunk_range
+        if self.sample_name is not None and self.chunk_range is not None:
+            raise ValueError(
+                "Only one of sample_name or chunk_range can be provided, not both. "
+                "Use sample_name to filter by sample, or chunk_range to process specific chunk indices."
+            )
+        
         if self.sumstats_file is None and self.sumstats_config_file is None:
             raise ValueError("One of sumstats_file and sumstats_config_file must be provided.")
         if self.sumstats_file is not None and self.sumstats_config_file is not None:
@@ -1116,17 +1126,23 @@ class CauchyCombinationConfig(ConfigWithAutoPaths):
             if self.sample_name_list and len(self.sample_name_list) > 0:
                 raise ValueError("Only one of sample_name and sample_name_list must be provided.")
             else:
+                # Single sample case
                 self.sample_name_list = [self.sample_name]
-                self.output_file = (
-                    self.get_cauchy_result_file(self.trait_name)
-                    if self.output_file is None
-                    else self.output_file
-                )
+                if self.output_file is None:
+                    # Use single sample naming convention
+                    self.output_file = Path(
+                        f"{self.cauchy_save_dir}/{self.project_name}_single_sample_{self.sample_name}_{self.trait_name}.Cauchy.csv.gz"
+                    )
         else:
-            assert self.sample_name_list and len(self.sample_name_list) > 0, "At least one sample name must be provided."
-            assert self.output_file is not None, (
-                "Output_file must be provided if sample_name_list is provided."
-            )
+            # Multiple samples or all samples case
+            if not (self.sample_name_list and len(self.sample_name_list) > 0):
+                raise ValueError("At least one sample name must be provided via sample_name or sample_name_list.")
+            
+            if self.output_file is None:
+                # Use all samples naming convention when no specific sample_name provided
+                self.output_file = Path(
+                    f"{self.cauchy_save_dir}/{self.project_name}_all_samples_{self.trait_name}.Cauchy.csv.gz"
+                )
 
 
 @dataclass

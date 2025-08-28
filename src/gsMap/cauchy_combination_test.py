@@ -70,9 +70,20 @@ def acat_test(pvalues, weights=None):
 
 
 def run_Cauchy_combination(config: CauchyCombinationConfig):
+    # Log the project and sample information
+    logger.info(f"Running Cauchy combination for project: {config.project_name}, trait: {config.trait_name}")
+    if config.sample_name:
+        logger.info(f"Processing single sample: {config.sample_name}")
+    else:
+        logger.info(f"Processing {len(config.sample_name_list)} samples: {', '.join(config.sample_name_list)}")
+    
     ldsc_list = []
 
+    # Store original sample_name to restore later
+    original_sample_name = config.sample_name
+    
     for sample_name in config.sample_name_list:
+        # Temporarily set sample_name for get_ldsc_result_file and hdf5_with_latent_path methods
         config.sample_name = sample_name
 
         # Load the LDSC results for the current sample
@@ -97,6 +108,9 @@ def run_Cauchy_combination(config: CauchyCombinationConfig):
         # Add annotations to the LDSC dataframe
         ldsc["annotation"] = adata.obs.loc[ldsc.spot, config.annotation].to_list()
         ldsc_list.append(ldsc)
+    
+    # Restore original sample_name
+    config.sample_name = original_sample_name
 
     # Concatenate all LDSC dataframes from different samples
     ldsc_all = pd.concat(ldsc_list)
@@ -140,5 +154,11 @@ def run_Cauchy_combination(config: CauchyCombinationConfig):
         compression="gzip",
         index=False,
     )
-    logger.info(f"Cauchy combination results saved at {output_file}.")
+    
+    # Log appropriate message based on single vs multiple samples
+    if original_sample_name:
+        logger.info(f"Cauchy combination results for single sample '{original_sample_name}' saved at {output_file}")
+    else:
+        logger.info(f"Cauchy combination results for {len(config.sample_name_list)} samples saved at {output_file}")
+    
     return results

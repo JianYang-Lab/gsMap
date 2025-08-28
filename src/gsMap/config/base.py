@@ -163,10 +163,15 @@ class ConfigWithAutoPaths:
         return Path(f"{self.ldsc_save_dir}/{self.sample_name}_{trait_name}.csv.gz")
     
     @ensure_path_exists
-    def get_cauchy_result_file(self, trait_name: str) -> Path:
-        return Path(
-            f"{self.cauchy_save_dir}/{self.sample_name}_{trait_name}.Cauchy.csv.gz"
-        )
+    def get_cauchy_result_file(self, trait_name: str, all_samples: bool = False) -> Path:
+        if all_samples:
+            return Path(
+                f"{self.cauchy_save_dir}/{self.project_name}_all_samples_{trait_name}.Cauchy.csv.gz"
+            )
+        else:
+            return Path(
+                f"{self.cauchy_save_dir}/{self.project_name}_single_sample_{self.sample_name}_{trait_name}.Cauchy.csv.gz"
+            )
     
     @ensure_path_exists
     def get_gene_diagnostic_info_save_path(self, trait_name: str) -> Path:

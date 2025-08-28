@@ -49,13 +49,17 @@ class ChunkMetadata:
     """Metadata for chunk processing results."""
     
     def __init__(self, chunk_index: int, total_chunks: int, n_spots: int,
-                 n_snps: int, trait_name: str, project_name: str):
+                 n_snps: int, trait_name: str, project_name: str,
+                 start_spot: int = None, end_spot: int = None, total_spots: int = None):
         self.chunk_index = chunk_index
         self.total_chunks = total_chunks
         self.n_spots = n_spots
         self.n_snps = n_snps
         self.trait_name = trait_name
         self.project_name = project_name
+        self.start_spot = start_spot
+        self.end_spot = end_spot
+        self.total_spots = total_spots
         self.timestamp = datetime.now().isoformat()
         self.hostname = os.uname().nodename if hasattr(os, 'uname') else 'unknown'
         self.pid = os.getpid()
@@ -65,8 +69,14 @@ class ChunkMetadata:
     
     def get_filename(self, extension: str = 'csv.gz') -> str:
         """Generate standard filename for chunk results."""
-        return (f"{self.project_name}_{self.trait_name}_"
-                f"chunk{self.chunk_index:04d}_of_{self.total_chunks:04d}.{extension}")
+        # Use new naming convention if spot range is provided
+        if self.start_spot is not None and self.end_spot is not None and self.total_spots is not None:
+            return (f"{self.project_name}_{self.trait_name}_"
+                    f"start{self.start_spot:06d}_end{self.end_spot:06d}_total{self.total_spots:06d}.{extension}")
+        else:
+            # Fallback to old naming convention
+            return (f"{self.project_name}_{self.trait_name}_"
+                    f"chunk{self.chunk_index:04d}_of_{self.total_chunks:04d}.{extension}")
 
 
 # ============================================================================
@@ -302,11 +312,12 @@ class ChunkWriter:
     """Writes chunk results to disk as they are processed."""
     
     def __init__(self, output_dir: Path, config: SpatialLDSCConfig, 
-                 trait_name: str, n_snps_used: int):
+                 trait_name: str, n_snps_used: int, quick_handler=None):
         self.output_dir = output_dir
         self.config = config
         self.trait_name = trait_name
         self.n_snps_used = n_snps_used
+        self.quick_handler = quick_handler
         self.saved_files = []
         self.write_queue = queue.Queue()
         self.writer_thread = None
@@ -363,14 +374,23 @@ class ChunkWriter:
     def write_chunk(self, chunk_idx: int, betas: np.ndarray, ses: np.ndarray,
                    spot_names: pd.Index) -> None:
         """Queue a chunk for asynchronous writing to disk."""
-        # Create metadata
+        # Get spot range if quick_handler is available
+        if self.quick_handler and hasattr(self.quick_handler, 'get_chunk_spot_range'):
+            start_spot, end_spot, total_spots = self.quick_handler.get_chunk_spot_range(chunk_idx - 1)
+        else:
+            start_spot, end_spot, total_spots = None, None, None
+        
+        # Create metadata with spot range information
         metadata = ChunkMetadata(
             chunk_index=chunk_idx,
             total_chunks=self.config.total_chunks,
             n_spots=len(spot_names),
             n_snps=self.n_snps_used,
             trait_name=self.trait_name,
-            project_name=self.config.project_name
+            project_name=self.config.project_name,
+            start_spot=start_spot,
+            end_spot=end_spot,
+            total_spots=total_spots
         )
         
         # Add to write queue (non-blocking)
@@ -527,7 +547,7 @@ def process_chunks_with_queue(config: SpatialLDSCConfig,
     gc.collect()
     
     # Create writer
-    writer = ChunkWriter(output_dir, config, trait_name, n_snps_used)
+    writer = ChunkWriter(output_dir, config, trait_name, n_snps_used, quick_handler)
     
     # Determine number of loader threads based on platform
     if jax.default_backend() == 'gpu':
@@ -663,12 +683,22 @@ def merge_chunk_results(output_dir: Path, project_name: str, trait_name: str,
     """Merge all chunk results into a single DataFrame."""
     logger.info(f"Merging chunk results for {project_name}_{trait_name}")
     
-    # Find all chunk files
-    pattern = f"{project_name}_{trait_name}_chunk*.csv.gz"
-    chunk_files = sorted(output_dir.glob(pattern))
+    # Find all chunk files - support both naming conventions
+    # Try new naming convention first (start/end/total)
+    pattern_new = f"{project_name}_{trait_name}_start*.csv.gz"
+    chunk_files = sorted(output_dir.glob(pattern_new))
+    
+    # If no files with new convention, try old convention (chunk)
+    if not chunk_files:
+        pattern_old = f"{project_name}_{trait_name}_chunk*.csv.gz"
+        chunk_files = sorted(output_dir.glob(pattern_old))
+        if chunk_files:
+            logger.info(f"Using old naming convention (chunk-based)")
+    else:
+        logger.info(f"Using new naming convention (spot-range-based)")
     
     if not chunk_files:
-        raise FileNotFoundError(f"No chunk files found matching {pattern}")
+        raise FileNotFoundError(f"No chunk files found matching {pattern_new} or {pattern_old}")
     
     logger.info(f"Found {len(chunk_files)} chunk files")
     
@@ -779,6 +809,33 @@ class QuickModeLDScore:
             concat_adata = ad.read_h5ad(concat_adata_path, backed='r')
             gene_names_from_adata = concat_adata.var_names.to_numpy()
             self.spot_names_all = concat_adata.obs_names.to_numpy()
+            
+            # Filter by sample_name if provided
+            if config.sample_name:
+                logger.info(f"Filtering spots by sample_name: {config.sample_name}")
+                # Get sample information from obs
+                sample_info = concat_adata.obs['sample'].to_numpy() if 'sample' in concat_adata.obs.columns else None
+                if sample_info is None:
+                    logger.warning("No 'sample' column found in obs. Checking for sample_name column...")
+                    sample_info = concat_adata.obs['sample_name'].to_numpy() if 'sample_name' in concat_adata.obs.columns else None
+                
+                if sample_info is None:
+                    concat_adata.file.close()
+                    raise ValueError("No 'sample' or 'sample_name' column found in concatenated_latent_adata.obs. Cannot filter by sample.")
+                
+                # Get indices of spots for the specified sample
+                self.spot_indices = np.where(sample_info == config.sample_name)[0]
+                if len(self.spot_indices) == 0:
+                    concat_adata.file.close()
+                    raise ValueError(f"No spots found for sample_name '{config.sample_name}'. Available samples: {np.unique(sample_info)}")
+                
+                logger.info(f"Found {len(self.spot_indices)} spots for sample '{config.sample_name}'")
+                self.spot_names_filtered = self.spot_names_all[self.spot_indices]
+            else:
+                # Use all spots if no sample_name specified
+                self.spot_indices = np.arange(n_spots_zarr)
+                self.spot_names_filtered = self.spot_names_all
+            
             concat_adata.file.close()
             assert len(self.spot_names_all) == n_spots_zarr
             assert len(gene_names_from_adata) == n_genes_zarr
@@ -811,10 +868,11 @@ class QuickModeLDScore:
             if hasattr(self.snp_gene_weight_sparse, 'tocsr'):
                 self.snp_gene_weight_sparse = self.snp_gene_weight_sparse.tocsr()
             
-            # Set up chunking for zarr reading
+            # Set up chunking for zarr reading - based on filtered spots
             self.chunk_size = config.spots_per_chunk_quick_mode
-            self.chunk_starts = list(range(0, n_spots_zarr, self.chunk_size))
-            self.n_spots = n_spots_zarr
+            self.n_spots_filtered = len(self.spot_indices)
+            self.chunk_starts = list(range(0, self.n_spots_filtered, self.chunk_size))
+            self.n_spots = n_spots_zarr  # Keep original for zarr indexing
             
             # Store flag for zarr mode
             self.use_zarr = True
@@ -853,12 +911,15 @@ class QuickModeLDScore:
         
         if self.use_zarr:
             # Zarr-based implementation - read only the needed chunk from disk
-            end = min(start + self.chunk_size, self.n_spots)
+            end = min(start + self.chunk_size, self.n_spots_filtered)
             
-            # Read only the required chunk from zarr (stays on disk, only loads this chunk)
-            # Select spots [start:end] and aligned genes
+            # Get the actual zarr indices for this chunk (accounting for sample filtering)
+            chunk_spot_indices = self.spot_indices[start:end]
+            
+            # Read only the required spots from zarr (stays on disk, only loads this chunk)
+            # Select specific spots and aligned genes
             # Shape is (n_spots, n_genes), so we index [spots, genes]
-            mk_score_chunk = self.mkscore_zarr[start:end, self.zarr_gene_indices]
+            mk_score_chunk = self.mkscore_zarr[chunk_spot_indices, :][:, self.zarr_gene_indices]
             # Transpose to (n_genes, n_spots) for matrix multiplication
             mk_score_chunk = mk_score_chunk.T
             
@@ -872,8 +933,8 @@ class QuickModeLDScore:
             if hasattr(ldscore_chunk, 'toarray'):
                 ldscore_chunk = ldscore_chunk.toarray()
             
-            # Use actual spot names from the concatenated adata
-            spot_names = pd.Index(self.spot_names_all[start:end])
+            # Use actual spot names from the filtered spots
+            spot_names = pd.Index(self.spot_names_filtered[start:end])
             
             return ldscore_chunk.astype(np.float32), spot_names
             
@@ -892,6 +953,22 @@ class QuickModeLDScore:
                 ldscore_chunk = ldscore_chunk.toarray()
             
             return ldscore_chunk.astype(np.float32), self.mk_score.columns[start:end]
+    
+    def get_total_chunks(self) -> int:
+        """Return total number of chunks."""
+        return len(self.chunk_starts)
+    
+    def get_chunk_spot_range(self, chunk_index: int) -> Tuple[int, int, int]:
+        """Get the start, end, and total spots for a chunk."""
+        if self.use_zarr:
+            start = self.chunk_starts[chunk_index]
+            end = min(start + self.chunk_size, self.n_spots_filtered)
+            # Return indices relative to filtered spots
+            return start, end, self.n_spots_filtered
+        else:
+            start = self.chunk_starts[chunk_index]
+            end = min(start + self.chunk_size, self.mk_score.shape[1])
+            return start, end, self.mk_score.shape[1]
 
 
 # ============================================================================
@@ -920,7 +997,9 @@ def run_spatial_ldsc_single_trait(config: SpatialLDSCConfig,
     """
     logger.info("=" * 70)
     logger.info(f"Running Spatial LDSC (JAX-optimized Final Version)")
-    logger.info(f"Sample: {config.project_name}, Trait: {trait_name}")
+    logger.info(f"Project: {config.project_name}, Trait: {trait_name}")
+    if config.sample_name:
+        logger.info(f"Filtering by sample: {config.sample_name}")
     if config.chunk_range:
         logger.info(f"Chunk range: {config.chunk_range}")
     logger.info("=" * 70)
