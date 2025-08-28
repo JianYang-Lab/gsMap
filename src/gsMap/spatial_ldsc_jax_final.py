@@ -782,10 +782,11 @@ def merge_chunk_results(output_dir: Path, project_name: str, trait_name: str,
     # Sort by spot name
     merged_df = merged_df.sort_values('spot').reset_index(drop=True)
     
-    # Calculate FDR q-values across all spots
-    logger.info("Calculating FDR q-values across all spots...")
+    # Calculate FDR q-values for reporting only (not saved to dataframe)
+    logger.info(f"Calculating FDR q-values across all spots (alpha={fdr_alpha})...")
     _, q_values, _, _ = multipletests(merged_df['p'].values, alpha=fdr_alpha, method='fdr_bh')
-    merged_df['q_value'] = q_values
+    n_fdr_sig = (q_values < fdr_alpha).sum()
+    logger.info(f"FDR-corrected significant spots (q < {fdr_alpha}): {n_fdr_sig}")
     
     # Clean up chunk files if requested
     if clean_chunks:
@@ -1105,22 +1106,54 @@ def run_spatial_ldsc_single_trait(config: SpatialLDSCConfig,
             validate=True, clean_chunks=False
         )
         
-        # Save final results
+        # Save and log statistics using shared function
         final_file = config.ldsc_save_dir / f"{config.project_name}_{trait_name}.csv.gz"
-        merged_df.to_csv(final_file, index=False, compression='gzip')
-        logger.info(f"Final results saved to {final_file}")
-        
-        # Log summary with FDR-corrected significance
-        logger.info(f"Total spots: {len(merged_df)}")
-        logger.info(f"Significant spots (FDR q < 0.05): {(merged_df['q_value'] < 0.05).sum()}")
-        logger.info(f"Nominally significant (p < 0.05): {(merged_df['p'] < 0.05).sum()}")
-        logger.info(f"Max -log10(p): {merged_df['neg_log10_p'].max():.2f}")
+        save_results_and_log_statistics(merged_df, final_file, )
         
         return merged_df
     else:
         logger.info(f"Processed chunks {start_chunk}-{end_chunk} of {total_chunks}")
         logger.info("Run merge_results() after all chunks are complete")
         return None
+
+
+def save_results_and_log_statistics(merged_df: pd.DataFrame, 
+                                    output_file: Path,
+                                    ) -> None:
+    """
+    Save merged results and log statistical summary.
+    
+    Args:
+        merged_df: Merged DataFrame with p-values and betas
+        output_file: Path to save the compressed CSV file
+    """
+    # Save final results
+    merged_df.to_csv(output_file, index=False, compression='gzip')
+
+    # Calculate statistics
+    n_spots = len(merged_df)
+    bonferroni_threshold = 0.05 / n_spots
+    n_bonferroni_sig = (merged_df['p'] < bonferroni_threshold).sum()
+    
+    # Calculate FDR for informational purposes only
+    from statsmodels.stats.multitest import multipletests
+    _, fdr_corrected_pvals, _, _ = multipletests(merged_df['p'], alpha=0.001, method='fdr_bh')
+    n_fdr_sig = fdr_corrected_pvals.sum()
+    
+    # Log summary
+    logger.info("=" * 70)
+    logger.info(f"STATISTICAL SUMMARY")
+    logger.info("=" * 70)
+    logger.info(f"Total spots: {n_spots:,}")
+    logger.info(f"Mean beta: {merged_df['beta'].mean():.6f}")
+    logger.info(f"Max -log10(p): {merged_df['neg_log10_p'].max():.2f}")
+    logger.info("-" * 70)
+    logger.info(f"Nominally significant (p < 0.05): {(merged_df['p'] < 0.05).sum():,}")
+    logger.info(f"Bonferroni threshold: 0.05/{n_spots:,} = {bonferroni_threshold:.2e}")
+    logger.info(f"Bonferroni-corrected significant spots (p < {bonferroni_threshold:.2e}): {n_bonferroni_sig:,}")
+    logger.info(f"FDR-corrected significant spots (alpha=0.001): {n_fdr_sig:,} (informational only)")
+
+    logger.info("=" * 70)
 
 
 def merge_results(config: SpatialLDSCConfig, trait_name: str,
@@ -1139,15 +1172,9 @@ def merge_results(config: SpatialLDSCConfig, trait_name: str,
     merged_df = merge_chunk_results(chunks_dir, config.project_name, 
                                    trait_name, validate, clean_chunks)
     
-    # Save final results
+    # Save and log statistics
     output_file = config.ldsc_save_dir / f"{config.project_name}_{trait_name}.csv.gz"
-    merged_df.to_csv(output_file, index=False, compression='gzip')
-    logger.info(f"Saved final results to {output_file}")
-    
-    # Log summary
-    logger.info(f"Total spots: {len(merged_df)}")
-    logger.info(f"Mean beta: {merged_df['beta'].mean():.6f}")
-    logger.info(f"Significant spots (p < 0.05): {(merged_df['p'] < 0.05).sum()}")
+    save_results_and_log_statistics(merged_df, output_file,)
     
     return merged_df
 
