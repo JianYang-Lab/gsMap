@@ -15,6 +15,7 @@ import numpy as np
 import zarr
 from zarr import DirectoryStore
 from scipy.sparse import csr_matrix
+from zarr.sync import ThreadSynchronizer
 
 logger = logging.getLogger(__name__)
 

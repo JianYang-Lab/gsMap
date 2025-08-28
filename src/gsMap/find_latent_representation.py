@@ -77,8 +77,8 @@ def run_find_latent_representation(args: FindLatentRepresentationsConfig):
     set_seed(2024)
 
     # Find the hvg
-    spe_file_list = args.h5ad_list_file
-    spe_file_list = _parse_spe_file_list(spe_file_list)
+    # spe_file_list = args.h5ad_list_file
+    spe_file_list = list(args.sample_h5ad_dict.values())
     hvg, n_cell_used, percent_annotation, gene_name_dict = find_common_hvg(spe_file_list, args)
     common_genes = np.array(list(gene_name_dict.keys()))
 
