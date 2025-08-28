@@ -275,7 +275,7 @@ def run_spatial_ldsc(config: SpatialLDSCConfig):
     else:
         total_chunk_number_found = determine_total_chunks(config)
 
-    start_chunk, end_chunk = determine_chunk_range(config, total_chunk_number_found)
+    start_chunk, end_chunk = determine_cell_indices_range(config, total_chunk_number_found)
     running_chunk_number = end_chunk - start_chunk + 1
 
     # Load zarr file if needed
@@ -364,17 +364,17 @@ def determine_total_chunks(config):
     return total_chunk_number_found
 
 
-def determine_chunk_range(config, total_chunk_number_found):
-    """Determine the range of chunks to process."""
+def determine_cell_indices_range(config, total_chunk_number_found):
+    """Determine the range of cell indices (chunks) to process."""
     if config.all_chunk is None:
-        if config.chunk_range is not None:
-            if not (1 <= config.chunk_range[0] <= total_chunk_number_found) or not (
-                1 <= config.chunk_range[1] <= total_chunk_number_found
+        if config.cell_indices_range is not None:
+            if not (1 <= config.cell_indices_range[0] <= total_chunk_number_found) or not (
+                1 <= config.cell_indices_range[1] <= total_chunk_number_found
             ):
-                raise ValueError("Chunk range out of bound. It should be in [1, all_chunk]")
-            start_chunk, end_chunk = config.chunk_range
+                raise ValueError("Cell indices range out of bound. It should be in [1, all_chunk]")
+            start_chunk, end_chunk = config.cell_indices_range
             logger.info(
-                f"Chunk range provided, using chunked files from {start_chunk} to {end_chunk}"
+                f"Cell indices range provided, using chunked files from {start_chunk} to {end_chunk}"
             )
         else:
             start_chunk, end_chunk = 1, total_chunk_number_found

@@ -291,7 +291,7 @@ class RankCalculator:
                     dtype=np.float32,
                     chunks=(min(1000, total_cells_expected), n_genes),  # Row-wise chunks
                     mode='w',
-                    num_write_workers=self.config.num_write_workers
+                    num_write_workers=self.config.mkscore_write_workers
                 )
                 # Initialize global accumulators
                 sum_log_ranks = np.zeros(n_genes, dtype=np.float64)

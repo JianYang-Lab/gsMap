@@ -80,7 +80,7 @@ class ConnectivityMatrixBuilder:
         """
         self.config = config
         # Use configured batch size for GPU processing
-        self.gpu_batch_size = config.gpu_batch_size
+        self.mkscore_batch_size = config.mkscore_batch_size
     
     def build_connectivity_matrix(
         self,
@@ -125,7 +125,7 @@ class ConnectivityMatrixBuilder:
         spatial_neighbors = cell_indices[spatial_neighbors]
         
         # Step 2 & 3: Find anchors and homogeneous neighbors in batches
-        logger.info(f"Finding anchors and homogeneous neighbors (batch size: {self.gpu_batch_size})...")
+        logger.info(f"Finding anchors and homogeneous neighbors (batch size: {self.mkscore_batch_size})...")
 
         # Convert to JAX arrays once
         all_emb_gcn_norm_jax = jnp.array(emb_gcn)
@@ -135,8 +135,8 @@ class ConnectivityMatrixBuilder:
         homogeneous_neighbors_list = []
         homogeneous_weights_list = []
         
-        for batch_start in trange(0, n_masked, self.gpu_batch_size,desc = f"Finding homogeneous neighbors"):
-            batch_end = min(batch_start + self.gpu_batch_size, n_masked)
+        for batch_start in trange(0, n_masked, self.mkscore_batch_size, desc =f"Finding homogeneous neighbors"):
+            batch_end = min(batch_start + self.mkscore_batch_size, n_masked)
             batch_indices = slice(batch_start, batch_end)
             
             # Get batch data (already normalized)

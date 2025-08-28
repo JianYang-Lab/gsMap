@@ -401,7 +401,7 @@ class MarkerScoreCalculator:
             shape=(n_cells, n_genes),
             chunks=chunks,
             mode='w',
-            num_write_workers=self.config.num_write_workers
+            num_write_workers=self.config.mkscore_write_workers
         )
         
         # Process each cell type
@@ -434,7 +434,7 @@ class MarkerScoreCalculator:
         logger.info("Initializing parallel reader...")
         reader = ParallelRankReader(
             rank_zarr,
-            num_workers=self.config.num_read_workers
+            num_workers=self.config.rank_read_workers
         )
         
         for cell_type in cell_types:
@@ -467,8 +467,8 @@ class MarkerScoreCalculator:
                 'num_anchor': self.config.num_anchor,
                 'num_neighbour': self.config.num_neighbour,
                 'batch_size': getattr(self.config, 'batch_size', 1000),
-                'num_read_workers': self.config.num_read_workers,
-                'num_write_workers': self.config.num_write_workers
+                'num_read_workers': self.config.rank_read_workers,
+                'mkscore_write_workers': self.config.mkscore_write_workers
             },
             'global_log_gmean': global_log_gmean.tolist(),
             'global_expr_frac': global_expr_frac.tolist()

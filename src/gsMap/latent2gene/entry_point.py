@@ -97,9 +97,9 @@ def run_latent_to_gene(config) -> Dict[str, Any]:
             "num_neighbour_spatial": config.num_neighbour_spatial,
             "num_anchor": config.num_anchor,
             "num_neighbour": config.num_neighbour,
-            "gpu_batch_size": config.gpu_batch_size,
-            "num_read_workers": config.num_read_workers,
-            "num_write_workers": config.num_write_workers
+            "gpu_batch_size": config.mkscore_batch_size,
+            "num_read_workers": config.rank_read_workers,
+            "mkscore_write_workers": config.mkscore_write_workers
         },
         "outputs": {
             "concatenated_latent_adata": str(rank_outputs["concatenated_latent_adata"]),

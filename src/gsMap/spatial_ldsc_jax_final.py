@@ -68,15 +68,14 @@ class ChunkMetadata:
         return vars(self)
     
     def get_filename(self, extension: str = 'csv.gz') -> str:
-        """Generate standard filename for chunk results."""
-        # Use new naming convention if spot range is provided
+        """Generate standard filename for chunk results using spot-range naming."""
+        # Always use spot-range naming convention
         if self.start_spot is not None and self.end_spot is not None and self.total_spots is not None:
             return (f"{self.project_name}_{self.trait_name}_"
                     f"start{self.start_spot:06d}_end{self.end_spot:06d}_total{self.total_spots:06d}.{extension}")
         else:
-            # Fallback to old naming convention
-            return (f"{self.project_name}_{self.trait_name}_"
-                    f"chunk{self.chunk_index:04d}_of_{self.total_chunks:04d}.{extension}")
+            # If spot range not available, raise error instead of fallback
+            raise ValueError("Spot range information (start_spot, end_spot, total_spots) is required for filename generation")
 
 
 # ============================================================================
@@ -683,24 +682,14 @@ def merge_chunk_results(output_dir: Path, project_name: str, trait_name: str,
     """Merge all chunk results into a single DataFrame."""
     logger.info(f"Merging chunk results for {project_name}_{trait_name}")
     
-    # Find all chunk files - support both naming conventions
-    # Try new naming convention first (start/end/total)
-    pattern_new = f"{project_name}_{trait_name}_start*.csv.gz"
-    chunk_files = sorted(output_dir.glob(pattern_new))
-    
-    # If no files with new convention, try old convention (chunk)
-    if not chunk_files:
-        pattern_old = f"{project_name}_{trait_name}_chunk*.csv.gz"
-        chunk_files = sorted(output_dir.glob(pattern_old))
-        if chunk_files:
-            logger.info(f"Using old naming convention (chunk-based)")
-    else:
-        logger.info(f"Using new naming convention (spot-range-based)")
+    # Find all chunk files using new spot-range naming convention
+    pattern = f"{project_name}_{trait_name}_start*.csv.gz"
+    chunk_files = sorted(output_dir.glob(pattern))
     
     if not chunk_files:
-        raise FileNotFoundError(f"No chunk files found matching {pattern_new} or {pattern_old}")
+        raise FileNotFoundError(f"No chunk files found matching {pattern}")
     
-    logger.info(f"Found {len(chunk_files)} chunk files")
+    logger.info(f"Found {len(chunk_files)} chunk files with spot-range naming")
     
     # Validate chunks and collect metadata
     valid_chunks = []
@@ -984,7 +973,7 @@ def run_spatial_ldsc_single_trait(config: SpatialLDSCConfig,
     This function:
     1. Always uses queue-based processing for efficiency
     2. Always writes chunk files for debugging/reproducibility
-    3. Auto-merges when chunk_range covers all chunks
+    3. Auto-merges when cell_indices_range covers all chunks
     4. Returns merged DataFrame when all chunks processed, None otherwise
     
     Args:
@@ -1000,8 +989,8 @@ def run_spatial_ldsc_single_trait(config: SpatialLDSCConfig,
     logger.info(f"Project: {config.project_name}, Trait: {trait_name}")
     if config.sample_name:
         logger.info(f"Filtering by sample: {config.sample_name}")
-    if config.chunk_range:
-        logger.info(f"Chunk range: {config.chunk_range}")
+    if config.cell_indices_range:
+        logger.info(f"Cell indices range: {config.cell_indices_range}")
     logger.info("=" * 70)
     
     # Create output directory for chunks
@@ -1029,8 +1018,8 @@ def run_spatial_ldsc_single_trait(config: SpatialLDSCConfig,
     logger.info(f"Total chunks: {total_chunks}")
     
     # Determine chunk range
-    if config.chunk_range:
-        start_chunk, end_chunk = config.chunk_range
+    if config.cell_indices_range:
+        start_chunk, end_chunk = config.cell_indices_range
     else:
         start_chunk, end_chunk = 1, total_chunks
     
@@ -1047,8 +1036,8 @@ def run_spatial_ldsc_single_trait(config: SpatialLDSCConfig,
     logger.info(f"Processed {len(saved_files)} chunks in {elapsed_time:.2f} seconds")
     
     # Auto-merge if we processed all chunks
-    # Skip auto-merge if chunk_range is specified and it's not covering all chunks
-    should_merge = (config.chunk_range is None) or \
+    # Skip auto-merge if cell_indices_range is specified and it's not covering all chunks
+    should_merge = (config.cell_indices_range is None) or \
                    (start_chunk == 1 and end_chunk == total_chunks)
     
     if should_merge:

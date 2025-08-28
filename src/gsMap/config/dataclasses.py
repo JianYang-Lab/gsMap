@@ -549,6 +549,7 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
         help="Name of the project"
     )]
 
+    # --------input h5ad file paths which have the latent representations
     h5ad: Annotated[Optional[List[Path]], typer.Option(
         help="Space-separated list of h5ad file paths. Sample names are derived from file names without suffix.",
         exists=True,
@@ -569,14 +570,12 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
         dir_okay = False,
     )] = None
 
+
+    # --------input h5ad obs, obsm, layers keys
+
     annotation: Annotated[Optional[str], typer.Option(
         help="Cell type annotation in adata.obs to use. This would constrain finding homogeneous spots within each cell type"
     )] = None
-    
-    no_expression_fraction: Annotated[bool, typer.Option(
-        "--no-expression-fraction",
-        help="Skip expression fraction filtering"
-    )] = False
 
     data_layer: Annotated[str, typer.Option(
         help="Gene expression raw counts data layer in h5ad layers, e.g., 'count', 'counts'. Other wise use 'X' for adata.X"
@@ -595,6 +594,7 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
         help="Spatial key in adata.obsm"
     )] = "spatial"
 
+    # --------parameters for finding homogeneous spots
     num_neighbour_spatial: Annotated[int, typer.Option(
         help="k1: Number of spatial neighbors for initial graph",
         min=10,
@@ -613,38 +613,34 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
         max=100
     )] = 21
     
-
-    use_w: Annotated[bool, typer.Option(
-        "--use-w",
-        help="Use section specific weights for batch effect"
+    no_expression_fraction: Annotated[bool, typer.Option(
+        "--no-expression-fraction",
+        help="Skip expression fraction filtering"
     )] = False
-    
+
+
+    # -------- IO parameters
     rank_batch_size:int = 1000
     rank_write_interval:int = 10
 
-    num_read_workers: Annotated[int, typer.Option(
-        help="Number of parallel reader threads",
+    rank_read_workers: Annotated[int, typer.Option(
+        help="Number of parallel reader threads of rank zarr",
         min=1,
         max=16
     )] = 10
     
-    num_write_workers: Annotated[int, typer.Option(
-        help="Number of parallel writer threads",
+    mkscore_write_workers: Annotated[int, typer.Option(
+        help="Number of parallel writer threads of marker scores",
         min=1,
         max=16
     )] = 10
     
-    gpu_batch_size: Annotated[int, typer.Option(
-        help="Batch size for GPU processing to avoid CUDA OOM",
+    mkscore_batch_size: Annotated[int, typer.Option(
+        help="Batch size for GPU to calculate the marker score to avoid CUDA OOM",
         min=100,
         max=5000
     )] = 500
     
-    expr_frac_threshold: Annotated[float, typer.Option(
-        help="Expression fraction threshold for filtering",
-        min=0.0,
-        max=1.0
-    )] = 0.1
 
     chunks_cells: Annotated[Optional[int], typer.Option(
         help="Chunk size for cells dimension (None for optimal)"
@@ -664,13 +660,7 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
         min=100,
         max=10000
     )] = 1000
-    
-    n_neighbors_gcn: Annotated[int, typer.Option(
-        help="Number of neighbors for GCN",
-        min=5,
-        max=50
-    )] = 10
-    
+
     zarr_group_path: Optional[str] = None
     
     def __post_init__(self):
@@ -781,8 +771,8 @@ class SpatialLDSCConfig(ConfigWithAutoPaths):
     n_blocks: int = 200
     chisq_max: int | None = None
     all_chunk: int | None = None
-    chunk_range: tuple[int, int] | None = None
-    sample_name: str | None = None  # New field for filtering by sample name
+    cell_indices_range: tuple[int, int] | None = None  # Range of cell indices to process
+    sample_name: str | None = None  # Field for filtering by sample name
 
     ldscore_save_format: Literal["feather", "quick_mode"] = "feather"
 
@@ -799,11 +789,11 @@ class SpatialLDSCConfig(ConfigWithAutoPaths):
     def __post_init__(self):
         super().__post_init__()
         
-        # Validate exclusivity between sample_name and chunk_range
-        if self.sample_name is not None and self.chunk_range is not None:
+        # Validate exclusivity between sample_name and cell_indices_range
+        if self.sample_name is not None and self.cell_indices_range is not None:
             raise ValueError(
-                "Only one of sample_name or chunk_range can be provided, not both. "
-                "Use sample_name to filter by sample, or chunk_range to process specific chunk indices."
+                "Only one of sample_name or cell_indices_range can be provided, not both. "
+                "Use sample_name to filter by sample, or cell_indices_range to process specific cell indices."
             )
         
         if self.sumstats_file is None and self.sumstats_config_file is None:

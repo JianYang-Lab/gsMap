@@ -250,7 +250,7 @@ class ConnectivityMatrixBuilder:
     def __init__(self, config: LatentToGeneConfig):
         self.config = config
         # Use configured batch size for GPU processing
-        self.gpu_batch_size = config.gpu_batch_size
+        self.mkscore_batch_size = config.mkscore_batch_size
     
     def build_connectivity_matrix(
         self,
@@ -295,7 +295,7 @@ class ConnectivityMatrixBuilder:
         spatial_neighbors = cell_indices[spatial_neighbors]
         
         # Step 2 & 3: Find anchors and homogeneous neighbors in batches
-        logger.info(f"Finding anchors and homogeneous neighbors (batch size: {self.gpu_batch_size})...")
+        logger.info(f"Finding anchors and homogeneous neighbors (batch size: {self.mkscore_batch_size})...")
         
         # Pre-normalize embeddings once for all batches
         logger.debug("Pre-normalizing embeddings...")
@@ -315,8 +315,8 @@ class ConnectivityMatrixBuilder:
         homogeneous_neighbors_list = []
         homogeneous_weights_list = []
         
-        for batch_start in range(0, n_masked, self.gpu_batch_size):
-            batch_end = min(batch_start + self.gpu_batch_size, n_masked)
+        for batch_start in range(0, n_masked, self.mkscore_batch_size):
+            batch_end = min(batch_start + self.mkscore_batch_size, n_masked)
             batch_indices = slice(batch_start, batch_end)
             
             # Get batch data (already normalized)
@@ -766,7 +766,7 @@ class MarkerScoreCalculator:
         # Initialize parallel reader
         reader = ParallelRankReader(
             self.config.rank_zarr_path,
-            num_workers=self.config.num_read_workers
+            num_workers=self.config.rank_read_workers
         )
         
         # Process in batches
@@ -882,7 +882,7 @@ class MarkerScoreCalculator:
             shape=(n_cells, n_genes),
             chunks=chunks,
             mode='w',
-            num_write_workers=self.config.num_write_workers
+            num_write_workers=self.config.mkscore_write_workers
         )
         
         # Process each cell type
@@ -955,7 +955,7 @@ def main():
             annotation_key=args.annotation_key,
             spatial_key=args.spatial_key,
             batch_size=args.batch_size,
-            num_read_workers=args.num_workers,
+            rank_read_workers=args.num_workers,
             use_jax=not args.no_jax
         )
     
