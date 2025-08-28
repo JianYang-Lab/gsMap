@@ -24,6 +24,7 @@ from jax import jit, vmap
 from scipy.stats import norm
 from statsmodels.stats.multitest import multipletests
 from tqdm import tqdm
+import zarr
 
 from .config import SpatialLDSCConfig
 from .utils.regression_read import _read_ref_ld_v2, _read_sumstats, _read_w_ld
@@ -46,20 +47,22 @@ jax.config.update('jax_enable_x64', False)  # Use float32 for speed and memory e
 # ============================================================================
 
 class ChunkMetadata:
-    """Metadata for chunk processing results."""
+    """Metadata for chunk processing results using absolute positions."""
     
-    def __init__(self, chunk_index: int, total_chunks: int, n_spots: int,
-                 n_snps: int, trait_name: str, project_name: str,
-                 start_spot: int = None, end_spot: int = None, total_spots: int = None):
-        self.chunk_index = chunk_index
-        self.total_chunks = total_chunks
-        self.n_spots = n_spots
+    def __init__(self, n_spots: int, n_snps: int, trait_name: str, project_name: str,
+                 start_spot: int, end_spot: int, total_spots: int):
+        # Position-based metadata (required)
+        self.start_spot = start_spot  # Absolute start position in global adata
+        self.end_spot = end_spot      # Absolute end position in global adata (exclusive)
+        self.total_spots = total_spots  # Total spots in the global adata
+        self.n_spots = n_spots  # Number of spots in this chunk
+        
+        # Processing metadata
         self.n_snps = n_snps
         self.trait_name = trait_name
         self.project_name = project_name
-        self.start_spot = start_spot
-        self.end_spot = end_spot
-        self.total_spots = total_spots
+        
+        # System metadata
         self.timestamp = datetime.now().isoformat()
         self.hostname = os.uname().nodename if hasattr(os, 'uname') else 'unknown'
         self.pid = os.getpid()
@@ -68,14 +71,9 @@ class ChunkMetadata:
         return vars(self)
     
     def get_filename(self, extension: str = 'csv.gz') -> str:
-        """Generate standard filename for chunk results using spot-range naming."""
-        # Always use spot-range naming convention
-        if self.start_spot is not None and self.end_spot is not None and self.total_spots is not None:
-            return (f"{self.project_name}_{self.trait_name}_"
-                    f"start{self.start_spot:06d}_end{self.end_spot:06d}_total{self.total_spots:06d}.{extension}")
-        else:
-            # If spot range not available, raise error instead of fallback
-            raise ValueError("Spot range information (start_spot, end_spot, total_spots) is required for filename generation")
+        """Generate filename using absolute position ranges."""
+        return (f"{self.project_name}_{self.trait_name}_"
+                f"start{self.start_spot:06d}_end{self.end_spot:06d}_total{self.total_spots:06d}.{extension}")
 
 
 # ============================================================================
@@ -373,16 +371,14 @@ class ChunkWriter:
     def write_chunk(self, chunk_idx: int, betas: np.ndarray, ses: np.ndarray,
                    spot_names: pd.Index) -> None:
         """Queue a chunk for asynchronous writing to disk."""
-        # Get spot range if quick_handler is available  
+        # Get absolute spot positions - required for new metadata
         if self.quick_handler and hasattr(self.quick_handler, 'get_chunk_spot_range'):
             start_spot, end_spot, total_spots = self.quick_handler.get_chunk_spot_range(chunk_idx)  # chunk_idx is already 0-based
         else:
-            start_spot, end_spot, total_spots = None, None, None
+            raise ValueError("Cannot determine absolute positions for chunk. Quick handler required.")
         
-        # Create metadata with spot range information
+        # Create metadata with absolute position information
         metadata = ChunkMetadata(
-            chunk_index=chunk_idx,
-            total_chunks=self.config.total_chunks,
             n_spots=len(spot_names),
             n_snps=self.n_snps_used,
             trait_name=self.trait_name,
@@ -392,7 +388,7 @@ class ChunkWriter:
             total_spots=total_spots
         )
         
-        # Add to write queue (non-blocking)
+        # Add to write queue (non-blocking) - still use chunk_idx as identifier for the queue
         self.write_queue.put((chunk_idx, betas, ses, spot_names, metadata))
         
     def finalize(self):
@@ -635,7 +631,7 @@ def process_chunks_with_queue(config: SpatialLDSCConfig,
 # ============================================================================
 
 def validate_chunk_file(chunk_file: Path) -> bool:
-    """Validate a chunk result file."""
+    """Validate a chunk result file with position-based metadata."""
     try:
         if not chunk_file.exists():
             logger.error(f"Chunk file not found: {chunk_file}")
@@ -650,12 +646,21 @@ def validate_chunk_file(chunk_file: Path) -> bool:
         with open(metadata_file, 'r') as f:
             metadata = json.load(f)
         
-        required_fields = ['chunk_index', 'total_chunks', 'n_spots', 'n_snps', 
-                          'trait_name', 'project_name']
+        # Updated required fields - focused on position and data integrity
+        required_fields = ['start_spot', 'end_spot', 'total_spots', 'n_spots', 
+                          'n_snps', 'trait_name', 'project_name']
         for field in required_fields:
             if field not in metadata:
                 logger.error(f"Missing field '{field}' in metadata")
                 return False
+        
+        # Validate position logic
+        if metadata['start_spot'] >= metadata['end_spot']:
+            logger.error(f"Invalid position range: start ({metadata['start_spot']}) >= end ({metadata['end_spot']})")
+            return False
+        
+        if metadata['end_spot'] - metadata['start_spot'] != metadata['n_spots']:
+            logger.warning(f"Position range doesn't match n_spots (may be filtered data)")
         
         # Load and validate data
         df = pd.read_csv(chunk_file, compression='gzip')
@@ -667,7 +672,7 @@ def validate_chunk_file(chunk_file: Path) -> bool:
         
         # Check data consistency
         if len(df) != metadata['n_spots']:
-            logger.error(f"Mismatch in number of spots")
+            logger.error(f"Mismatch: file has {len(df)} spots but metadata says {metadata['n_spots']}")
             return False
         
         return True
@@ -678,7 +683,7 @@ def validate_chunk_file(chunk_file: Path) -> bool:
 
 
 def merge_chunk_results(output_dir: Path, project_name: str, trait_name: str,
-                       validate: bool = True, clean_chunks: bool = False) -> pd.DataFrame:
+                        validate: bool = True, clean_chunks: bool = False, fdr_alpha=0.001) -> pd.DataFrame:
     """Merge all chunk results into a single DataFrame."""
     logger.info(f"Merging chunk results for {project_name}_{trait_name}")
     
@@ -691,62 +696,45 @@ def merge_chunk_results(output_dir: Path, project_name: str, trait_name: str,
     
     logger.info(f"Found {len(chunk_files)} chunk files with spot-range naming")
     
-    # Validate chunks and collect metadata
+    # Validate chunks and collect position metadata
     valid_chunks = []
-    total_chunks_set = set()
-    chunk_indices = []
     chunk_ranges = []  # Store (start, end, file) for coverage validation
+    total_spots_set = set()  # Check consistency of total_spots
     
-    if validate:
-        for chunk_file in chunk_files:
-            # Load metadata
-            metadata_file = chunk_file.with_suffix('.json')
-            if metadata_file.exists():
-                with open(metadata_file, 'r') as f:
-                    metadata = json.load(f)
-                    total_chunks_set.add(metadata.get('total_chunks'))
-                    chunk_indices.append(metadata.get('chunk_index'))
+    for chunk_file in chunk_files:
+        # Load metadata
+        metadata_file = chunk_file.with_suffix('.json')
+        if metadata_file.exists():
+            with open(metadata_file, 'r') as f:
+                metadata = json.load(f)
+                
+                # Extract range information - this is now required
+                start_spot = metadata.get('start_spot')
+                end_spot = metadata.get('end_spot')
+                total_spots = metadata.get('total_spots')
+                
+                if start_spot is None or end_spot is None:
+                    raise ValueError(f"Chunk file {chunk_file} missing position information (start_spot/end_spot)")
+                
+                chunk_ranges.append((start_spot, end_spot, chunk_file))
+                if total_spots is not None:
+                    total_spots_set.add(total_spots)
+        else:
+            raise ValueError(f"Metadata file missing for {chunk_file}")
                     
-                    # Extract range from metadata or filename
-                    start_spot = metadata.get('start_spot')
-                    end_spot = metadata.get('end_spot')
-                    if start_spot is not None and end_spot is not None:
-                        chunk_ranges.append((start_spot, end_spot, chunk_file))
-                    
-            if validate_chunk_file(chunk_file):
-                valid_chunks.append(chunk_file)
-            else:
-                logger.warning(f"Skipping invalid chunk: {chunk_file}")
-        chunk_files = valid_chunks
-    else:
-        # Still collect metadata even without validation
-        for chunk_file in chunk_files:
-            metadata_file = chunk_file.with_suffix('.json')
-            if metadata_file.exists():
-                with open(metadata_file, 'r') as f:
-                    metadata = json.load(f)
-                    total_chunks_set.add(metadata.get('total_chunks'))
-                    chunk_indices.append(metadata.get('chunk_index'))
-                    
-                    # Extract range information
-                    start_spot = metadata.get('start_spot')
-                    end_spot = metadata.get('end_spot')
-                    if start_spot is not None and end_spot is not None:
-                        chunk_ranges.append((start_spot, end_spot, chunk_file))
+        if validate and validate_chunk_file(chunk_file):
+            valid_chunks.append(chunk_file)
+        elif validate:
+            logger.warning(f"Skipping invalid chunk: {chunk_file}")
+        else:
+            valid_chunks.append(chunk_file)
     
-    # Validate that all chunks have same total_chunks value
-    if len(total_chunks_set) > 1:
-        raise ValueError(f"❌ ERROR: Inconsistent total_chunks values found: {total_chunks_set}. "
-                        f"All chunk files must have the same total_chunks value!")
+    chunk_files = valid_chunks
     
-    expected_total = next(iter(total_chunks_set)) if total_chunks_set else None
-    
-    # Check if we have all expected chunks
-    if expected_total is not None:
-        actual_count = len(valid_chunks) if validate else len(chunk_files)
-        if actual_count != expected_total:
-            logger.warning(f"⚠️  SEVERE WARNING: Expected {expected_total} chunks but found {actual_count} valid chunks!")
-            logger.warning(f"   Missing chunk indices: {set(range(expected_total)) - set(chunk_indices)}")
+    # Validate consistency of total_spots
+    if len(total_spots_set) > 1:
+        raise ValueError(f"❌ ERROR: Inconsistent total_spots values found: {total_spots_set}. "
+                        f"All chunk files must be from the same dataset!")
     
     # Validate coverage (no gaps or overlaps) if we have range information
     if chunk_ranges:
@@ -796,7 +784,7 @@ def merge_chunk_results(output_dir: Path, project_name: str, trait_name: str,
     
     # Calculate FDR q-values across all spots
     logger.info("Calculating FDR q-values across all spots...")
-    _, q_values, _, _ = multipletests(merged_df['p'].values, alpha=0.05, method='fdr_bh')
+    _, q_values, _, _ = multipletests(merged_df['p'].values, alpha=fdr_alpha, method='fdr_bh')
     merged_df['q_value'] = q_values
     
     # Clean up chunk files if requested
@@ -825,9 +813,7 @@ class QuickModeLDScore:
 
         if config.marker_score_format == "zarr":
             mk_score_zarr_array_path = config.marker_scores_zarr_path
-            from gsMap.latent2gene.zarr_utils import ZarrBackedDense
-            import zarr
-            
+
             # Open zarr array in read mode - keeps data on disk
             logger.info(f"Opening marker scores zarr array from {mk_score_zarr_array_path}")
             self.mkscore_zarr = zarr.open(str(mk_score_zarr_array_path), mode='r')
@@ -1069,7 +1055,6 @@ def run_spatial_ldsc_single_trait(config: SpatialLDSCConfig,
     else:
         raise ValueError(f"Unsupported format: {config.ldscore_save_format}")
     
-    config.total_chunks = total_chunks
     logger.info(f"Total chunks: {total_chunks}")
     
     # Determine chunk indices to process
