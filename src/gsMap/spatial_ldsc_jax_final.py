@@ -75,7 +75,7 @@ class ChunkMetadata:
     def get_filename(self, extension: str = 'csv.gz') -> str:
         """Generate filename using absolute position ranges."""
         return (f"{self.project_name}_{self.trait_name}_"
-                f"start{self.start_spot:06d}_end{self.end_spot:06d}_total{self.total_spots:06d}.{extension}")
+                f"start{self.start_spot}_end{self.end_spot}_total{self.total_spots}.{extension}")
 
 
 # ============================================================================
