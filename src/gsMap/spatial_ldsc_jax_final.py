@@ -695,6 +695,7 @@ def merge_chunk_results(output_dir: Path, project_name: str, trait_name: str,
     valid_chunks = []
     total_chunks_set = set()
     chunk_indices = []
+    chunk_ranges = []  # Store (start, end, file) for coverage validation
     
     if validate:
         for chunk_file in chunk_files:
@@ -705,6 +706,12 @@ def merge_chunk_results(output_dir: Path, project_name: str, trait_name: str,
                     metadata = json.load(f)
                     total_chunks_set.add(metadata.get('total_chunks'))
                     chunk_indices.append(metadata.get('chunk_index'))
+                    
+                    # Extract range from metadata or filename
+                    start_spot = metadata.get('start_spot')
+                    end_spot = metadata.get('end_spot')
+                    if start_spot is not None and end_spot is not None:
+                        chunk_ranges.append((start_spot, end_spot, chunk_file))
                     
             if validate_chunk_file(chunk_file):
                 valid_chunks.append(chunk_file)
@@ -720,6 +727,12 @@ def merge_chunk_results(output_dir: Path, project_name: str, trait_name: str,
                     metadata = json.load(f)
                     total_chunks_set.add(metadata.get('total_chunks'))
                     chunk_indices.append(metadata.get('chunk_index'))
+                    
+                    # Extract range information
+                    start_spot = metadata.get('start_spot')
+                    end_spot = metadata.get('end_spot')
+                    if start_spot is not None and end_spot is not None:
+                        chunk_ranges.append((start_spot, end_spot, chunk_file))
     
     # Validate that all chunks have same total_chunks value
     if len(total_chunks_set) > 1:
@@ -734,6 +747,40 @@ def merge_chunk_results(output_dir: Path, project_name: str, trait_name: str,
         if actual_count != expected_total:
             logger.warning(f"⚠️  SEVERE WARNING: Expected {expected_total} chunks but found {actual_count} valid chunks!")
             logger.warning(f"   Missing chunk indices: {set(range(expected_total)) - set(chunk_indices)}")
+    
+    # Validate coverage (no gaps or overlaps) if we have range information
+    if chunk_ranges:
+        # Sort by start position
+        chunk_ranges.sort(key=lambda x: x[0])
+        
+        # Check for gaps and overlaps
+        gaps = []
+        overlaps = []
+        
+        for i in range(len(chunk_ranges) - 1):
+            curr_start, curr_end, curr_file = chunk_ranges[i]
+            next_start, next_end, next_file = chunk_ranges[i + 1]
+            
+            if curr_end < next_start:
+                # Gap detected
+                gaps.append((curr_end, next_start, curr_file.name, next_file.name))
+            elif curr_end > next_start:
+                # Overlap detected
+                overlaps.append((curr_start, curr_end, next_start, next_end, curr_file.name, next_file.name))
+        
+        if gaps:
+            logger.error("❌ ERROR: Gaps detected in chunk coverage:")
+            for gap_start, gap_end, file1, file2 in gaps:
+                logger.error(f"   Gap between indices [{gap_start}, {gap_end}) between files {file1} and {file2}")
+            logger.error("   Please ensure all cell indices are covered by specifying correct cell_indices_range")
+        
+        if overlaps:
+            logger.error("❌ ERROR: Overlaps detected in chunk coverage:")
+            for curr_start, curr_end, next_start, next_end, file1, file2 in overlaps:
+                logger.error(f"   Overlap: [{curr_start}, {curr_end}) and [{next_start}, {next_end}) in files {file1} and {file2}")
+            logger.error("   To fix overlaps, specify non-overlapping cell_indices_range values:")
+            logger.error("   Example: --cell-indices-range 0,1000 for first job, --cell-indices-range 1000,2000 for second job")
+            raise ValueError("Overlapping chunks detected. Cannot merge results with overlapping cell ranges.")
     
     # Load and merge all chunks
     dfs = []
@@ -948,13 +995,21 @@ class QuickModeLDScore:
         return len(self.chunk_starts)
     
     def get_chunk_spot_range(self, chunk_index: int) -> Tuple[int, int, int]:
-        """Get the start, end, and total spots for a chunk."""
+        """Get the absolute start, end positions in global adata, and total spots."""
         if self.use_zarr:
-            start = self.chunk_starts[chunk_index]
-            end = min(start + self.chunk_size, self.n_spots_filtered)
-            # Return indices relative to filtered spots
-            return start, end, self.n_spots_filtered
+            # Get the chunk boundaries in filtered space
+            start_in_filtered = self.chunk_starts[chunk_index]
+            end_in_filtered = min(start_in_filtered + self.chunk_size, self.n_spots_filtered)
+            
+            # Convert to absolute positions in global adata
+            # spot_indices contains the absolute positions of filtered spots
+            absolute_start = self.spot_indices[start_in_filtered]
+            absolute_end = self.spot_indices[end_in_filtered - 1] + 1 if end_in_filtered > start_in_filtered else absolute_start
+            
+            # Return absolute positions and total spots in original data
+            return int(absolute_start), int(absolute_end), self.n_spots
         else:
+            # For feather mode, positions are already absolute
             start = self.chunk_starts[chunk_index]
             end = min(start + self.chunk_size, self.mk_score.shape[1])
             return start, end, self.mk_score.shape[1]
