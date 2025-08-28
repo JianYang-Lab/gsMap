@@ -9,6 +9,8 @@ import os
 import psutil
 import queue
 import threading
+import multiprocessing as mp
+from multiprocessing import Queue, Process
 from pathlib import Path
 from typing import Optional, Tuple, Dict, List, Callable
 import time
@@ -472,7 +474,7 @@ class ParallelChunkLoader:
         self.quick_handler = quick_handler
         self.n_workers = min(n_workers, len(chunk_indices))
         self.workers = []
-        self.chunk_queue = queue.Queue(maxsize=20)  # Increased queue size for buffering
+        self.chunk_queue = queue.Queue(maxsize=self.n_workers * 10)  # Increased queue size for buffering
         
     def start(self):
         """Start all producer threads."""
@@ -848,16 +850,23 @@ class QuickModeLDScore:
                 
                 # Get indices of spots for the specified sample
                 self.spot_indices = np.where(sample_info == config.sample_name)[0]
+                # Verify continuous monotony (increment 1) for efficient zarr slicing
+                assert self.spot_indices.tolist() == list(range(self.spot_indices[0], self.spot_indices[-1] + 1)), "Spot indices for sample_name must be continuous"
+
                 if len(self.spot_indices) == 0:
                     concat_adata.file.close()
                     raise ValueError(f"No spots found for sample_name '{config.sample_name}'. Available samples: {np.unique(sample_info)}")
                 
-                logger.info(f"Found {len(self.spot_indices)} spots for sample '{config.sample_name}'")
+                # Store the absolute start offset for this sample (for contiguous slicing)
+                self.sample_start_offset = self.spot_indices[0]
+                
+                logger.info(f"Found {len(self.spot_indices)} spots for sample '{config.sample_name}' (absolute range: [{self.sample_start_offset}, {self.sample_start_offset + len(self.spot_indices)})")
                 self.spot_names_filtered = self.spot_names_all[self.spot_indices]
             else:
                 # Use all spots if no sample_name specified
                 self.spot_indices = np.arange(n_spots_zarr)
                 self.spot_names_filtered = self.spot_names_all
+                self.sample_start_offset = 0
             
             concat_adata.file.close()
             assert len(self.spot_names_all) == n_spots_zarr
@@ -936,13 +945,12 @@ class QuickModeLDScore:
             # Zarr-based implementation - read only the needed chunk from disk
             end = min(start + self.chunk_size, self.n_spots_filtered)
             
-            # Get the actual zarr indices for this chunk (accounting for sample filtering)
-            chunk_spot_indices = self.spot_indices[start:end]
+            # Since we verified spots are continuous, could use direct slicing
+            zarr_start = self.sample_start_offset + start
+            zarr_end = self.sample_start_offset + end
             
-            # Read only the required spots from zarr (stays on disk, only loads this chunk)
-            # Select specific spots and aligned genes
-            # Shape is (n_spots, n_genes), so we index [spots, genes]
-            mk_score_chunk = self.mkscore_zarr[chunk_spot_indices, :][:, self.zarr_gene_indices]
+            # Select contiguous spots and aligned genes
+            mk_score_chunk = self.mkscore_zarr[zarr_start:zarr_end, self.zarr_gene_indices]
             # Transpose to (n_genes, n_spots) for matrix multiplication
             mk_score_chunk = mk_score_chunk.T
             
@@ -1091,8 +1099,10 @@ def run_spatial_ldsc_single_trait(config: SpatialLDSCConfig,
     )
     elapsed_time = time.time() - start_time
     
-    logger.info(f"Processed {len(saved_files)} chunks in {elapsed_time:.2f} seconds")
-    
+    h, rem = divmod(elapsed_time, 3600)
+    m, s = divmod(rem, 60)
+    logger.info(f"Processed {len(saved_files)} chunks in {int(h)}h {int(m)}m {s:.2f}s")
+
     # Auto-merge if we processed all chunks
     # Skip auto-merge if cell_indices_range is specified and it's not covering all chunks
     should_merge = (config.cell_indices_range is None) or \
@@ -1152,8 +1162,8 @@ def save_results_and_log_statistics(merged_df: pd.DataFrame,
     logger.info(f"Bonferroni threshold: 0.05/{n_spots:,} = {bonferroni_threshold:.2e}")
     logger.info(f"Bonferroni-corrected significant spots (p < {bonferroni_threshold:.2e}): {n_bonferroni_sig:,}")
     logger.info(f"FDR-corrected significant spots (alpha=0.001): {n_fdr_sig:,} (informational only)")
-
     logger.info("=" * 70)
+    logger.info(f"Final results saved to {output_file}")
 
 
 def merge_results(config: SpatialLDSCConfig, trait_name: str,
