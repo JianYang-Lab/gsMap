@@ -245,6 +245,7 @@ class RankCalculator:
             
             total_cells_expected += adata_temp.n_obs
             del adata_temp
+            gc.collect()
         
         logger.info(f"Expected total cells after filtering: {total_cells_expected}")
         

@@ -12,7 +12,7 @@ import threading
 import multiprocessing as mp
 from multiprocessing import Queue, Process
 from pathlib import Path
-from typing import Optional, Tuple, Dict, List, Callable
+from typing import Tuple, Dict, List, Callable
 import time
 from datetime import datetime
 
@@ -304,11 +304,11 @@ def load_and_prepare_data(config: SpatialLDSCConfig,
 
 
 # ============================================================================
-# Chunk Writer
+# Result Accumulator
 # ============================================================================
 
-class ChunkWriter:
-    """Writes chunk results to disk as they are processed."""
+class ResultAccumulator:
+    """Accumulates chunk results for spatial LDSC without checkpointing."""
     
     def __init__(self, output_dir: Path, config: SpatialLDSCConfig, 
                  trait_name: str, n_snps_used: int, quick_handler=None):
@@ -317,69 +317,35 @@ class ChunkWriter:
         self.trait_name = trait_name
         self.n_snps_used = n_snps_used
         self.quick_handler = quick_handler
-        self.saved_files = []
-        self.write_queue = queue.Queue()
-        self.writer_thread = None
-        self._start_writer_thread()
         
-    def _start_writer_thread(self):
-        """Start the background writer thread."""
-        self.writer_thread = threading.Thread(target=self._writer_worker, daemon=True)
-        self.writer_thread.start()
+        # Storage for accumulated results
+        self.results = []  # List of (chunk_idx, betas, ses, spot_names, metadata) tuples
+        self.processed_chunks = set()  # Track which chunks have been processed
         
-    def _writer_worker(self):
-        """Background worker that writes chunks from the queue."""
-        while True:
-            item = self.write_queue.get()
-            if item is None:  # Poison pill to stop thread
-                break
-            
-            chunk_idx, betas, ses, spot_names, metadata = item
-            try:
-                # Convert to float64 for accurate p-value calculation
-                betas_f64 = betas.astype(np.float64)
-                ses_f64 = ses.astype(np.float64)
-                
-                # Calculate statistics with float64 precision
-                z_scores = betas_f64 / ses_f64
-                p_values = norm.sf(z_scores)  # One-tailed test for positive z-scores
-                # Calculate -log10(p) with small value handling
-                log10_p = -np.log10(np.maximum(p_values, 1e-300))
-                
-                results_df = pd.DataFrame({
-                    'spot': spot_names,
-                    'beta': betas,  # Keep original float32 for storage
-                    'se': ses,      # Keep original float32 for storage
-                    'z': z_scores.astype(np.float32),  # Convert back to float32
-                    'p': p_values,
-                    'neg_log10_p': log10_p
-                })
-                
-                # Save results as compressed CSV
-                output_file = self.output_dir / metadata.get_filename()
-                results_df.to_csv(output_file, index=False, compression='gzip')
-                
-                # Save metadata
-                metadata_file = output_file.with_suffix('.json')
-                with open(metadata_file, 'w') as f:
-                    json.dump(metadata.to_dict(), f, indent=2)
-                
-                logger.debug(f"Saved chunk {chunk_idx} to {output_file}")
-                self.saved_files.append(output_file)
-                
-            except Exception as e:
-                logger.error(f"Error saving chunk {chunk_idx} in writer thread: {e}")
+        # Track the actual range of spots covered
+        self.min_spot_start = float('inf')
+        self.max_spot_end = 0
+        self.total_spots = None
         
-    def write_chunk(self, chunk_idx: int, betas: np.ndarray, ses: np.ndarray,
-                   spot_names: pd.Index) -> None:
-        """Queue a chunk for asynchronous writing to disk."""
-        # Get absolute spot positions - required for new metadata
+    def add_chunk_result(self, chunk_idx: int, betas: np.ndarray, ses: np.ndarray,
+                        spot_names: pd.Index) -> None:
+        """Add chunk result to accumulated results."""
+        # Get absolute spot positions
         if self.quick_handler and hasattr(self.quick_handler, 'get_chunk_spot_range'):
-            start_spot, end_spot, total_spots = self.quick_handler.get_chunk_spot_range(chunk_idx)  # chunk_idx is already 0-based
+            start_spot, end_spot, total_spots = self.quick_handler.get_chunk_spot_range(chunk_idx)
         else:
-            raise ValueError("Cannot determine absolute positions for chunk. Quick handler required.")
+            # Fallback for non-quick mode
+            start_spot = chunk_idx * len(spot_names)
+            end_spot = start_spot + len(spot_names)
+            total_spots = -1  # Unknown
         
-        # Create metadata with absolute position information
+        # Update the overall range covered
+        self.min_spot_start = min(self.min_spot_start, start_spot)
+        self.max_spot_end = max(self.max_spot_end, end_spot)
+        if self.total_spots is None:
+            self.total_spots = total_spots
+        
+        # Create metadata
         metadata = ChunkMetadata(
             n_spots=len(spot_names),
             n_snps=self.n_snps_used,
@@ -390,18 +356,59 @@ class ChunkWriter:
             total_spots=total_spots
         )
         
-        # Add to write queue (non-blocking) - still use chunk_idx as identifier for the queue
-        self.write_queue.put((chunk_idx, betas, ses, spot_names, metadata))
+        # Store result
+        self.results.append((chunk_idx, betas, ses, spot_names, metadata))
+        self.processed_chunks.add(chunk_idx)
         
-    def finalize(self):
-        """Wait for all pending writes to complete and stop the writer thread."""
-        # Send poison pill to stop writer thread
-        self.write_queue.put(None)
-        # Wait for thread to finish
-        if self.writer_thread and self.writer_thread.is_alive():
-            self.writer_thread.join(timeout=60)  # 60 second timeout
-            if self.writer_thread.is_alive():
-                logger.warning("Writer thread did not finish in time")
+    def get_merged_results(self) -> pd.DataFrame:
+        """Merge all accumulated results into a single DataFrame."""
+        if not self.results:
+            raise ValueError("No results to merge")
+        
+        # Sort results by chunk index to ensure correct order
+        sorted_results = sorted(self.results, key=lambda x: x[0])
+        
+        dfs = []
+        for chunk_idx, betas, ses, spot_names, metadata in sorted_results:
+            # Convert to float64 for accurate p-value calculation
+            betas_f64 = betas.astype(np.float64)
+            ses_f64 = ses.astype(np.float64)
+            
+            # Calculate statistics
+            z_scores = betas_f64 / ses_f64
+            p_values = norm.sf(z_scores)
+            log10_p = -np.log10(np.maximum(p_values, 1e-300))
+            
+            results_df = pd.DataFrame({
+                'spot': spot_names,
+                'beta': betas,
+                'se': ses,
+                'z': z_scores.astype(np.float32),
+                'p': p_values,
+                'neg_log10_p': log10_p
+            })
+            dfs.append(results_df)
+        
+        merged_df = pd.concat(dfs, ignore_index=True)
+        return merged_df
+    
+    def get_coverage_filename(self, base_name: str) -> str:
+        """Generate filename with coverage range if incomplete."""
+        if self.total_spots is not None and self.total_spots > 0:
+            # Check if we have complete coverage
+            if self.min_spot_start == 0 and self.max_spot_end == self.total_spots:
+                # Complete coverage - use simple name
+                return f"{base_name}.csv.gz"
+            else:
+                # Partial coverage - include range in filename
+                return f"{base_name}_start{self.min_spot_start}_end{self.max_spot_end}_total{self.total_spots}.csv.gz"
+        else:
+            # No total spots info - just use the range we have
+            return f"{base_name}_start{self.min_spot_start}_end{self.max_spot_end}.csv.gz"
+    
+    def is_complete(self, total_chunks: int) -> bool:
+        """Check if all chunks have been processed."""
+        return len(self.processed_chunks) == total_chunks
 
 
 # ============================================================================
@@ -516,12 +523,12 @@ def process_chunks_with_queue(config: SpatialLDSCConfig,
                              chunk_indices: List[int],
                              trait_name: str,
                              output_dir: Path,
-                             quick_handler=None) -> List[Path]:
+                             quick_handler=None) -> ResultAccumulator:
     """
-    Process chunks using parallel producer-consumer pattern with integrated writer.
+    Process chunks using parallel producer-consumer pattern.
     
     Returns:
-        List of paths to saved chunk files
+        ResultAccumulator with accumulated results
     """
     # Prepare static JAX arrays (same for all chunks)
     n_snps_used = data_truncated['n_snps_used']
@@ -543,8 +550,8 @@ def process_chunks_with_queue(config: SpatialLDSCConfig,
     del baseline_ann
     gc.collect()
     
-    # Create writer
-    writer = ChunkWriter(output_dir, config, trait_name, n_snps_used, quick_handler)
+    # Create result accumulator
+    result_accumulator = ResultAccumulator(output_dir, config, trait_name, n_snps_used, quick_handler)
     
     # Determine number of loader threads based on platform
     if jax.default_backend() == 'gpu':
@@ -606,8 +613,8 @@ def process_chunks_with_queue(config: SpatialLDSCConfig,
             betas_np = np.array(betas)
             ses_np = np.array(ses)
             
-            # Write chunk results (happens on CPU while GPU processes next chunk)
-            writer.write_chunk(chunk_idx, betas_np, ses_np, spot_names)
+            # Add chunk result to accumulator
+            result_accumulator.add_chunk_result(chunk_idx, betas_np, ses_np, spot_names)
             
             # Clean up GPU memory
             del spatial_ld_jax, betas, ses
@@ -622,185 +629,9 @@ def process_chunks_with_queue(config: SpatialLDSCConfig,
     # Wait for all loaders to finish
     loader.wait_for_completion()
     
-    # Finalize writer to ensure all chunks are written
-    writer.finalize()
-    
-    return writer.saved_files
+    return result_accumulator
 
 
-# ============================================================================
-# Result validation and merging
-# ============================================================================
-
-def validate_chunk_file(chunk_file: Path) -> bool:
-    """Validate a chunk result file with position-based metadata."""
-    try:
-        if not chunk_file.exists():
-            logger.error(f"Chunk file not found: {chunk_file}")
-            return False
-        
-        metadata_file = chunk_file.with_suffix('.json')
-        if not metadata_file.exists():
-            logger.error(f"Metadata file not found: {metadata_file}")
-            return False
-        
-        # Load and validate metadata
-        with open(metadata_file, 'r') as f:
-            metadata = json.load(f)
-        
-        # Updated required fields - focused on position and data integrity
-        required_fields = ['start_spot', 'end_spot', 'total_spots', 'n_spots', 
-                          'n_snps', 'trait_name', 'project_name']
-        for field in required_fields:
-            if field not in metadata:
-                logger.error(f"Missing field '{field}' in metadata")
-                return False
-        
-        # Validate position logic
-        if metadata['start_spot'] >= metadata['end_spot']:
-            logger.error(f"Invalid position range: start ({metadata['start_spot']}) >= end ({metadata['end_spot']})")
-            return False
-        
-        if metadata['end_spot'] - metadata['start_spot'] != metadata['n_spots']:
-            logger.warning(f"Position range doesn't match n_spots (may be filtered data)")
-        
-        # Load and validate data
-        df = pd.read_csv(chunk_file, compression='gzip')
-        required_columns = ['spot', 'beta', 'se', 'z', 'p', 'neg_log10_p']
-        for col in required_columns:
-            if col not in df.columns:
-                logger.error(f"Missing column '{col}' in chunk data")
-                return False
-        
-        # Check data consistency
-        if len(df) != metadata['n_spots']:
-            logger.error(f"Mismatch: file has {len(df)} spots but metadata says {metadata['n_spots']}")
-            return False
-        
-        return True
-        
-    except Exception as e:
-        logger.error(f"Error validating {chunk_file}: {e}")
-        return False
-
-
-def merge_chunk_results(output_dir: Path, project_name: str, trait_name: str,
-                        validate: bool = True, clean_chunks: bool = False, fdr_alpha=0.001) -> pd.DataFrame:
-    """Merge all chunk results into a single DataFrame."""
-    logger.info(f"Merging chunk results for {project_name}_{trait_name}")
-    
-    # Find all chunk files using new spot-range naming convention
-    pattern = f"{project_name}_{trait_name}_start*.csv.gz"
-    chunk_files = sorted(output_dir.glob(pattern))
-    
-    if not chunk_files:
-        raise FileNotFoundError(f"No chunk files found matching {pattern}")
-    
-    logger.info(f"Found {len(chunk_files)} chunk files with spot-range naming")
-    
-    # Validate chunks and collect position metadata
-    valid_chunks = []
-    chunk_ranges = []  # Store (start, end, file) for coverage validation
-    total_spots_set = set()  # Check consistency of total_spots
-    
-    for chunk_file in chunk_files:
-        # Load metadata
-        metadata_file = chunk_file.with_suffix('.json')
-        if metadata_file.exists():
-            with open(metadata_file, 'r') as f:
-                metadata = json.load(f)
-                
-                # Extract range information - this is now required
-                start_spot = metadata.get('start_spot')
-                end_spot = metadata.get('end_spot')
-                total_spots = metadata.get('total_spots')
-                
-                if start_spot is None or end_spot is None:
-                    raise ValueError(f"Chunk file {chunk_file} missing position information (start_spot/end_spot)")
-                
-                chunk_ranges.append((start_spot, end_spot, chunk_file))
-                if total_spots is not None:
-                    total_spots_set.add(total_spots)
-        else:
-            raise ValueError(f"Metadata file missing for {chunk_file}")
-                    
-        if validate and validate_chunk_file(chunk_file):
-            valid_chunks.append(chunk_file)
-        elif validate:
-            logger.warning(f"Skipping invalid chunk: {chunk_file}")
-        else:
-            valid_chunks.append(chunk_file)
-    
-    chunk_files = valid_chunks
-    
-    # Validate consistency of total_spots
-    if len(total_spots_set) > 1:
-        raise ValueError(f"❌ ERROR: Inconsistent total_spots values found: {total_spots_set}. "
-                        f"All chunk files must be from the same dataset!")
-    
-    # Validate coverage (no gaps or overlaps) if we have range information
-    if chunk_ranges:
-        # Sort by start position
-        chunk_ranges.sort(key=lambda x: x[0])
-        
-        # Check for gaps and overlaps
-        gaps = []
-        overlaps = []
-        
-        for i in range(len(chunk_ranges) - 1):
-            curr_start, curr_end, curr_file = chunk_ranges[i]
-            next_start, next_end, next_file = chunk_ranges[i + 1]
-            
-            if curr_end < next_start:
-                # Gap detected
-                gaps.append((curr_end, next_start, curr_file.name, next_file.name))
-            elif curr_end > next_start:
-                # Overlap detected
-                overlaps.append((curr_start, curr_end, next_start, next_end, curr_file.name, next_file.name))
-        
-        if gaps:
-            logger.error("❌ ERROR: Gaps detected in chunk coverage:")
-            for gap_start, gap_end, file1, file2 in gaps:
-                logger.error(f"   Gap between indices [{gap_start}, {gap_end}) between files {file1} and {file2}")
-            logger.error("   Please ensure all cell indices are covered by specifying correct cell_indices_range")
-        
-        if overlaps:
-            logger.error("❌ ERROR: Overlaps detected in chunk coverage:")
-            for curr_start, curr_end, next_start, next_end, file1, file2 in overlaps:
-                logger.error(f"   Overlap: [{curr_start}, {curr_end}) and [{next_start}, {next_end}) in files {file1} and {file2}")
-            logger.error("   To fix overlaps, specify non-overlapping cell_indices_range values:")
-            logger.error("   Example: --cell-indices-range 0,1000 for first job, --cell-indices-range 1000,2000 for second job")
-            raise ValueError("Overlapping chunks detected. Cannot merge results with overlapping cell ranges.")
-    
-    # Load and merge all chunks
-    dfs = []
-    for chunk_file in chunk_files:
-        df = pd.read_csv(chunk_file, compression='gzip')
-        dfs.append(df)
-    
-    merged_df = pd.concat(dfs, ignore_index=True)
-    logger.info(f"Merged {len(dfs)} chunks into {len(merged_df)} total spots")
-    
-    # Sort by spot name
-    merged_df = merged_df.sort_values('spot').reset_index(drop=True)
-    
-    # Calculate FDR q-values for reporting only (not saved to dataframe)
-    logger.info(f"Calculating FDR q-values across all spots (alpha={fdr_alpha})...")
-    _, q_values, _, _ = multipletests(merged_df['p'].values, alpha=fdr_alpha, method='fdr_bh')
-    n_fdr_sig = (q_values < fdr_alpha).sum()
-    logger.info(f"FDR-corrected significant spots (q < {fdr_alpha}): {n_fdr_sig}")
-    
-    # Clean up chunk files if requested
-    if clean_chunks:
-        logger.info("Cleaning up chunk files...")
-        for chunk_file in chunk_files:
-            chunk_file.unlink()
-            metadata_file = chunk_file.with_suffix('.json')
-            if metadata_file.exists():
-                metadata_file.unlink()
-        logger.info("Chunk files deleted")
-    
-    return merged_df
 
 
 # ============================================================================
@@ -1016,15 +847,15 @@ class QuickModeLDScore:
 
 def run_spatial_ldsc_single_trait(config: SpatialLDSCConfig,
                                  trait_name: str,
-                                 sumstats_file: str) -> Optional[pd.DataFrame]:
+                                 sumstats_file: str) -> pd.DataFrame:
     """
     Run spatial LDSC for a single trait.
     
     This function:
-    1. Always uses queue-based processing for efficiency
-    2. Always writes chunk files for debugging/reproducibility
-    3. Auto-merges when cell_indices_range covers all chunks
-    4. Returns merged DataFrame when all chunks processed, None otherwise
+    1. Uses queue-based processing for efficiency
+    2. Accumulates results in memory
+    3. Saves a single output file with position info in filename if incomplete
+    4. Returns merged DataFrame when processing completes
     
     Args:
         config: Configuration object
@@ -1032,7 +863,7 @@ def run_spatial_ldsc_single_trait(config: SpatialLDSCConfig,
         sumstats_file: Path to summary statistics file
     
     Returns:
-        Merged DataFrame if all chunks processed, None otherwise
+        Merged DataFrame with results
     """
     logger.info("=" * 70)
     logger.info(f"Running Spatial LDSC (JAX-optimized Final Version)")
@@ -1043,8 +874,8 @@ def run_spatial_ldsc_single_trait(config: SpatialLDSCConfig,
         logger.info(f"Cell indices range: {config.cell_indices_range}")
     logger.info("=" * 70)
     
-    # Create output directory for chunks
-    output_dir = config.ldsc_save_dir / "chunks"
+    # Create output directory
+    output_dir = config.ldsc_save_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Load and prepare data
@@ -1091,9 +922,9 @@ def run_spatial_ldsc_single_trait(config: SpatialLDSCConfig,
         start_chunk, end_chunk = 0, total_chunks - 1
         chunk_indices = list(range(0, total_chunks))
     
-    # Process chunks with queue and writer
+    # Process chunks with result accumulator
     start_time = time.time()
-    saved_files = process_chunks_with_queue(
+    result_accumulator = process_chunks_with_queue(
         config, data_truncated, chunk_indices, 
         trait_name, output_dir, quick_handler
     )
@@ -1101,35 +932,30 @@ def run_spatial_ldsc_single_trait(config: SpatialLDSCConfig,
     
     h, rem = divmod(elapsed_time, 3600)
     m, s = divmod(rem, 60)
-    logger.info(f"Processed {len(saved_files)} chunks in {int(h)}h {int(m)}m {s:.2f}s")
-
-    # Auto-merge if we processed all chunks
-    # Skip auto-merge if cell_indices_range is specified and it's not covering all chunks
-    should_merge = (config.cell_indices_range is None) or \
-                   (start_chunk == 0 and end_chunk == total_chunks - 1)
+    logger.info(f"Processed {len(result_accumulator.processed_chunks)} chunks in {int(h)}h {int(m)}m {s:.2f}s")
     
-    if should_merge:
-        logger.info("Processed all chunks - auto-merging results...")
-        
-        merged_df = merge_chunk_results(
-            output_dir, config.project_name, trait_name,
-            validate=True, clean_chunks=False
-        )
-        
-        # Save and log statistics using shared function
-        final_file = config.ldsc_save_dir / f"{config.project_name}_{trait_name}.csv.gz"
-        save_results_and_log_statistics(merged_df, final_file, )
-        
-        return merged_df
-    else:
-        logger.info(f"Processed chunks {start_chunk}-{end_chunk} of {total_chunks}")
-        logger.info("Run merge_results() after all chunks are complete")
-        return None
+    # Get merged results
+    merged_df = result_accumulator.get_merged_results()
+    
+    # Generate appropriate filename based on coverage
+    base_name = f"{config.project_name}_{trait_name}"
+    output_filename = result_accumulator.get_coverage_filename(base_name)
+    final_file = config.ldsc_save_dir / output_filename
+    
+    # Save and log statistics
+    save_results_and_log_statistics(merged_df, final_file)
+    
+    # Log coverage information if incomplete
+    if not result_accumulator.is_complete(total_chunks):
+        logger.info(f"Partial results saved: spots [{result_accumulator.min_spot_start}, {result_accumulator.max_spot_end}) "
+                   f"out of {result_accumulator.total_spots} total")
+        logger.info("To process remaining chunks, adjust cell_indices_range accordingly")
+    
+    return merged_df
 
 
 def save_results_and_log_statistics(merged_df: pd.DataFrame, 
-                                    output_file: Path,
-                                    ) -> None:
+                                    output_file: Path) -> None:
     """
     Save merged results and log statistical summary.
     
@@ -1155,7 +981,6 @@ def save_results_and_log_statistics(merged_df: pd.DataFrame,
     logger.info(f"STATISTICAL SUMMARY")
     logger.info("=" * 70)
     logger.info(f"Total spots: {n_spots:,}")
-    logger.info(f"Mean beta: {merged_df['beta'].mean():.6f}")
     logger.info(f"Max -log10(p): {merged_df['neg_log10_p'].max():.2f}")
     logger.info("-" * 70)
     logger.info(f"Nominally significant (p < 0.05): {(merged_df['p'] < 0.05).sum():,}")
@@ -1164,29 +989,6 @@ def save_results_and_log_statistics(merged_df: pd.DataFrame,
     logger.info(f"FDR-corrected significant spots (alpha=0.001): {n_fdr_sig:,} (informational only)")
     logger.info("=" * 70)
     logger.info(f"Final results saved to {output_file}")
-
-
-def merge_results(config: SpatialLDSCConfig, trait_name: str,
-                 validate: bool = True, clean_chunks: bool = False) -> pd.DataFrame:
-    """
-    Merge chunk results after distributed processing.
-    
-    This function is called after all chunks have been processed
-    (potentially on different nodes) to create the final result.
-    """
-    logger.info(f"Merging results for {config.project_name}_{trait_name}")
-    
-    chunks_dir = config.ldsc_save_dir / "chunks"
-    
-    # Merge chunks
-    merged_df = merge_chunk_results(chunks_dir, config.project_name, 
-                                   trait_name, validate, clean_chunks)
-    
-    # Save and log statistics
-    output_file = config.ldsc_save_dir / f"{config.project_name}_{trait_name}.csv.gz"
-    save_results_and_log_statistics(merged_df, output_file,)
-    
-    return merged_df
 
 
 def run_spatial_ldsc_jax(config: SpatialLDSCConfig):
