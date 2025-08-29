@@ -232,6 +232,7 @@ class RankCalculator:
         logger.info("Counting total cells across all sections...")
         total_cells_expected = 0
         for sample_name, h5ad_path in sample_h5ad_dict.items():
+            # TODO: only read the obs to save memory
             adata_temp = sc.read_h5ad(h5ad_path)
             
             # Apply same filtering logic as in main loop

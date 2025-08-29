@@ -385,7 +385,8 @@ class ZarrBackedDense:
                 shape=shape,
                 dtype=dtype,
                 chunks=chunks,
-                compressor=zarr.Blosc(cname='lz4', clevel=3)
+                compressor=zarr.Blosc(cname='lz4', clevel=3),
+                synchronizer=ThreadSynchronizer(),
             )
             # Mark as incomplete initially
             self.zarr_array.attrs['integrity_mark'] = 'incomplete'

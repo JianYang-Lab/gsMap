@@ -391,7 +391,7 @@ class MarkerScoreCalculator:
             if self.config.chunks_cells is not None or self.config.chunks_genes is not None:
                 # Use provided chunks
                 chunks = (
-                    self.config.chunks_cells if self.config.chunks_cells is not None else 1,
+                    self.config.chunks_cells if self.config.chunks_cells is not None else 100,
                     self.config.chunks_genes if self.config.chunks_genes is not None else n_genes
                 )
         # If chunks is None, ZarrBackedDense will use default (1, n_genes)

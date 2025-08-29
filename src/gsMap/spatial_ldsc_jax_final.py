@@ -245,6 +245,7 @@ def load_and_prepare_data(config: SpatialLDSCConfig,
     w_ld = _read_w_ld(config.w_file)
     w_ld.set_index("SNP", inplace=True)
     
+    # Use ldscore_save_dir which is set to quick_mode_resource_dir when in quick mode
     baseline_ld_path = f"{config.ldscore_save_dir}/baseline/baseline."
     baseline_ld = _read_ref_ld_v2(baseline_ld_path)
     
@@ -283,6 +284,7 @@ def load_and_prepare_data(config: SpatialLDSCConfig,
     
     # Load additional baseline if needed
     if config.use_additional_baseline_annotation:
+        # Use ldscore_save_dir which points to the correct directory
         additional_path = f"{config.ldscore_save_dir}/additional_baseline/baseline."
         additional_ld = _read_ref_ld_v2(additional_path)
         additional_ld = additional_ld.loc[common_snps]
@@ -448,6 +450,7 @@ class ChunkProducer(threading.Thread):
         n_snps_used = self.data['n_snps_used']
         
         if self.config.ldscore_save_format == "feather":
+            # Use ldscore_save_dir from config
             ld_file = f"{self.config.ldscore_save_dir}/{self.config.project_name}_chunk{chunk_index}/{self.config.project_name}."
             ref_ld = _read_ref_ld_v2(ld_file)
             ref_ld = ref_ld.iloc[self.data['snp_positions']]
@@ -646,7 +649,11 @@ class QuickModeLDScore:
         logger.info("Loading quick mode data...")
 
         if config.marker_score_format == "zarr":
-            mk_score_zarr_array_path = config.marker_scores_zarr_path
+            # Use the auto-generated path from ConfigWithAutoPaths
+            mk_score_zarr_array_path = Path(config.marker_scores_zarr_path)
+            
+            if not mk_score_zarr_array_path.exists():
+                raise FileNotFoundError(f"Marker scores zarr not found at {mk_score_zarr_array_path}")
 
             # Open zarr array in read mode - keeps data on disk
             logger.info(f"Opening marker scores zarr array from {mk_score_zarr_array_path}")
@@ -658,8 +665,8 @@ class QuickModeLDScore:
 
 
             # Load concatenated latent adata to get gene names and spot names
-            # Use latent2gene_dir instead of latent_dir for the concatenated file
-            concat_adata_path = config.latent2gene_dir / "concatenated_latent_adata.h5ad"
+            # Use the auto-generated path from ConfigWithAutoPaths
+            concat_adata_path = Path(config.concatenated_latent_adata_path)
 
             logger.info(f"Loading gene names and spot names from {concat_adata_path}")
             concat_adata = ad.read_h5ad(concat_adata_path, backed='r')
@@ -706,7 +713,11 @@ class QuickModeLDScore:
             
 
             # Load SNP-gene weight data
-            snp_gene_weight_adata = ad.read_h5ad(config.snp_gene_weight_adata_path)
+            # The path is set in config.__post_init__ when quick_mode_resource_dir is provided
+            snp_gene_weight_path = Path(config.snp_gene_weight_adata_path)
+            if not snp_gene_weight_path.exists():
+                raise FileNotFoundError(f"SNP-gene weight matrix not found at {snp_gene_weight_path}")
+            snp_gene_weight_adata = ad.read_h5ad(snp_gene_weight_path)
             
             # Find common genes between zarr and SNP-gene weights
             zarr_genes_series = pd.Series(gene_names_from_adata)
@@ -742,10 +753,20 @@ class QuickModeLDScore:
             
         else:
             # Original feather-based implementation
-            mk_score = pd.read_feather(config.mkscore_feather_path)
+            if config.mkscore_feather_path is None:
+                raise ValueError("mkscore_feather_path must be provided when marker_score_format='feather'")
+            
+            mkscore_path = Path(config.mkscore_feather_path)
+            if not mkscore_path.exists():
+                raise FileNotFoundError(f"Marker score feather file not found at {mkscore_path}")
+            
+            mk_score = pd.read_feather(mkscore_path)
             mk_score.set_index("HUMAN_GENE_SYM", inplace=True)
 
-            snp_gene_weight_adata = ad.read_h5ad(config.snp_gene_weight_adata_path)
+            snp_gene_weight_path = Path(config.snp_gene_weight_adata_path)
+            if not snp_gene_weight_path.exists():
+                raise FileNotFoundError(f"SNP-gene weight matrix not found at {snp_gene_weight_path}")
+            snp_gene_weight_adata = ad.read_h5ad(snp_gene_weight_path)
             
             common_genes = mk_score.index.intersection(snp_gene_weight_adata.var.index)
             
@@ -874,8 +895,8 @@ def run_spatial_ldsc_single_trait(config: SpatialLDSCConfig,
         logger.info(f"Cell indices range: {config.cell_indices_range}")
     logger.info("=" * 70)
     
-    # Create output directory
-    output_dir = config.ldsc_save_dir
+    # Create output directory using the auto-generated path
+    output_dir = config.ldsc_save_dir  # This is auto-created by @ensure_path_exists
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Load and prepare data
@@ -890,7 +911,11 @@ def run_spatial_ldsc_single_trait(config: SpatialLDSCConfig,
         quick_handler = QuickModeLDScore(config, data_truncated['snp_positions'])
         total_chunks = len(quick_handler.chunk_starts)
     elif config.ldscore_save_format == "feather":
-        chunk_dirs = [d for d in os.listdir(config.ldscore_save_dir) if "chunk" in d]
+        # Check for chunk directories in ldscore_save_dir
+        ldscore_dir = Path(config.ldscore_save_dir)
+        if not ldscore_dir.exists():
+            raise ValueError(f"ldscore_save_dir not found: {ldscore_dir}")
+        chunk_dirs = [d for d in os.listdir(ldscore_dir) if "chunk" in d]
         total_chunks = len(chunk_dirs)
     else:
         raise ValueError(f"Unsupported format: {config.ldscore_save_format}")
@@ -940,7 +965,7 @@ def run_spatial_ldsc_single_trait(config: SpatialLDSCConfig,
     # Generate appropriate filename based on coverage
     base_name = f"{config.project_name}_{trait_name}"
     output_filename = result_accumulator.get_coverage_filename(base_name)
-    final_file = config.ldsc_save_dir / output_filename
+    final_file = Path(config.ldsc_save_dir) / output_filename
     
     # Save and log statistics
     save_results_and_log_statistics(merged_df, final_file)
@@ -963,6 +988,10 @@ def save_results_and_log_statistics(merged_df: pd.DataFrame,
         merged_df: Merged DataFrame with p-values and betas
         output_file: Path to save the compressed CSV file
     """
+    # Ensure output directory exists
+    output_file = Path(output_file)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    
     # Save final results
     merged_df.to_csv(output_file, index=False, compression='gzip')
 
