@@ -28,7 +28,7 @@ class MemMapDense:
         dtype=np.float32,
         mode: str = 'w',
         num_write_workers: int = 4,
-        flush_interval: float = 1,
+        flush_interval: float = 5,
     ):
         """
         Initialize a memory-mapped dense matrix.
@@ -290,14 +290,9 @@ class MemMapDense:
         if self.mode in ('w', 'r+'):
             self.mark_complete()
 
-        del self.memmap
-
     def __enter__(self):
         return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
-    
+
     @property
     def attrs(self):
         """Compatibility property for accessing metadata"""
