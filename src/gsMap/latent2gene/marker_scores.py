@@ -20,6 +20,8 @@ from scipy.sparse import csr_matrix
 import jax
 import jax.numpy as jnp
 from jax import jit
+import zarr
+from zarr.storage import DirectoryStore, LRUStoreCache
 
 from .zarr_utils import ZarrBackedDense
 from .connectivity import ConnectivityMatrixBuilder
@@ -39,7 +41,6 @@ class ParallelRankReader:
     ):
         if isinstance(rank_zarr, str):
             # Open as ZarrBackedDense in read mode
-            import zarr
             z = zarr.open(str(rank_zarr), mode='r')
             self.rank_zarr = z  # Direct zarr array access for reading
             self.shape = z.shape
@@ -50,7 +51,7 @@ class ParallelRankReader:
         
         # Queues for communication
         self.read_queue = queue.Queue()
-        self.result_queue = queue.Queue(maxsize=100)
+        self.result_queue = queue.Queue(maxsize=self.num_workers *4)
         
         # Start worker threads
         self.workers = []
@@ -75,7 +76,7 @@ class ParallelRankReader:
         while not self.stop_workers.is_set():
             try:
                 # Get batch request
-                item = self.read_queue.get(timeout=0.1)
+                item = self.read_queue.get()
                 if item is None:
                     break
                 
@@ -371,8 +372,12 @@ class MarkerScoreCalculator:
         annotation_key = self.config.annotation
         
         # Open rank zarr and get dimensions
-        import zarr
-        rank_zarr = zarr.open(str(rank_zarr_path), mode='r')
+        store = DirectoryStore(rank_zarr_path)
+        lru_cache_store = LRUStoreCache(
+            store, max_size= 10 * 1024**3
+        )
+        rank_zarr = zarr.open(lru_cache_store, mode='r')
+        logger.info(f"Opened rank zarr from {rank_zarr_path}, using LRU cache")
         n_cells = adata.n_obs
         n_cells_rank = rank_zarr.shape[0]
         n_genes = rank_zarr.shape[1]
@@ -432,6 +437,7 @@ class MarkerScoreCalculator:
         
         # Initialize parallel reader once for all cell types
         logger.info("Initializing parallel reader...")
+
         reader = ParallelRankReader(
             rank_zarr,
             num_workers=self.config.rank_read_workers
