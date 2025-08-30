@@ -154,8 +154,8 @@ def step2_calculate_gss(config: PipelineConfig, sample_name: Optional[str] = Non
         num_neighbour_spatial=201,
         num_anchor=51,
         num_neighbour=21,
-        num_read_workers=config.num_read_workers,
-        gpu_batch_size=config.gpu_batch_size,
+        rank_read_workers=config.num_read_workers,
+        mkscore_batch_size=config.gpu_batch_size,
 
     )
 
@@ -297,7 +297,7 @@ if __name__ == "__main__":
     # run_full_pipeline(config)
     step1_find_latent_representations(config)
     step2_calculate_gss(config, )
-    step3_spatial_ldsc(config)
+    # step3_spatial_ldsc(config)
     # step4_spatial_ldsc(config, )
     # step5_3d_visualization(config, )
 
