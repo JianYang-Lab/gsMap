@@ -493,4 +493,4 @@ class MarkerScoreCalculator:
         logger.info(f"Results saved to {output_path}")
         logger.info(f"Metadata saved to {metadata_path}")
         
-        return output_path
+        return str(output_path)

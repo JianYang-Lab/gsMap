@@ -8,6 +8,10 @@ import logging
 from pathlib import Path
 from typing import Optional, Dict, Any
 
+import h5py
+import pandas as pd
+from anndata._io.specs import read_elem
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -227,27 +231,23 @@ class RankCalculator:
         total_cells = 0
         rank_memmap = None
         current_row_offset = 0  # Track current position in rank memory map
-        
+
         # First pass: count total cells to initialize memory map
         logger.info("Counting total cells across all sections...")
         total_cells_expected = 0
         for sample_name, h5ad_path in sample_h5ad_dict.items():
-            # TODO: only read the obs to save memory
-            adata_temp = sc.read_h5ad(h5ad_path)
-            
             # Apply same filtering logic as in main loop
-            if annotation_key and annotation_key in adata_temp.obs.columns:
-                min_cells_per_type = getattr(self.config, 'num_anchor', 21)
-                annotation_counts = adata_temp.obs[annotation_key].value_counts()
-                valid_annotations = annotation_counts[annotation_counts >= min_cells_per_type].index
-                if len(valid_annotations) < len(annotation_counts):
-                    mask = adata_temp.obs[annotation_key].isin(valid_annotations)
-                    adata_temp = adata_temp[mask]
-            
-            total_cells_expected += adata_temp.n_obs
-            del adata_temp
-            gc.collect()
-        
+            with h5py.File(h5ad_path, 'r') as f:
+                adata_temp_obs = read_elem(f['obs'])
+                if annotation_key and annotation_key in adata_temp_obs.columns:
+                    min_cells_per_type = getattr(self.config, 'num_anchor', 21)
+                    annotation_counts = adata_temp_obs[annotation_key].value_counts()
+                    valid_annotations = annotation_counts[annotation_counts >= min_cells_per_type].index
+                    if len(valid_annotations) < len(annotation_counts):
+                        mask = adata_temp_obs[annotation_key].isin(valid_annotations)
+                        adata_temp_obs = adata_temp_obs[mask].copy()
+                total_cells_expected += adata_temp_obs.shape[0]
+
         logger.info(f"Expected total cells after filtering: {total_cells_expected}")
         
         for st_id, (sample_name, h5ad_path) in enumerate(tqdm(sample_h5ad_dict.items(), desc="Processing sections")):

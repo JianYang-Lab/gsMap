@@ -70,9 +70,9 @@ class ConfigWithAutoPaths:
     
     @property
     @ensure_path_exists
-    def rank_zarr_path(self) -> Path:
+    def rank_memmap_path(self) -> Path:
         """Path to rank zarr file"""
-        return self.latent2gene_dir / "ranks.zarr"
+        return self.latent2gene_dir / "ranks.dat"
     
     @property
     @ensure_path_exists
@@ -82,9 +82,9 @@ class ConfigWithAutoPaths:
     
     @property
     @ensure_path_exists
-    def marker_scores_zarr_path(self) -> Path:
+    def marker_scores_memmap_path(self) -> Path:
         """Path to marker scores zarr"""
-        return self.latent2gene_dir / "marker_scores.zarr"
+        return self.latent2gene_dir / "marker_scores.dat"
     
     @property
     @ensure_path_exists

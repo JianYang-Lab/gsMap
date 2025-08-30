@@ -64,7 +64,7 @@ class PipelineConfig:
     # Refactored latent_to_gene parameters
     use_refactored_latent_to_gene: bool = True
     batch_size: int = 1000
-    num_read_workers: int = 4
+    num_read_workers: int = 2
     gpu_batch_size: int = 300  # Smaller batch size for GPU to avoid OOM
 
     def __post_init__(self):

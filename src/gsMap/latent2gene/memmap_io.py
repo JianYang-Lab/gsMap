@@ -63,8 +63,7 @@ class MemMapDense:
         self.write_queue = queue.Queue(maxsize=100)
         self.writer_threads = []
         self.stop_writer = threading.Event()
-        self.write_lock = threading.Lock()
-        
+
         if mode in ('w', 'r+'):
             self._start_writer_threads()
     
@@ -93,9 +92,9 @@ class MemMapDense:
             shape=self.shape
         )
         
-        # Initialize to zeros
-        self.memmap[:] = 0
-        self.memmap.flush()
+        # # Initialize to zeros
+        # self.memmap[:] = 0
+        # self.memmap.flush()
         
         # Write metadata
         meta = {
@@ -161,27 +160,26 @@ class MemMapDense:
         def writer_worker(worker_id):
             while not self.stop_writer.is_set():
                 try:
-                    item = self.write_queue.get(timeout=0.1)
+                    item = self.write_queue.get(timeout=1)
                     if item is None:
                         break
                     data, row_indices, col_slice = item
                     
                     # Write data with thread safety
-                    with self.write_lock:
-                        if isinstance(row_indices, slice):
-                            self.memmap[row_indices, col_slice] = data
-                        elif isinstance(row_indices, (int, np.integer)):
-                            start_row = row_indices
-                            end_row = start_row + data.shape[0]
-                            self.memmap[start_row:end_row, col_slice] = data
-                        else:
-                            # Handle array of indices
-                            self.memmap[row_indices, col_slice] = data
-                        
-                        # Flush periodically for durability
-                        if worker_id == 0 and np.random.random() < 0.1:
-                            self.memmap.flush()
-                    
+                    if isinstance(row_indices, slice):
+                        self.memmap[row_indices, col_slice] = data
+                    elif isinstance(row_indices, (int, np.integer)):
+                        start_row = row_indices
+                        end_row = start_row + data.shape[0]
+                        self.memmap[start_row:end_row, col_slice] = data
+                    else:
+                        # Handle array of indices
+                        self.memmap[row_indices, col_slice] = data
+
+                    # Flush periodically for durability
+                    if np.random.random() < 0.1:
+                        self.memmap.flush()
+
                     self.write_queue.task_done()
                 except queue.Empty:
                     continue
@@ -233,16 +231,21 @@ class MemMapDense:
         """Direct array access for compatibility"""
         if self.mode not in ('w', 'r+'):
             raise ValueError("Cannot write to read-only MemMapDense")
-        with self.write_lock:
-            self.memmap[key] = value
+        self.memmap[key] = value
     
     def mark_complete(self):
         """Mark the memory map as complete"""
         if self.mode in ('w', 'r+'):
+            logger.info("Marking memmap as complete")
             # Ensure all writes are flushed
-            if self.writer_threads:
+            if self.writer_threads and not self.write_queue.empty():
+                logger.info("Waiting for remaining writes before marking complete...")
                 self.write_queue.join()
+            
+            # Flush memory map to disk
+            logger.info("Flushing memmap to disk...")
             self.memmap.flush()
+            logger.info("Memmap flush complete")
             
             # Update metadata
             with open(self.meta_path, 'r') as f:
@@ -253,31 +256,32 @@ class MemMapDense:
                 json.dump(meta, f, indent=2)
             
             logger.info(f"Marked MemMapDense at {self.path} as complete")
-    
+
     def close(self):
         """Clean up resources"""
+        logger.info("MemMapDense.close() called")
         if self.writer_threads:
-            logger.info("Closing MemMapDense, waiting for writes...")
+            logger.info("Closing MemMapDense: waiting for queued writes...")
             self.write_queue.join()
+            logger.info("All queued writes have been processed")
             self.stop_writer.set()
-            
+            logger.info("Stop signal set for writer threads")
+
             # Send stop signal to all threads
             for _ in self.writer_threads:
                 self.write_queue.put(None)
-            
+            logger.info("Stop sentinels queued for writer threads")
+
             # Wait for all threads to finish
             for thread in self.writer_threads:
                 thread.join(timeout=5.0)
-        
+
         # Final flush
         if self.mode in ('w', 'r+'):
-            self.memmap.flush()
             self.mark_complete()
-        
-        # Close memory map
+
         del self.memmap
-        logger.info(f"Closed MemMapDense at {self.path}")
-    
+
     def __enter__(self):
         return self
     

@@ -665,13 +665,13 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
         help="Number of parallel reader threads of rank zarr",
         min=1,
         max=16
-    )] = 10
+    )] = 2
     
     mkscore_write_workers: Annotated[int, typer.Option(
         help="Number of parallel writer threads of marker scores",
         min=1,
         max=16
-    )] = 10
+    )] = 2
     
     mkscore_batch_size: Annotated[int, typer.Option(
         help="Batch size for GPU to calculate the marker score to avoid CUDA OOM",
