@@ -20,10 +20,8 @@ from scipy.sparse import csr_matrix
 import jax
 import jax.numpy as jnp
 from jax import jit
-import zarr
-from zarr.storage import DirectoryStore, LRUStoreCache
 
-from .zarr_utils import ZarrBackedDense
+from .memmap_io import MemMapDense, ParallelMemMapReader
 from .connectivity import ConnectivityMatrixBuilder
 from .row_ordering import optimize_row_order
 
@@ -31,27 +29,39 @@ logger = logging.getLogger(__name__)
 
 
 class ParallelRankReader:
-    """Multi-threaded reader for log-rank data from dense zarr"""
+    """Multi-threaded reader for log-rank data from memory-mapped storage"""
     
     def __init__(
         self,
-        rank_zarr: Union[ZarrBackedDense, str],
+        rank_memmap: Union[MemMapDense, str],
         num_workers: int = 4,
         cache_size_mb: int = 1000
     ):
-        if isinstance(rank_zarr, str):
-            # Open as ZarrBackedDense in read mode
-            z = zarr.open(str(rank_zarr), mode='r')
-            self.rank_zarr = z  # Direct zarr array access for reading
-            self.shape = z.shape
+        if isinstance(rank_memmap, str):
+            # Open as MemMapDense in read mode
+            # Get shape from metadata first
+
+            meta_path = Path(rank_memmap).with_suffix('.meta.json')
+            with open(meta_path, 'r') as f:
+                meta = json.load(f)
+            
+            self.rank_memmap = MemMapDense(
+                path=rank_memmap,
+                shape=tuple(meta['shape']),
+                dtype=np.dtype(meta['dtype']),
+                mode='r'
+            )
+            self.data = self.rank_memmap.memmap
+            self.shape = self.data.shape
         else:
-            self.rank_zarr = rank_zarr.zarr_array if hasattr(rank_zarr, 'zarr_array') else rank_zarr
-            self.shape = rank_zarr.shape if hasattr(rank_zarr, 'shape') else self.rank_zarr.shape
+            self.rank_memmap = rank_memmap
+            self.data = rank_memmap.memmap if hasattr(rank_memmap, 'memmap') else rank_memmap
+            self.shape = rank_memmap.shape if hasattr(rank_memmap, 'shape') else self.data.shape
         self.num_workers = num_workers
         
         # Queues for communication
         self.read_queue = queue.Queue()
-        self.result_queue = queue.Queue(maxsize=self.num_workers *4)
+        self.result_queue = queue.Queue(maxsize=self.num_workers * 4)
         
         # Start worker threads
         self.workers = []
@@ -70,7 +80,7 @@ class ParallelRankReader:
             self.workers.append(worker)
     
     def _worker(self, worker_id: int):
-        """Worker thread for reading batches from dense zarr"""
+        """Worker thread for reading batches from memory map"""
         logger.info(f"Reader worker {worker_id} started")
         
         while not self.stop_workers.is_set():
@@ -90,9 +100,9 @@ class ParallelRankReader:
                 assert flat_indices.max() <= max_idx, \
                     f"Worker {worker_id}: Indices exceed bounds (max: {flat_indices.max()}, limit: {max_idx})"
                 
-                # Read from Dense Zarr (direct array access)
-                # Dense zarr stores log-ranks directly
-                rank_data = self.rank_zarr[flat_indices]
+                # Read from memory map (direct array access)
+                # Memory map stores log-ranks directly
+                rank_data = self.data[flat_indices]
                 
                 # Ensure we have a numpy array
                 if not isinstance(rank_data, np.ndarray):
@@ -130,6 +140,10 @@ class ParallelRankReader:
             self.read_queue.put(None)
         for worker in self.workers:
             worker.join(timeout=5)
+        
+        # Close memory map if we own it
+        if hasattr(self, 'rank_memmap'):
+            self.rank_memmap.close()
 
 
 @partial(jit, static_argnums=(2, 3))
@@ -152,23 +166,12 @@ def compute_marker_scores_jax(
     # Reshape to batch format
     log_ranks_3d = log_ranks.reshape(batch_size, num_neighbors, n_genes)
     
-    # # Handle zeros: fill with background log rank (cell-specific)
-    # is_zero = (log_ranks_3d == 0)
-    # # Sum zeros along neighbor dimension (axis=1) for each cell
-    # zero_counts_per_cell = is_zero.sum(axis=1, keepdims=True)  # Shape: (B, 1, G)
-    # background_log_rank = jnp.log((zero_counts_per_cell + 1) / 2)
-    # log_ranks_filled = jnp.where(is_zero, background_log_rank, log_ranks_3d)
-    #
-    # # Normalize weights (already softmax normalized, but ensure sum to 1)
-    # weights_sum = weights.sum(axis=1, keepdims=True)
-    # weights_normalized = weights / weights_sum
-    
     # Compute weighted geometric mean in log space
     weighted_log_mean = jnp.einsum('bn,bng->bg', weights, log_ranks_3d)
     
     # Compute expression fraction (mean of is_expressed across neighbors)
-    # is_expressed = (log_ranks_3d != 0)
-    is_expressed = (log_ranks_3d != log_ranks_3d.min(axis=-1, keepdims=True))  # Treat min log rank as non-expressed
+    # Treat min log rank as non-expressed
+    is_expressed = (log_ranks_3d != log_ranks_3d.min(axis=-1, keepdims=True))
     expr_frac = is_expressed.astype(jnp.float32).mean(axis=1)  # Mean across neighbors
     
     # Calculate marker score
@@ -179,7 +182,7 @@ def compute_marker_scores_jax(
     frac_mask = expr_frac > global_expr_frac
     marker_score = jnp.where(frac_mask, marker_score, 0.0)
 
-    marker_score = jnp.exp(marker_score **1.5) - 1.0
+    marker_score = jnp.exp(marker_score ** 1.5) - 1.0
 
     return marker_score
 
@@ -221,10 +224,10 @@ class MarkerScoreCalculator:
         self,
         adata: ad.AnnData,
         cell_type: str,
-        output_zarr: ZarrBackedDense,
+        output_memmap: MemMapDense,
         global_log_gmean: np.ndarray,
         global_expr_frac: np.ndarray,
-        rank_zarr,  # Now a zarr array directly
+        rank_memmap,  # Now a memory map directly
         reader: ParallelRankReader,
         coords: np.ndarray,
         emb_gcn: np.ndarray,
@@ -245,8 +248,8 @@ class MarkerScoreCalculator:
         
         logger.info(f"Processing {cell_type}: {n_cells} cells")
         
-        # Get rank zarr shape
-        rank_zarr_shape = rank_zarr.shape if hasattr(rank_zarr, 'shape') else reader.shape
+        # Get rank memmap shape
+        rank_memmap_shape = rank_memmap.shape if hasattr(rank_memmap, 'shape') else reader.shape
         
         # Build connectivity matrix
         logger.info("Building connectivity matrix...")
@@ -259,7 +262,7 @@ class MarkerScoreCalculator:
         )
         
         # Validate neighbor indices are within bounds
-        max_valid_idx = rank_zarr_shape[0] - 1
+        max_valid_idx = rank_memmap_shape[0] - 1
         assert neighbor_indices.max() <= max_valid_idx, \
             f"Neighbor indices exceed bounds (max: {neighbor_indices.max()}, limit: {max_valid_idx})"
         assert neighbor_indices.min() >= 0, \
@@ -269,7 +272,7 @@ class MarkerScoreCalculator:
         logger.info("Optimizing row order for cache efficiency...")
         row_order = optimize_row_order(
             neighbor_indices,
-            cell_indices = cell_indices,
+            cell_indices=cell_indices,
             method=None,  # Auto-select based on data
             neighbor_weights=neighbor_weights
         )
@@ -306,6 +309,7 @@ class MarkerScoreCalculator:
                 f"Shape mismatch: expected {(actual_batch_size, self.config.num_neighbour)}, got {original_shape}"
             
             # Use fancy indexing in main thread to save memory
+            # This creates the (B*N) × G matrix efficiently
             batch_ranks = rank_data[rank_indices]
             
             # Get batch weights
@@ -324,36 +328,37 @@ class MarkerScoreCalculator:
             
             # Write results (async)
             global_indices = cell_indices_sorted[batch_start:batch_end]
-            output_zarr.write_batch(marker_scores, global_indices)
+            output_memmap.write_batch(marker_scores, global_indices)
             
             pbar.update(1)
         
         pbar.close()
+        logger.info(f"Completed processing {cell_type}")
     
     def calculate_marker_scores(
         self,
         adata_path: str,
-        rank_zarr_path: str,
+        rank_memmap_path: str,
         mean_frac_path: str,
-        output_path: Optional[Union[str, Path]] = None
+        output_path: Optional[str] = None
     ) -> Union[str, Path]:
         """
         Main execution function for marker score calculation
         
         Args:
             adata_path: Path to concatenated latent adata
-            rank_zarr_path: Path to rank zarr file
+            rank_memmap_path: Path to rank memory map
             mean_frac_path: Path to mean expression fraction parquet
             output_path: Optional output path for marker scores
             
         Returns:
-            Path to output marker score zarr file
+            Path to output marker score memory map file
         """
         logger.info("Starting marker score calculation...")
         
         # Use config path if not specified
         if output_path is None:
-            output_path = Path(self.config.marker_scores_zarr_path)
+            output_path = Path(self.config.marker_scores_memmap_path)
         else:
             output_path = Path(output_path)
         
@@ -371,40 +376,38 @@ class MarkerScoreCalculator:
         # Get annotation key
         annotation_key = self.config.annotation
         
-        # Open rank zarr and get dimensions
-        store = DirectoryStore(rank_zarr_path)
-        lru_cache_store = LRUStoreCache(
-            store, max_size= 10 * 1024**3
+        # Open rank memory map and get dimensions
+        rank_memmap_path = Path(rank_memmap_path)
+        
+        # Get metadata to determine shape
+        meta_path = rank_memmap_path.with_suffix('.meta.json')
+        with open(meta_path, 'r') as f:
+            meta = json.load(f)
+        
+        rank_memmap = MemMapDense(
+            path=rank_memmap_path,
+            shape=tuple(meta['shape']),
+            dtype=np.dtype(meta['dtype']),
+            mode='r'
         )
-        rank_zarr = zarr.open(lru_cache_store, mode='r')
-        logger.info(f"Opened rank zarr from {rank_zarr_path}, using LRU cache")
+        
+        logger.info(f"Opened rank memory map from {rank_memmap_path}")
         n_cells = adata.n_obs
-        n_cells_rank = rank_zarr.shape[0]
-        n_genes = rank_zarr.shape[1]
+        n_cells_rank = rank_memmap.shape[0]
+        n_genes = rank_memmap.shape[1]
         
         logger.info(f"AnnData dimensions: {n_cells} cells × {adata.n_vars} genes")
-        logger.info(f"Rank Zarr dimensions: {n_cells_rank} cells × {n_genes} genes")
+        logger.info(f"Rank MemMap dimensions: {n_cells_rank} cells × {n_genes} genes")
         
-        # Cells should match exactly since filtering is done before rank zarr creation
+        # Cells should match exactly since filtering is done before rank memmap creation
         assert n_cells == n_cells_rank, \
-            f"Cell count mismatch: AnnData has {n_cells} cells, Rank Zarr has {n_cells_rank} cells. " \
+            f"Cell count mismatch: AnnData has {n_cells} cells, Rank MemMap has {n_cells_rank} cells. " \
             f"This indicates the filtering was not applied consistently during rank calculation."
         
-        # Initialize output with proper chunking
-        chunks = None
-        if hasattr(self.config, 'chunks_cells') and hasattr(self.config, 'chunks_genes'):
-            if self.config.chunks_cells is not None or self.config.chunks_genes is not None:
-                # Use provided chunks
-                chunks = (
-                    self.config.chunks_cells if self.config.chunks_cells is not None else 100,
-                    self.config.chunks_genes if self.config.chunks_genes is not None else n_genes
-                )
-        # If chunks is None, ZarrBackedDense will use default (1, n_genes)
-        
-        output_zarr = ZarrBackedDense(
+        # Initialize output memory map
+        output_memmap = MemMapDense(
             output_path,
             shape=(n_cells, n_genes),
-            chunks=chunks,
             mode='w',
             num_write_workers=self.config.mkscore_write_workers
         )
@@ -439,7 +442,7 @@ class MarkerScoreCalculator:
         logger.info("Initializing parallel reader...")
 
         reader = ParallelRankReader(
-            rank_zarr,
+            rank_memmap,
             num_workers=self.config.rank_read_workers
         )
         
@@ -447,10 +450,10 @@ class MarkerScoreCalculator:
             self.process_cell_type(
                 adata,
                 cell_type,
-                output_zarr,
+                output_memmap,
                 global_log_gmean,
                 global_expr_frac,
-                rank_zarr,
+                rank_memmap,
                 reader,
                 coords,
                 emb_gcn,
@@ -461,7 +464,10 @@ class MarkerScoreCalculator:
         # Close the shared reader after all cell types are processed
         reader.close()
         
-        output_zarr.close()
+        # Close rank memory map
+        rank_memmap.close()
+        
+        output_memmap.close()
         logger.info("Marker score calculation complete!")
         
         # Save metadata
@@ -487,4 +493,4 @@ class MarkerScoreCalculator:
         logger.info(f"Results saved to {output_path}")
         logger.info(f"Metadata saved to {metadata_path}")
         
-        return str(output_path)
+        return output_path

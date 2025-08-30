@@ -5,20 +5,20 @@ This package contains all components for converting latent representations to ge
 - Rank calculation from latent representations
 - Connectivity matrix building (spatial → anchor → homogeneous)
 - Marker score calculation
-- Zarr-backed storage utilities
+- Memory-mapped storage utilities
 """
 
 from .rank_calculator import RankCalculator
 from .connectivity import ConnectivityMatrixBuilder
 from .marker_scores import MarkerScoreCalculator
-from .zarr_utils import ZarrBackedDense, ZarrBackedCSR
+from .memmap_io import MemMapDense, ParallelMemMapReader
 from .entry_point import run_latent_to_gene
 
 __all__ = [
     'RankCalculator',
     'ConnectivityMatrixBuilder', 
     'MarkerScoreCalculator',
-    'ZarrBackedDense',
-    'ZarrBackedCSR',
+    'MemMapDense',
+    'ParallelMemMapReader',
     'run_latent_to_gene'
 ]

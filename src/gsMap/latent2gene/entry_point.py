@@ -27,9 +27,9 @@ def run_latent_to_gene(config) -> Dict[str, Any]:
     Returns:
         Dictionary with paths to all outputs:
             - concatenated_latent_adata: Path to concatenated latent representations
-            - rank_zarr: Path to rank zarr file
+            - rank_memmap: Path to rank memory map file
             - mean_frac: Path to mean expression fraction
-            - marker_scores: Path to marker scores zarr
+            - marker_scores: Path to marker scores memory map
             - metadata: Path to metadata JSON
     """
     
@@ -44,9 +44,9 @@ def run_latent_to_gene(config) -> Dict[str, Any]:
     # Check if all outputs already exist using config paths
     expected_outputs = {
         "concatenated_latent_adata": Path(config.concatenated_latent_adata_path),
-        "rank_zarr": Path(config.rank_zarr_path),
+        "rank_memmap": Path(config.rank_memmap_path),
         "mean_frac": Path(config.mean_frac_path),
-        "marker_scores": Path(config.marker_scores_zarr_path),
+        "marker_scores": Path(config.marker_scores_memmap_path),
         "metadata": Path(config.latent2gene_metadata_path)
     }
     
@@ -83,7 +83,7 @@ def run_latent_to_gene(config) -> Dict[str, Any]:
     
     marker_scores_path = marker_calculator.calculate_marker_scores(
         adata_path=rank_outputs["concatenated_latent_adata"],
-        rank_zarr_path=rank_outputs["rank_zarr"],
+        rank_memmap_path=rank_outputs["rank_memmap"],
         mean_frac_path=rank_outputs["mean_frac"],
         output_path=expected_outputs["marker_scores"]
     )
@@ -103,7 +103,7 @@ def run_latent_to_gene(config) -> Dict[str, Any]:
         },
         "outputs": {
             "concatenated_latent_adata": str(rank_outputs["concatenated_latent_adata"]),
-            "rank_zarr": str(rank_outputs["rank_zarr"]),
+            "rank_memmap": str(rank_outputs["rank_memmap"]),
             "mean_frac": str(rank_outputs["mean_frac"]),
             "marker_scores": str(marker_scores_path)
         },

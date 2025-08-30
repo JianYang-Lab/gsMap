@@ -19,7 +19,7 @@ from tqdm import tqdm
 import jax.scipy
 import anndata as ad
 from gsMap.config import LatentToGeneConfig
-from .zarr_utils import ZarrBackedDense
+from .memmap_io import MemMapDense
 
 logger = logging.getLogger(__name__)
 
@@ -68,21 +68,21 @@ def jax_process_chunk(dense_matrix, n_genes):
 
 
 def rank_data_jax(X: csr_matrix, n_genes,
-                  zarr_dense=None,
+                  memmap_dense=None,
                   metadata: Optional[Dict[str, Any]] = None,
                   chunk_size: int = 1000,
                   write_interval: int = 10,
                   current_row_offset: int = 0):
-    """JAX-optimized rank calculation with batched writing to dense zarr.
+    """JAX-optimized rank calculation with batched writing to memory-mapped storage.
 
     Args:
         X: Input sparse matrix
         n_genes: Total number of genes
-        zarr_dense: Optional ZarrBackedDense instance for writing
+        memmap_dense: Optional MemMapDense instance for writing
         metadata: Optional metadata dictionary
         chunk_size: Size of chunks for processing
-        write_interval: How often to write chunks to zarr
-        current_row_offset: Offset for writing to zarr (for multiple sections)
+        write_interval: How often to write chunks to memory map
+        current_row_offset: Offset for writing to memory map (for multiple sections)
 
     Returns:
         Tuple of (sum_log_ranks, sum_frac) as numpy arrays
@@ -129,15 +129,15 @@ def rank_data_jax(X: csr_matrix, n_genes,
             pending_indices.append((global_start, global_end))
             chunks_processed += 1
 
-            # Write to zarr periodically
-            if zarr_dense and chunks_processed % write_interval == 0:
+            # Write to memory map periodically
+            if memmap_dense and chunks_processed % write_interval == 0:
                 # Combine pending chunks for batch write
                 combined_data = np.vstack(pending_chunks)
                 # Calculate row indices for batch write
                 start_row = pending_indices[0][0]
                 end_row = pending_indices[-1][1]
                 # Write as a contiguous block
-                zarr_dense.write_batch(combined_data, row_indices=slice(start_row, end_row))
+                memmap_dense.write_batch(combined_data, row_indices=slice(start_row, end_row))
                 pending_chunks = []
                 pending_indices = []
 
@@ -145,11 +145,11 @@ def rank_data_jax(X: csr_matrix, n_genes,
             pbar.update(end_idx - start_idx)
 
     # Write any remaining chunks
-    if zarr_dense and pending_chunks:
+    if memmap_dense and pending_chunks:
         combined_data = np.vstack(pending_chunks)
         start_row = pending_indices[0][0]
         end_row = pending_indices[-1][1]
-        zarr_dense.write_batch(combined_data, row_indices=slice(start_row, end_row))
+        memmap_dense.write_batch(combined_data, row_indices=slice(start_row, end_row))
 
     return np.array(sum_log_ranks), np.array(sum_frac)
 
@@ -201,15 +201,15 @@ class RankCalculator:
             
         # Output paths from config
         concat_adata_path = Path(self.config.concatenated_latent_adata_path)
-        rank_zarr_path = Path(self.config.rank_zarr_path)
+        rank_memmap_path = Path(self.config.rank_memmap_path)
         mean_frac_path = Path(self.config.mean_frac_path)
         
         # Check if outputs already exist
-        if concat_adata_path.exists() and rank_zarr_path.exists() and mean_frac_path.exists():
+        if concat_adata_path.exists() and rank_memmap_path.with_suffix('.dat').exists() and mean_frac_path.exists():
             logger.info(f"Rank outputs already exist in {self.output_dir}")
             return {
                 "concatenated_latent_adata": str(concat_adata_path),
-                "rank_zarr": str(rank_zarr_path),
+                "rank_memmap": str(rank_memmap_path),
                 "mean_frac": str(mean_frac_path)
             }
         
@@ -225,10 +225,10 @@ class RankCalculator:
         sum_log_ranks = None
         sum_frac = None
         total_cells = 0
-        rank_zarr = None
-        current_row_offset = 0  # Track current position in rank zarr
+        rank_memmap = None
+        current_row_offset = 0  # Track current position in rank memory map
         
-        # First pass: count total cells to initialize zarr
+        # First pass: count total cells to initialize memory map
         logger.info("Counting total cells across all sections...")
         total_cells_expected = 0
         for sample_name, h5ad_path in sample_h5ad_dict.items():
@@ -286,12 +286,11 @@ class RankCalculator:
             if gene_list is None:
                 gene_list = adata.var_names.tolist()
                 n_genes = len(gene_list)
-                # Initialize rank zarr as dense matrix
-                rank_zarr = ZarrBackedDense(
-                    str(rank_zarr_path),
+                # Initialize rank memory map as dense matrix
+                rank_memmap = MemMapDense(
+                    str(rank_memmap_path),
                     shape=(total_cells_expected, n_genes),
                     dtype=np.float32,
-                    chunks=(min(1000, total_cells_expected), n_genes),  # Row-wise chunks
                     mode='w',
                     num_write_workers=self.config.mkscore_write_workers
                 )
@@ -323,14 +322,14 @@ class RankCalculator:
             # Get number of cells after filtering
             n_cells = X.shape[0]
             
-            # Use JAX rank calculation with dense zarr
+            # Use JAX rank calculation with memory map
             logger.debug(f"Processing {n_cells} cells with JAX")
             metadata = {'name': sample_name, 'cells': n_cells, 'study_id': st_id}
             
             batch_sum_log_ranks, batch_frac = rank_data_jax(
                 X, 
                 n_genes,
-                zarr_dense=rank_zarr,
+                memmap_dense=rank_memmap,
                 metadata=metadata,
                 chunk_size=self.config.rank_batch_size,
                 write_interval=self.config.rank_write_interval,  # Batch 5 chunks before writing
@@ -358,9 +357,9 @@ class RankCalculator:
             del adata, X, minimal_adata
             gc.collect()
             
-        # Close rank zarr
-        rank_zarr.close()
-        logger.info(f"Saved rank matrix to {rank_zarr_path}")
+        # Close rank memory map
+        rank_memmap.close()
+        logger.info(f"Saved rank matrix to {rank_memmap_path}")
         
         # Calculate mean log ranks and mean fraction
         mean_log_ranks = sum_log_ranks / total_cells
@@ -405,6 +404,6 @@ class RankCalculator:
         
         return {
             "concatenated_latent_adata": str(concat_adata_path),
-            "rank_zarr": str(rank_zarr_path),
+            "rank_memmap": str(rank_memmap_path),
             "mean_frac": str(mean_frac_path)
         }
