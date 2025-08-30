@@ -27,7 +27,8 @@ class MemMapDense:
         shape: Tuple[int, int],
         dtype=np.float32,
         mode: str = 'w',
-        num_write_workers: int = 4
+        num_write_workers: int = 4,
+        flush_interval: float = 1,
     ):
         """
         Initialize a memory-mapped dense matrix.
@@ -44,7 +45,7 @@ class MemMapDense:
         self.dtype = dtype
         self.mode = mode
         self.num_write_workers = num_write_workers
-        
+        self.flush_interval = flush_interval
         # File paths
         self.data_path = self.path.with_suffix('.dat')
         self.meta_path = self.path.with_suffix('.meta.json')
@@ -99,7 +100,7 @@ class MemMapDense:
         # Write metadata
         meta = {
             'shape': self.shape,
-            'dtype': str(self.dtype),
+            'dtype': np.dtype(self.dtype).name,  # Use dtype.name for proper serialization
             'complete': False,
             'created_at': time.time()
         }
@@ -158,6 +159,8 @@ class MemMapDense:
     def _start_writer_threads(self):
         """Start multiple background writer threads"""
         def writer_worker(worker_id):
+            last_flush_time = time.time()  # Track last flush time for worker 0
+            
             while not self.stop_writer.is_set():
                 try:
                     item = self.write_queue.get(timeout=1)
@@ -176,9 +179,13 @@ class MemMapDense:
                         # Handle array of indices
                         self.memmap[row_indices, col_slice] = data
 
-                    # Flush periodically for durability
-                    if np.random.random() < 0.1:
-                        self.memmap.flush()
+                    # Periodic flush every 1 second for worker 0
+                    if worker_id == 0:
+                        current_time = time.time()
+                        if current_time - last_flush_time >= self.flush_interval:
+                            self.memmap.flush()
+                            last_flush_time = current_time
+                            logger.debug(f"Worker 0 flushed memmap at {current_time:.2f}")
 
                     self.write_queue.task_done()
                 except queue.Empty:
@@ -252,6 +259,9 @@ class MemMapDense:
                 meta = json.load(f)
             meta['complete'] = True
             meta['completed_at'] = time.time()
+            # Ensure dtype is properly serialized
+            if 'dtype' in meta and not isinstance(meta['dtype'], str):
+                meta['dtype'] = np.dtype(self.dtype).name
             with open(self.meta_path, 'w') as f:
                 json.dump(meta, f, indent=2)
             
