@@ -819,8 +819,7 @@ class SpatialLDSCConfig(ConfigWithAutoPaths):
     quick_mode_resource_dir: str | Path | None = None
     use_jax: bool = True
     
-    # Zarr-related attributes for marker score
-    marker_score_format: Literal["zarr", "feather"] = "zarr"
+    marker_score_format: Literal[ "memmap", "feather"] = "memmap"
     mkscore_feather_path: str | Path | None = None
 
     def __post_init__(self):

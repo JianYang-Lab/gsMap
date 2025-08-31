@@ -184,8 +184,8 @@ class MemMapDense:
                         current_time = time.time()
                         if current_time - last_flush_time >= self.flush_interval:
                             self.memmap.flush()
-                            last_flush_time = current_time
-                            logger.debug(f"Worker 0 flushed memmap at {current_time:.2f}")
+                            last_flush_time = time.time()
+                            logger.debug(f"Worker 0 flushed memmap at {last_flush_time:.2f}")
 
                     self.write_queue.task_done()
                 except queue.Empty:
