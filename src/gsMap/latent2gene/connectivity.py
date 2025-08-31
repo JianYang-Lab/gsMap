@@ -80,9 +80,9 @@ def find_spatial_neighbors_with_slices(
     masked_slice_ids = slice_ids[cell_mask]
     masked_coords = coords[cell_mask]
     
-    # Pre-allocate output with fixed size
+    # Pre-allocate output with fixed size, initialized with -1 (invalid)
     total_k = k_central + 2 * n_adjacent_slices * k_adjacent
-    spatial_neighbors = np.zeros((n_masked, total_k), dtype=np.int32)
+    spatial_neighbors = np.full((n_masked, total_k), -1, dtype=np.int32)
     
     # Get unique slices and create mapping
     unique_slices = np.unique(masked_slice_ids)
@@ -125,35 +125,32 @@ def find_spatial_neighbors_with_slices(
                         _, adj_local_neighbors = nbrs_adj.kneighbors(query_coords, n_neighbors=k_adjacent)
                         adj_global_neighbors = cell_indices[adj_local_indices[adj_local_neighbors]]
                         spatial_neighbors[cells_on_slice, col_offset:col_offset+k_adjacent] = adj_global_neighbors
-                    else:
-                        # If adjacent slice doesn't exist, pad with self-indices
-                        self_indices = cell_indices[cells_on_slice]
-                        spatial_neighbors[cells_on_slice, col_offset:col_offset+k_adjacent] = -1
+                    # If adjacent slice doesn't exist, already filled with -1
                     col_offset += k_adjacent
 
     # Handle edge cases: cells on slices with too few points
     for slice_id, slice_local_indices in slice_to_indices.items():
         if slice_id not in slice_knn_models and len(slice_local_indices) > 0:
-            # These cells get padded with their own indices
+            # These cells have too few neighbors on their slice
             cells_on_slice = slice_local_indices
             n_cells_on_slice = len(slice_local_indices)
 
-            # Few cells on slice - use all available as neighbors, pad rest with -1
-            slice_coords = masked_coords[slice_local_indices]
-            nbrs = NearestNeighbors(
-                n_neighbors=min(n_cells_on_slice, k_central),
-                metric='euclidean',
-                algorithm='kd_tree'
-            )
-            nbrs.fit(slice_coords)
-            _, local_neighbors = nbrs.kneighbors(slice_coords)
-            global_neighbors = cell_indices[slice_local_indices[local_neighbors]]
-
-            # Fill what we can, pad the rest with -1
-            actual_k = min(n_cells_on_slice, k_central)
-            spatial_neighbors[cells_on_slice, :actual_k] = global_neighbors
-            if actual_k < total_k:
-                spatial_neighbors[cells_on_slice, actual_k:] = -1
+            if n_cells_on_slice > 1:
+                # Few cells on slice - use all available as neighbors, rest already -1
+                slice_coords = masked_coords[slice_local_indices]
+                nbrs = NearestNeighbors(
+                    n_neighbors=min(n_cells_on_slice, k_central),
+                    metric='euclidean',
+                    algorithm='kd_tree'
+                )
+                nbrs.fit(slice_coords)
+                _, local_neighbors = nbrs.kneighbors(slice_coords)
+                global_neighbors = cell_indices[slice_local_indices[local_neighbors]]
+                
+                # Fill what we can, rest remains -1
+                actual_k = min(n_cells_on_slice, k_central)
+                spatial_neighbors[cells_on_slice, :actual_k] = global_neighbors
+            # If only 1 cell on slice, it remains all -1
 
     return spatial_neighbors
 
