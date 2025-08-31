@@ -26,7 +26,7 @@ from jax import jit, vmap
 from scipy.stats import norm
 from statsmodels.stats.multitest import multipletests
 from tqdm import tqdm
-import zarr
+# Zarr import removed - using memory maps instead
 
 from .config import SpatialLDSCConfig
 from .utils.regression_read import _read_ref_ld_v2, _read_sumstats, _read_w_ld
@@ -648,20 +648,34 @@ class QuickModeLDScore:
         """Initialize quick mode with SNP-gene weights."""
         logger.info("Loading quick mode data...")
 
-        if config.marker_score_format == "zarr":
-            # Use the auto-generated path from ConfigWithAutoPaths
-            mk_score_zarr_array_path = Path(config.marker_scores_zarr_path)
+        if  config.marker_score_format == "memmap":
+            # Use memory-mapped marker scores
+            # Try memmap path first, fall back to zarr path for compatibility
+            mk_score_data_path = Path(config.marker_scores_memmap_path)
+            mk_score_meta_path = mk_score_data_path.with_suffix('.meta.json')
             
-            if not mk_score_zarr_array_path.exists():
-                raise FileNotFoundError(f"Marker scores zarr not found at {mk_score_zarr_array_path}")
-
-            # Open zarr array in read mode - keeps data on disk
-            logger.info(f"Opening marker scores zarr array from {mk_score_zarr_array_path}")
-            self.mkscore_zarr = zarr.open(str(mk_score_zarr_array_path), mode='r')
-
-            # The zarr array shape should be (n_spots, n_genes)
-            n_spots_zarr, n_genes_zarr = self.mkscore_zarr.shape
-            logger.info(f"Marker scores zarr shape: (n_spots={n_spots_zarr}, n_genes={n_genes_zarr})")
+            if not mk_score_meta_path.exists():
+                raise FileNotFoundError(f"Marker scores metadata not found at {mk_score_meta_path}")
+            
+            # Load metadata to get shape and dtype
+            logger.info(f"Loading marker scores metadata from {mk_score_meta_path}")
+            with open(mk_score_meta_path, 'r') as f:
+                meta = json.load(f)
+            
+            n_spots_memmap = meta['shape'][0]
+            n_genes_memmap = meta['shape'][1]
+            dtype = np.dtype(meta['dtype'])
+            
+            # Open memory-mapped array in read mode
+            logger.info(f"Opening memory-mapped marker scores from {mk_score_data_path}")
+            self.mkscore_memmap = np.memmap(
+                mk_score_data_path,
+                dtype=dtype,
+                mode='r',
+                shape=(n_spots_memmap, n_genes_memmap)
+            )
+            
+            logger.info(f"Marker scores memmap shape: (n_spots={n_spots_memmap}, n_genes={n_genes_memmap})")
 
 
             # Load concatenated latent adata to get gene names and spot names
@@ -702,13 +716,13 @@ class QuickModeLDScore:
                 self.spot_names_filtered = self.spot_names_all[self.spot_indices]
             else:
                 # Use all spots if no sample_name specified
-                self.spot_indices = np.arange(n_spots_zarr)
+                self.spot_indices = np.arange(n_spots_memmap)
                 self.spot_names_filtered = self.spot_names_all
                 self.sample_start_offset = 0
             
             concat_adata.file.close()
-            assert len(self.spot_names_all) == n_spots_zarr
-            assert len(gene_names_from_adata) == n_genes_zarr
+            assert len(self.spot_names_all) == n_spots_memmap
+            assert len(gene_names_from_adata) == n_genes_memmap
             del concat_adata
             
 
@@ -719,13 +733,13 @@ class QuickModeLDScore:
                 raise FileNotFoundError(f"SNP-gene weight matrix not found at {snp_gene_weight_path}")
             snp_gene_weight_adata = ad.read_h5ad(snp_gene_weight_path)
             
-            # Find common genes between zarr and SNP-gene weights
-            zarr_genes_series = pd.Series(gene_names_from_adata)
-            common_genes_mask = zarr_genes_series.isin(snp_gene_weight_adata.var.index)
+            # Find common genes between memmap and SNP-gene weights
+            memmap_genes_series = pd.Series(gene_names_from_adata)
+            common_genes_mask = memmap_genes_series.isin(snp_gene_weight_adata.var.index)
             common_genes = gene_names_from_adata[common_genes_mask]
             
             # Get indices for gene alignment
-            self.zarr_gene_indices = np.where(common_genes_mask)[0]
+            self.memmap_gene_indices = np.where(common_genes_mask)[0]
             snp_gene_indices = [snp_gene_weight_adata.var.index.get_loc(g) for g in common_genes]
             
             logger.info(f"Found {len(common_genes)} common genes between marker scores and SNP-gene weights")
@@ -742,14 +756,14 @@ class QuickModeLDScore:
             if hasattr(self.snp_gene_weight_sparse, 'tocsr'):
                 self.snp_gene_weight_sparse = self.snp_gene_weight_sparse.tocsr()
             
-            # Set up chunking for zarr reading - based on filtered spots
+            # Set up chunking for memmap reading - based on filtered spots
             self.chunk_size = config.spots_per_chunk_quick_mode
             self.n_spots_filtered = len(self.spot_indices)
             self.chunk_starts = list(range(0, self.n_spots_filtered, self.chunk_size))
-            self.n_spots = n_spots_zarr  # Keep original for zarr indexing
+            self.n_spots = n_spots_memmap  # Keep original for memmap indexing
             
-            # Store flag for zarr mode
-            self.use_zarr = True
+            # Store flag for memmap mode
+            self.use_memmap = True
             
         else:
             # Original feather-based implementation
@@ -787,22 +801,22 @@ class QuickModeLDScore:
             
             # Pre-convert mk_score to float32 for efficiency
             self.mk_score_values = self.mk_score.values.astype(np.float32)
-            self.use_zarr = False
+            self.use_memmap = False
     
     def fetch_ldscore_by_chunk(self, chunk_index: int) -> Tuple[np.ndarray, pd.Index]:
         """Fetch LD score chunk using optimized sparse matrix multiplication."""
         start = self.chunk_starts[chunk_index]
         
-        if self.use_zarr:
-            # Zarr-based implementation - read only the needed chunk from disk
+        if self.use_memmap:
+            # Memory-mapped implementation - read only the needed chunk from disk
             end = min(start + self.chunk_size, self.n_spots_filtered)
             
-            # Since we verified spots are continuous, could use direct slicing
-            zarr_start = self.sample_start_offset + start
-            zarr_end = self.sample_start_offset + end
+            # Since we verified spots are continuous, use direct slicing
+            memmap_start = self.sample_start_offset + start
+            memmap_end = self.sample_start_offset + end
             
             # Select contiguous spots and aligned genes
-            mk_score_chunk = self.mkscore_zarr[zarr_start:zarr_end, self.zarr_gene_indices]
+            mk_score_chunk = self.mkscore_memmap[memmap_start:memmap_end, self.memmap_gene_indices]
             # Transpose to (n_genes, n_spots) for matrix multiplication
             mk_score_chunk = mk_score_chunk.T
             
@@ -843,7 +857,7 @@ class QuickModeLDScore:
     
     def get_chunk_spot_range(self, chunk_index: int) -> Tuple[int, int, int]:
         """Get the absolute start, end positions in global adata, and total spots."""
-        if self.use_zarr:
+        if self.use_memmap:
             # Get the chunk boundaries in filtered space
             start_in_filtered = self.chunk_starts[chunk_index]
             end_in_filtered = min(start_in_filtered + self.chunk_size, self.n_spots_filtered)
@@ -860,6 +874,20 @@ class QuickModeLDScore:
             start = self.chunk_starts[chunk_index]
             end = min(start + self.chunk_size, self.mk_score.shape[1])
             return start, end, self.mk_score.shape[1]
+    
+    def cleanup(self):
+        """Clean up resources, particularly memory-mapped arrays."""
+        if hasattr(self, 'mkscore_memmap'):
+            # Memory-mapped arrays should be deleted to free resources
+            del self.mkscore_memmap
+            logger.debug("Cleaned up memory-mapped marker scores")
+    
+    def __del__(self):
+        """Ensure cleanup on deletion."""
+        try:
+            self.cleanup()
+        except:
+            pass
 
 
 # ============================================================================
@@ -870,13 +898,7 @@ def run_spatial_ldsc_single_trait(config: SpatialLDSCConfig,
                                  trait_name: str,
                                  sumstats_file: str) -> pd.DataFrame:
     """
-    Run spatial LDSC for a single trait.
-    
-    This function:
-    1. Uses queue-based processing for efficiency
-    2. Accumulates results in memory
-    3. Saves a single output file with position info in filename if incomplete
-    4. Returns merged DataFrame when processing completes
+    Run spatial LDSC for a single trait using the unified processor.
     
     Args:
         config: Configuration object
@@ -887,7 +909,7 @@ def run_spatial_ldsc_single_trait(config: SpatialLDSCConfig,
         Merged DataFrame with results
     """
     logger.info("=" * 70)
-    logger.info(f"Running Spatial LDSC (JAX-optimized Final Version)")
+    logger.info(f"Running Spatial LDSC (Unified Processor Version)")
     logger.info(f"Project: {config.project_name}, Trait: {trait_name}")
     if config.sample_name:
         logger.info(f"Filtering by sample: {config.sample_name}")
@@ -895,88 +917,122 @@ def run_spatial_ldsc_single_trait(config: SpatialLDSCConfig,
         logger.info(f"Cell indices range: {config.cell_indices_range}")
     logger.info("=" * 70)
     
-    # Create output directory using the auto-generated path
-    output_dir = config.ldsc_save_dir  # This is auto-created by @ensure_path_exists
+    # Create output directory
+    output_dir = config.ldsc_save_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Load and prepare data
     data, common_snps = load_and_prepare_data(config, trait_name, sumstats_file)
     data_truncated = prepare_snp_data_for_blocks(data, config.n_blocks)
     
-    # Initialize handlers
-    quick_handler = None
-    
+    # Use unified processor only for memmap format
     if config.ldscore_save_format == "quick_mode":
-        logger.info("Initializing quick mode...")
-        quick_handler = QuickModeLDScore(config, data_truncated['snp_positions'])
-        total_chunks = len(quick_handler.chunk_starts)
-    elif config.ldscore_save_format == "feather":
-        # Check for chunk directories in ldscore_save_dir
-        ldscore_dir = Path(config.ldscore_save_dir)
-        if not ldscore_dir.exists():
-            raise ValueError(f"ldscore_save_dir not found: {ldscore_dir}")
-        chunk_dirs = [d for d in os.listdir(ldscore_dir) if "chunk" in d]
-        total_chunks = len(chunk_dirs)
+        # Import the unified processor
+        from .spatial_ldsc_processor import SpatialLDSCProcessor
+        
+        # Determine number of loader threads based on platform
+        if jax.default_backend() == 'gpu':
+            n_loader_threads = 10
+        else:
+            n_loader_threads = 2
+        
+        # Create processor instance
+        processor = SpatialLDSCProcessor(
+            config=config,
+            trait_name=trait_name,
+            data_truncated=data_truncated,
+            output_dir=output_dir,
+            n_loader_threads=n_loader_threads
+        )
+        
+        # Process all chunks
+        start_time = time.time()
+        try:
+            merged_df = processor.process_all_chunks(process_chunk_jit)
+        finally:
+            # Clean up resources
+            processor.cleanup()
+        
+        elapsed_time = time.time() - start_time
+        h, rem = divmod(elapsed_time, 3600)
+        m, s = divmod(rem, 60)
+        logger.info(f"Processing completed in {int(h)}h {int(m)}m {s:.2f}s")
+        
+        return merged_df
+        
     else:
-        raise ValueError(f"Unsupported format: {config.ldscore_save_format}")
-    
-    logger.info(f"Total chunks: {total_chunks}")
-    
-    # Determine chunk indices to process
-    if config.cell_indices_range:
-        # Convert cell indices to chunk indices
-        start_cell, end_cell = config.cell_indices_range  # 0-based [start, end)
-        chunk_size = config.spots_per_chunk_quick_mode
+        # Fall back to original implementation for non-memmap formats
+        logger.info(f"Using original implementation for format: {config.ldscore_save_format}")
         
-        # Calculate which chunks contain these cells
-        start_chunk = start_cell // chunk_size  # 0-based chunk index
-        end_chunk = (end_cell - 1) // chunk_size if end_cell > 0 else 0  # 0-based, inclusive
+        # Initialize handlers
+        quick_handler = None
         
-        # Validate chunk indices
-        if start_chunk >= total_chunks:
-            raise ValueError(f"cell_indices_range start ({start_cell}) maps to chunk {start_chunk} which is >= total chunks ({total_chunks})")
-        if end_chunk >= total_chunks:
-            logger.warning(f"cell_indices_range end ({end_cell}) maps to chunk {end_chunk} which is >= total chunks ({total_chunks}). Capping to last chunk.")
-            end_chunk = total_chunks - 1
+        if config.ldscore_save_format == "feather":
+            # Check for chunk directories in ldscore_save_dir
+            ldscore_dir = Path(config.ldscore_save_dir)
+            if not ldscore_dir.exists():
+                raise ValueError(f"ldscore_save_dir not found: {ldscore_dir}")
+            chunk_dirs = [d for d in os.listdir(ldscore_dir) if "chunk" in d]
+            total_chunks = len(chunk_dirs)
+        else:
+            raise ValueError(f"Unsupported format: {config.ldscore_save_format}")
         
-        # Create list of 0-based chunk indices
-        chunk_indices = list(range(start_chunk, end_chunk + 1))
-        logger.info(f"Cell range [{start_cell}, {end_cell}) maps to chunks {start_chunk}-{end_chunk} (0-based)")
-    else:
-        # Process all chunks (0-based indexing)
-        start_chunk, end_chunk = 0, total_chunks - 1
-        chunk_indices = list(range(0, total_chunks))
-    
-    # Process chunks with result accumulator
-    start_time = time.time()
-    result_accumulator = process_chunks_with_queue(
-        config, data_truncated, chunk_indices, 
-        trait_name, output_dir, quick_handler
-    )
-    elapsed_time = time.time() - start_time
-    
-    h, rem = divmod(elapsed_time, 3600)
-    m, s = divmod(rem, 60)
-    logger.info(f"Processed {len(result_accumulator.processed_chunks)} chunks in {int(h)}h {int(m)}m {s:.2f}s")
-    
-    # Get merged results
-    merged_df = result_accumulator.get_merged_results()
-    
-    # Generate appropriate filename based on coverage
-    base_name = f"{config.project_name}_{trait_name}"
-    output_filename = result_accumulator.get_coverage_filename(base_name)
-    final_file = Path(config.ldsc_save_dir) / output_filename
-    
-    # Save and log statistics
-    save_results_and_log_statistics(merged_df, final_file)
-    
-    # Log coverage information if incomplete
-    if not result_accumulator.is_complete(total_chunks):
-        logger.info(f"Partial results saved: spots [{result_accumulator.min_spot_start}, {result_accumulator.max_spot_end}) "
-                   f"out of {result_accumulator.total_spots} total")
-        logger.info("To process remaining chunks, adjust cell_indices_range accordingly")
-    
-    return merged_df
+        logger.info(f"Total chunks: {total_chunks}")
+        
+        # Determine chunk indices to process
+        if config.cell_indices_range:
+            # Convert cell indices to chunk indices
+            start_cell, end_cell = config.cell_indices_range
+            chunk_size = config.spots_per_chunk_quick_mode
+            
+            # Calculate which chunks contain these cells
+            start_chunk = start_cell // chunk_size
+            end_chunk = (end_cell - 1) // chunk_size if end_cell > 0 else 0
+            
+            # Validate chunk indices
+            if start_chunk >= total_chunks:
+                raise ValueError(f"cell_indices_range start ({start_cell}) maps to chunk {start_chunk} which is >= total chunks ({total_chunks})")
+            if end_chunk >= total_chunks:
+                logger.warning(f"cell_indices_range end ({end_cell}) maps to chunk {end_chunk} which is >= total chunks ({total_chunks}). Capping to last chunk.")
+                end_chunk = total_chunks - 1
+            
+            # Create list of chunk indices
+            chunk_indices = list(range(start_chunk, end_chunk + 1))
+            logger.info(f"Cell range [{start_cell}, {end_cell}) maps to chunks {start_chunk}-{end_chunk}")
+        else:
+            # Process all chunks
+            chunk_indices = list(range(0, total_chunks))
+        
+        # Process chunks with original implementation
+        start_time = time.time()
+        result_accumulator = process_chunks_with_queue(
+            config, data_truncated, chunk_indices, 
+            trait_name, output_dir, quick_handler
+        )
+        elapsed_time = time.time() - start_time
+        
+        h, rem = divmod(elapsed_time, 3600)
+        m, s = divmod(rem, 60)
+        logger.info(f"Processed {len(result_accumulator.processed_chunks)} chunks in {int(h)}h {int(m)}m {s:.2f}s")
+        
+        # Get merged results
+        merged_df = result_accumulator.get_merged_results()
+        
+        # Generate appropriate filename based on coverage
+        base_name = f"{config.project_name}_{trait_name}"
+        output_filename = result_accumulator.get_coverage_filename(base_name)
+        final_file = Path(config.ldsc_save_dir) / output_filename
+        
+        # Save and log statistics
+        save_results_and_log_statistics(merged_df, final_file)
+        
+        # Log coverage information if incomplete
+        if not result_accumulator.is_complete(total_chunks):
+            logger.info(f"Partial results saved: spots [{result_accumulator.min_spot_start}, {result_accumulator.max_spot_end}) "
+                       f"out of {result_accumulator.total_spots} total")
+            logger.info("To process remaining chunks, adjust cell_indices_range accordingly")
+        
+        return merged_df
 
 
 def save_results_and_log_statistics(merged_df: pd.DataFrame, 
