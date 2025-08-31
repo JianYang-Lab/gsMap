@@ -587,6 +587,10 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
         help="Name of the project"
     )]
 
+    dataset_type: Annotated[Literal['scRNA-seq', 'spatial2D', 'spatial3D'], typer.Option(
+        help="Type of dataset: scRNA-seq (uses KNN on latent space), spatial2D (2D spatial), or spatial3D (multi-slice)"
+    )] = 'spatial2D'
+
     # --------input h5ad file paths which have the latent representations
     h5ad: Annotated[Optional[List[Path]], typer.Option(
         help="Space-separated list of h5ad file paths. Sample names are derived from file names without suffix.",
@@ -633,8 +637,9 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
     )] = "spatial"
 
     # --------parameters for finding homogeneous spots
+
     num_neighbour_spatial: Annotated[int, typer.Option(
-        help="k1: Number of spatial neighbors for initial graph",
+        help="k1: Number of spatial neighbors in it's own slice for spatial dataset",
         min=10,
         max=500
     )] = 201
@@ -645,17 +650,39 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
         max=200
     )] = 51
     
-    num_neighbour: Annotated[int, typer.Option(
-        help="k3: Number of homogeneous spots to find",
+    num_homogeneous: Annotated[int, typer.Option(
+        help="k3: Number of homogeneous neighbors per cell (for spatial) or KNN neighbors (for scRNA-seq)",
         min=1,
         max=100
     )] = 21
-    
+
+    similarity_threshold: Annotated[float, typer.Option(
+        help="Minimum similarity threshold for homogeneous neighbors.",
+        min=0.0,
+        max=1.0
+    )] = 0.0
+
     no_expression_fraction: Annotated[bool, typer.Option(
         "--no-expression-fraction",
         help="Skip expression fraction filtering"
     )] = False
 
+    # --------3D slice-aware neighbor search parameters
+    k_adjacent: Annotated[int, typer.Option(
+        help="Number of neighbors to find on each adjacent slice for 3D data",
+        min=10,
+        max=100
+    )] = 100
+
+    n_adjacent_slices: Annotated[int, typer.Option(
+        help="Number of slices to search above and below for 3D data",
+        min=0,
+        max=5
+    )] = 1
+
+    slice_id_key: Annotated[Optional[str], typer.Option(
+        help="Key in adata.obs for slice IDs. For 3D data, should contain sequential integers representing z-axis order (0, 1, 2, ...). If None, assumes single 2D slice"
+    )] = None
 
     # -------- IO parameters
     rank_batch_size:int = 1000
@@ -679,11 +706,6 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
         max=5000
     )] = 500
     
-    similarity_threshold: Annotated[float, typer.Option(
-        help="Minimum similarity threshold for homogeneous neighbors.",
-        min=0.0,
-        max=1.0
-    )] = 0.0
 
     chunks_cells: Annotated[Optional[int], typer.Option(
         help="Chunk size for cells dimension (None for optimal)"
@@ -779,12 +801,22 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
         if len(self.sample_h5ad_dict) == 0:
             raise ValueError("No valid samples found in the provided input")
         
-        # Validate configuration constraints
-        assert self.num_neighbour <= self.num_anchor, \
-            f"num_neighbour ({self.num_neighbour}) must be <= num_anchor ({self.num_anchor})"
-        assert self.num_anchor <= self.num_neighbour_spatial, \
-            f"num_anchor ({self.num_anchor}) must be <= num_neighbour_spatial ({self.num_neighbour_spatial})"
+        # Auto-configure based on dataset_type
+        if self.dataset_type == 'spatial2D':
+            # spatial2D can have multiple slices but doesn't search across them
+            if self.n_adjacent_slices != 0:
+                self.n_adjacent_slices = 0
+                logger.info("Dataset type is spatial2D, setting n_adjacent_slices=0 (no cross-slice search)")
+        elif self.dataset_type == 'spatial3D':
+            if self.n_adjacent_slices == 0:
+                logger.warning("Dataset type is spatial3D, but n_adjacent_slices=0. Setting to 1 to enable cross-slice search.")
 
+        # Validate configuration constraints for spatial datasets
+        if self.dataset_type in ['spatial2D', 'spatial3D']:
+            assert self.num_homogeneous <= self.num_anchor, \
+                f"num_homogeneous ({self.num_homogeneous}) must be <= num_anchor ({self.num_anchor})"
+            assert self.num_anchor <= self.num_neighbour_spatial, \
+                f"num_anchor ({self.num_anchor}) must be <= num_neighbour_spatial ({self.num_neighbour_spatial})"
 
 
 

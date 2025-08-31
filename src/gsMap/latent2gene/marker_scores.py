@@ -232,7 +232,8 @@ class MarkerScoreCalculator:
         coords: np.ndarray,
         emb_gcn: np.ndarray,
         emb_indv: np.ndarray,
-        annotation_key: str
+        annotation_key: str,
+        slice_ids: Optional[np.ndarray] = None
     ):
         """Process a single cell type"""
         
@@ -258,7 +259,11 @@ class MarkerScoreCalculator:
             emb_gcn=emb_gcn,
             emb_indv=emb_indv,
             cell_mask=cell_mask,
-            return_dense=True
+            slice_ids=slice_ids,
+            return_dense=True,
+            k_central=self.config.num_neighbour_spatial,
+            k_adjacent=self.config.k_adjacent if hasattr(self.config, 'k_adjacent') else 7,
+            n_adjacent_slices=self.config.n_adjacent_slices if hasattr(self.config, 'n_adjacent_slices') else 1
         )
         
         # Validate neighbor indices are within bounds
@@ -424,15 +429,39 @@ class MarkerScoreCalculator:
         
         # Load shared data structures once
         logger.info("Loading shared data structures...")
-        coords = adata.obsm[self.config.spatial_key]
-        emb_gcn = adata.obsm[self.config.latent_representation_niche].astype(np.float32)
+        
+        # Load embeddings based on dataset type
+        coords = None
+        emb_gcn = None
+        slice_ids = None
+        
+        if self.config.dataset_type in ['spatial2D', 'spatial3D']:
+            # Load spatial coordinates for spatial datasets
+            coords = adata.obsm[self.config.spatial_key]
+            # Load niche embeddings for spatial datasets
+            emb_gcn = adata.obsm[self.config.latent_representation_niche].astype(np.float32)
+            
+            # Load slice IDs if provided (for both spatial2D and spatial3D)
+            if hasattr(self.config, 'slice_id_key') and self.config.slice_id_key:
+                if self.config.slice_id_key in adata.obs.columns:
+                    slice_ids = adata.obs[self.config.slice_id_key].values.astype(np.int32)
+                    if self.config.dataset_type == 'spatial2D':
+                        logger.info(f"Loading slice IDs from {self.config.slice_id_key} for 2D multi-slice data (no cross-slice search)")
+                    else:  # spatial3D
+                        logger.info(f"Loading slice IDs from {self.config.slice_id_key} for 3D neighbor search (with cross-slice search)")
+                else:
+                    logger.warning(f"Slice ID key '{self.config.slice_id_key}' not found in adata.obs")
+        
+        # Load cell embeddings for all dataset types
         emb_indv = adata.obsm[self.config.latent_representation_cell].astype(np.float32)
         
         # Normalize embeddings
         logger.info("Normalizing embeddings...")
-        # L2 normalize niche embeddings
-        emb_gcn_norm = np.linalg.norm(emb_gcn, axis=1, keepdims=True)
-        emb_gcn = emb_gcn / (emb_gcn_norm + 1e-8)
+        
+        # L2 normalize niche embeddings (only for spatial datasets)
+        if emb_gcn is not None:
+            emb_gcn_norm = np.linalg.norm(emb_gcn, axis=1, keepdims=True)
+            emb_gcn = emb_gcn / (emb_gcn_norm + 1e-8)
         
         # L2 normalize individual embeddings
         emb_indv_norm = np.linalg.norm(emb_indv, axis=1, keepdims=True)
@@ -458,7 +487,8 @@ class MarkerScoreCalculator:
                 coords,
                 emb_gcn,
                 emb_indv,
-                annotation_key
+                annotation_key,
+                slice_ids
             )
         
         # Close the shared reader after all cell types are processed
@@ -475,9 +505,14 @@ class MarkerScoreCalculator:
             'n_cells': n_cells,
             'n_genes': n_genes,
             'config': {
-                'num_neighbour_spatial': self.config.num_neighbour_spatial,
-                'num_anchor': self.config.num_anchor,
-                'num_neighbour': self.config.num_neighbour,
+                'dataset_type': self.config.dataset_type,
+                'num_neighbour_spatial': self.config.num_neighbour_spatial if self.config.dataset_type != 'scRNA-seq' else None,
+                'num_anchor': self.config.num_anchor if self.config.dataset_type != 'scRNA-seq' else None,
+                'num_homogeneous': self.config.num_homogeneous,
+                'similarity_threshold': self.config.similarity_threshold if hasattr(self.config, 'similarity_threshold') else 0.0,
+                'k_adjacent': self.config.k_adjacent if hasattr(self.config, 'k_adjacent') else 7,
+                'n_adjacent_slices': self.config.n_adjacent_slices if hasattr(self.config, 'n_adjacent_slices') else 1,
+                'slice_id_key': self.config.slice_id_key if hasattr(self.config, 'slice_id_key') else None,
                 'batch_size': getattr(self.config, 'batch_size', 1000),
                 'num_read_workers': self.config.rank_read_workers,
                 'mkscore_write_workers': self.config.mkscore_write_workers
