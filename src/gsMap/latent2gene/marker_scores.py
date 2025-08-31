@@ -310,8 +310,8 @@ class MarkerScoreCalculator:
             actual_batch_size = batch_end - batch_start
             
             # Verify shape
-            assert original_shape == (actual_batch_size, self.config.num_neighbour), \
-                f"Shape mismatch: expected {(actual_batch_size, self.config.num_neighbour)}, got {original_shape}"
+            assert original_shape == (actual_batch_size, self.config.num_homogeneous), \
+                f"Shape mismatch: expected {(actual_batch_size, self.config.num_homogeneous)}, got {original_shape}"
             
             # Use fancy indexing in main thread to save memory
             # This creates the (B*N) × G matrix efficiently
@@ -325,7 +325,7 @@ class MarkerScoreCalculator:
                 jnp.array(batch_ranks),
                 jnp.array(batch_weights),
                 actual_batch_size,
-                self.config.num_neighbour,
+                self.config.num_homogeneous,
                 jnp.array(global_log_gmean),
                 jnp.array(global_expr_frac)
             )

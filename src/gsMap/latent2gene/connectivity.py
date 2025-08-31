@@ -142,7 +142,7 @@ def _find_anchors_and_homogeneous_batch_jit(
     all_emb_gcn_norm: jnp.ndarray,         # (n_all, d1) - pre-normalized
     all_emb_indv_norm: jnp.ndarray,        # (n_all, d2) - pre-normalized
     num_anchor: int,
-    num_neighbour: int,
+    num_homogeneous: int,
     similarity_threshold: float = 0.0
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """
@@ -176,8 +176,8 @@ def _find_anchors_and_homogeneous_batch_jit(
     homo_sims = jnp.einsum('bd,bkd->bk', emb_indv_batch_norm, anchor_emb_indv_norm)
     
     # Select top homogeneous neighbors
-    top_homo_idx = jnp.argsort(-homo_sims, axis=1)[:, :num_neighbour]
-    homogeneous_neighbors = spatial_anchors[batch_idx, top_homo_idx]  # (batch_size, num_neighbour)
+    top_homo_idx = jnp.argsort(-homo_sims, axis=1)[:, :num_homogeneous]
+    homogeneous_neighbors = spatial_anchors[batch_idx, top_homo_idx]  # (batch_size, num_homogeneous)
     homogeneous_weights = homo_sims[batch_idx, top_homo_idx]
     
     # Apply similarity threshold: set similarities below threshold to -inf before softmax
@@ -457,7 +457,7 @@ class ConnectivityMatrixBuilder:
         homogeneous_weights = np.vstack(homogeneous_weights_list)
         
         if return_dense:
-            # Return dense format: (n_masked, num_neighbour) arrays
+            # Return dense format: (n_masked, num_homogeneous) arrays
             return homogeneous_neighbors, homogeneous_weights
         else:
             # Build sparse matrix
