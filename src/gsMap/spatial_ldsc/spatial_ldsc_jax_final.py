@@ -6,30 +6,27 @@ import gc
 import json
 import logging
 import os
-import psutil
 import queue
 import threading
-import multiprocessing as mp
-from multiprocessing import Queue, Process
-from pathlib import Path
-from typing import Tuple, Dict, List, Callable
 import time
 from datetime import datetime
+from functools import partial
+from pathlib import Path
+from typing import Tuple, List
 
-import anndata as ad
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
-from functools import partial
+import psutil
 from jax import jit, vmap
 from scipy.stats import norm
-from statsmodels.stats.multitest import multipletests
 from tqdm import tqdm
-# Zarr import removed - using memory maps instead
 
-from .config import SpatialLDSCConfig
-from .utils.regression_read import _read_ref_ld_v2, _read_sumstats, _read_w_ld
+import anndata as ad
+from ..config import SpatialLDSCConfig
+from ..utils.regression_read import _read_ref_ld_v2, _read_sumstats, _read_w_ld
+from .ldscore_quick_mode import SpatialLDSCProcessor
 
 logger = logging.getLogger("gsMap.spatial_ldsc_jax")
 
@@ -311,24 +308,24 @@ def load_and_prepare_data(config: SpatialLDSCConfig,
 
 class ResultAccumulator:
     """Accumulates chunk results for spatial LDSC without checkpointing."""
-    
-    def __init__(self, output_dir: Path, config: SpatialLDSCConfig, 
+
+    def __init__(self, output_dir: Path, config: SpatialLDSCConfig,
                  trait_name: str, n_snps_used: int, quick_handler=None):
         self.output_dir = output_dir
         self.config = config
         self.trait_name = trait_name
         self.n_snps_used = n_snps_used
         self.quick_handler = quick_handler
-        
+
         # Storage for accumulated results
         self.results = []  # List of (chunk_idx, betas, ses, spot_names, metadata) tuples
         self.processed_chunks = set()  # Track which chunks have been processed
-        
+
         # Track the actual range of spots covered
         self.min_spot_start = float('inf')
         self.max_spot_end = 0
         self.total_spots = None
-        
+
     def add_chunk_result(self, chunk_idx: int, betas: np.ndarray, ses: np.ndarray,
                         spot_names: pd.Index) -> None:
         """Add chunk result to accumulated results."""
@@ -340,13 +337,13 @@ class ResultAccumulator:
             start_spot = chunk_idx * len(spot_names)
             end_spot = start_spot + len(spot_names)
             total_spots = -1  # Unknown
-        
+
         # Update the overall range covered
         self.min_spot_start = min(self.min_spot_start, start_spot)
         self.max_spot_end = max(self.max_spot_end, end_spot)
         if self.total_spots is None:
             self.total_spots = total_spots
-        
+
         # Create metadata
         metadata = ChunkMetadata(
             n_spots=len(spot_names),
@@ -357,30 +354,30 @@ class ResultAccumulator:
             end_spot=end_spot,
             total_spots=total_spots
         )
-        
+
         # Store result
         self.results.append((chunk_idx, betas, ses, spot_names, metadata))
         self.processed_chunks.add(chunk_idx)
-        
+
     def get_merged_results(self) -> pd.DataFrame:
         """Merge all accumulated results into a single DataFrame."""
         if not self.results:
             raise ValueError("No results to merge")
-        
+
         # Sort results by chunk index to ensure correct order
         sorted_results = sorted(self.results, key=lambda x: x[0])
-        
+
         dfs = []
         for chunk_idx, betas, ses, spot_names, metadata in sorted_results:
             # Convert to float64 for accurate p-value calculation
             betas_f64 = betas.astype(np.float64)
             ses_f64 = ses.astype(np.float64)
-            
+
             # Calculate statistics
             z_scores = betas_f64 / ses_f64
             p_values = norm.sf(z_scores)
             log10_p = -np.log10(np.maximum(p_values, 1e-300))
-            
+
             results_df = pd.DataFrame({
                 'spot': spot_names,
                 'beta': betas,
@@ -390,10 +387,10 @@ class ResultAccumulator:
                 'neg_log10_p': log10_p
             })
             dfs.append(results_df)
-        
+
         merged_df = pd.concat(dfs, ignore_index=True)
         return merged_df
-    
+
     def get_coverage_filename(self, base_name: str) -> str:
         """Generate filename with coverage range if incomplete."""
         if self.total_spots is not None and self.total_spots > 0:
@@ -407,7 +404,7 @@ class ResultAccumulator:
         else:
             # No total spots info - just use the range we have
             return f"{base_name}_start{self.min_spot_start}_end{self.max_spot_end}.csv.gz"
-    
+
     def is_complete(self, total_chunks: int) -> bool:
         """Check if all chunks have been processed."""
         return len(self.processed_chunks) == total_chunks
@@ -419,7 +416,7 @@ class ResultAccumulator:
 
 class ChunkProducer(threading.Thread):
     """Thread that loads spatial LD chunks and puts them in a queue."""
-    
+
     def __init__(self, chunk_queue: queue.Queue, config: SpatialLDSCConfig,
                  data: dict, chunk_indices: List[int], quick_handler=None,
                  worker_id: int = 0):
@@ -431,7 +428,7 @@ class ChunkProducer(threading.Thread):
         self.quick_handler = quick_handler
         self.worker_id = worker_id
         self.daemon = True
-    
+
     def run(self):
         """Load chunks and put them in the queue."""
         for chunk_idx in self.chunk_indices:
@@ -441,14 +438,14 @@ class ChunkProducer(threading.Thread):
             except Exception as e:
                 logger.error(f"Worker {self.worker_id}: Error loading chunk {chunk_idx}: {e}")
                 self.chunk_queue.put((chunk_idx, None))
-        
+
         # Signal completion from this worker
         self.chunk_queue.put((f"DONE_{self.worker_id}", None))
-    
+
     def load_chunk(self, chunk_index: int) -> Tuple[jnp.ndarray, pd.Index]:
         """Load a single chunk of spatial LD scores."""
         n_snps_used = self.data['n_snps_used']
-        
+
         if self.config.ldscore_save_format == "feather":
             # Use ldscore_save_dir from config
             ld_file = f"{self.config.ldscore_save_dir}/{self.config.project_name}_chunk{chunk_index}/{self.config.project_name}."
@@ -457,25 +454,25 @@ class ChunkProducer(threading.Thread):
             spatial_ld = ref_ld.values.astype(np.float32)
             spot_names = ref_ld.columns
             del ref_ld
-            
+
         elif self.config.ldscore_save_format == "quick_mode":
             if self.quick_handler is None:
                 raise ValueError("quick_handler required for quick mode")
             spatial_ld, spot_names = self.quick_handler.fetch_ldscore_by_chunk(chunk_index)  # chunk_index is already 0-based
         else:
             raise ValueError(f"Unsupported format: {self.config.ldscore_save_format}")
-        
+
         # Truncate spatial LD
         spatial_ld = spatial_ld[:n_snps_used]
-        
+
         # Convert to JAX array - this is fast, actual conversion happens on GPU
         return spatial_ld, spot_names
 
 
 class ParallelChunkLoader:
     """Manages multiple producer threads for parallel chunk loading."""
-    
-    def __init__(self, config: SpatialLDSCConfig, data: dict, 
+
+    def __init__(self, config: SpatialLDSCConfig, data: dict,
                  chunk_indices: List[int], quick_handler=None,
                  n_workers: int = 2):
         self.config = config
@@ -485,20 +482,20 @@ class ParallelChunkLoader:
         self.n_workers = min(n_workers, len(chunk_indices))
         self.workers = []
         self.chunk_queue = queue.Queue(maxsize=self.n_workers * 10)  # Increased queue size for buffering
-        
+
     def start(self):
         """Start all producer threads."""
         # Divide chunks among workers
         chunks_per_worker = len(self.chunk_indices) // self.n_workers
         remainder = len(self.chunk_indices) % self.n_workers
-        
+
         start_idx = 0
         for i in range(self.n_workers):
             # Calculate chunk range for this worker
             n_chunks = chunks_per_worker + (1 if i < remainder else 0)
             end_idx = start_idx + n_chunks
             worker_chunks = self.chunk_indices[start_idx:end_idx]
-            
+
             # Create and start worker
             worker = ChunkProducer(
                 self.chunk_queue, self.config, self.data,
@@ -506,11 +503,11 @@ class ParallelChunkLoader:
             )
             worker.start()
             self.workers.append(worker)
-            
+
             start_idx = end_idx
-            
+
         logger.debug(f"Started {self.n_workers} chunk loader threads")
-        
+
     def get_next_chunk(self):
         """Get the next available chunk from any worker."""
         return self.chunk_queue.get()
@@ -529,50 +526,50 @@ def process_chunks_with_queue(config: SpatialLDSCConfig,
                              quick_handler=None) -> ResultAccumulator:
     """
     Process chunks using parallel producer-consumer pattern.
-    
+
     Returns:
         ResultAccumulator with accumulated results
     """
     # Prepare static JAX arrays (same for all chunks)
     n_snps_used = data_truncated['n_snps_used']
-    
+
     # Prepare baseline annotation
-    baseline_ann = (data_truncated['baseline_ld'].values.astype(np.float32) * 
-                   data_truncated['N'].reshape(-1, 1).astype(np.float32) / 
+    baseline_ann = (data_truncated['baseline_ld'].values.astype(np.float32) *
+                   data_truncated['N'].reshape(-1, 1).astype(np.float32) /
                    data_truncated['Nbar'])
-    baseline_ann = np.concatenate([baseline_ann, 
+    baseline_ann = np.concatenate([baseline_ann,
                                   np.ones((n_snps_used, 1), dtype=np.float32)], axis=1)
-    
+
     # Convert to JAX arrays (move to GPU once)
     baseline_ld_sum_jax = jnp.asarray(data_truncated['baseline_ld_sum'], dtype=jnp.float32)
     chisq_jax = jnp.asarray(data_truncated['chisq'], dtype=jnp.float32)
     N_jax = jnp.asarray(data_truncated['N'], dtype=jnp.float32)
     baseline_ann_jax = jnp.asarray(baseline_ann, dtype=jnp.float32)
     w_ld_jax = jnp.asarray(data_truncated['w_ld'], dtype=jnp.float32)
-    
+
     del baseline_ann
     gc.collect()
-    
+
     # Create result accumulator
     result_accumulator = ResultAccumulator(output_dir, config, trait_name, n_snps_used, quick_handler)
-    
+
     # Determine number of loader threads based on platform
     if jax.default_backend() == 'gpu':
         n_loader_threads = 10  # More threads for GPU to keep it fed
     else:
         n_loader_threads = 2  # Fewer threads for CPU
-    
+
     # Create parallel chunk loader
     loader = ParallelChunkLoader(
-        config, data_truncated, chunk_indices, 
+        config, data_truncated, chunk_indices,
         quick_handler, n_workers=n_loader_threads
     )
     loader.start()
-    
+
     # Track completion
     n_workers_done = 0
     n_chunks_processed = 0
-    
+
     # Process chunks as they become available
     with tqdm(total=len(chunk_indices), desc="Processing chunks") as pbar:
         while n_chunks_processed < len(chunk_indices):
@@ -585,7 +582,7 @@ def process_chunks_with_queue(config: SpatialLDSCConfig,
                 if n_workers_done >= loader.n_workers:
                     break
                 continue
-            
+
             if chunk_data is None:
                 logger.error(f"Skipping chunk {chunk_idx} due to loading error")
                 pbar.update(1)
@@ -615,23 +612,23 @@ def process_chunks_with_queue(config: SpatialLDSCConfig,
             # Convert to numpy (transfer from GPU to CPU)
             betas_np = np.array(betas)
             ses_np = np.array(ses)
-            
+
             # Add chunk result to accumulator
             result_accumulator.add_chunk_result(chunk_idx, betas_np, ses_np, spot_names)
-            
+
             # Clean up GPU memory
             del spatial_ld_jax, betas, ses
-            
+
             pbar.update(1)
             n_chunks_processed += 1
-            
+
             # Periodic memory monitoring
             if n_chunks_processed % 10 == 0:
                 log_memory_usage(f"after {n_chunks_processed} chunks")
-    
+
     # Wait for all loaders to finish
     loader.wait_for_completion()
-    
+
     return result_accumulator
 
 
@@ -643,7 +640,7 @@ def process_chunks_with_queue(config: SpatialLDSCConfig,
 
 class QuickModeLDScore:
     """Handler for quick mode LD score loading with optimized matrix operations."""
-    
+
     def __init__(self, config: SpatialLDSCConfig, snp_positions: np.ndarray):
         """Initialize quick mode with SNP-gene weights."""
         logger.info("Loading quick mode data...")
@@ -653,19 +650,19 @@ class QuickModeLDScore:
             # Try memmap path first, fall back to zarr path for compatibility
             mk_score_data_path = Path(config.marker_scores_memmap_path)
             mk_score_meta_path = mk_score_data_path.with_suffix('.meta.json')
-            
+
             if not mk_score_meta_path.exists():
                 raise FileNotFoundError(f"Marker scores metadata not found at {mk_score_meta_path}")
-            
+
             # Load metadata to get shape and dtype
             logger.info(f"Loading marker scores metadata from {mk_score_meta_path}")
             with open(mk_score_meta_path, 'r') as f:
                 meta = json.load(f)
-            
+
             n_spots_memmap = meta['shape'][0]
             n_genes_memmap = meta['shape'][1]
             dtype = np.dtype(meta['dtype'])
-            
+
             # Open memory-mapped array in read mode
             logger.info(f"Opening memory-mapped marker scores from {mk_score_data_path}")
             self.mkscore_memmap = np.memmap(
@@ -674,7 +671,7 @@ class QuickModeLDScore:
                 mode='r',
                 shape=(n_spots_memmap, n_genes_memmap)
             )
-            
+
             logger.info(f"Marker scores memmap shape: (n_spots={n_spots_memmap}, n_genes={n_genes_memmap})")
 
 
@@ -686,7 +683,7 @@ class QuickModeLDScore:
             concat_adata = ad.read_h5ad(concat_adata_path, backed='r')
             gene_names_from_adata = concat_adata.var_names.to_numpy()
             self.spot_names_all = concat_adata.obs_names.to_numpy()
-            
+
             # Filter by sample_name if provided
             if config.sample_name:
                 logger.info(f"Filtering spots by sample_name: {config.sample_name}")
@@ -695,11 +692,11 @@ class QuickModeLDScore:
                 if sample_info is None:
                     logger.warning("No 'sample' column found in obs. Checking for sample_name column...")
                     sample_info = concat_adata.obs['sample_name'].to_numpy() if 'sample_name' in concat_adata.obs.columns else None
-                
+
                 if sample_info is None:
                     concat_adata.file.close()
                     raise ValueError("No 'sample' or 'sample_name' column found in concatenated_latent_adata.obs. Cannot filter by sample.")
-                
+
                 # Get indices of spots for the specified sample
                 self.spot_indices = np.where(sample_info == config.sample_name)[0]
                 # Verify continuous monotony (increment 1) for efficient zarr slicing
@@ -708,10 +705,10 @@ class QuickModeLDScore:
                 if len(self.spot_indices) == 0:
                     concat_adata.file.close()
                     raise ValueError(f"No spots found for sample_name '{config.sample_name}'. Available samples: {np.unique(sample_info)}")
-                
+
                 # Store the absolute start offset for this sample (for contiguous slicing)
                 self.sample_start_offset = self.spot_indices[0]
-                
+
                 logger.info(f"Found {len(self.spot_indices)} spots for sample '{config.sample_name}' (absolute range: [{self.sample_start_offset}, {self.sample_start_offset + len(self.spot_indices)})")
                 self.spot_names_filtered = self.spot_names_all[self.spot_indices]
             else:
@@ -719,12 +716,12 @@ class QuickModeLDScore:
                 self.spot_indices = np.arange(n_spots_memmap)
                 self.spot_names_filtered = self.spot_names_all
                 self.sample_start_offset = 0
-            
+
             concat_adata.file.close()
             assert len(self.spot_names_all) == n_spots_memmap
             assert len(gene_names_from_adata) == n_genes_memmap
             del concat_adata
-            
+
 
             # Load SNP-gene weight data
             # The path is set in config.__post_init__ when quick_mode_resource_dir is provided
@@ -732,48 +729,48 @@ class QuickModeLDScore:
             if not snp_gene_weight_path.exists():
                 raise FileNotFoundError(f"SNP-gene weight matrix not found at {snp_gene_weight_path}")
             snp_gene_weight_adata = ad.read_h5ad(snp_gene_weight_path)
-            
+
             # Find common genes between memmap and SNP-gene weights
             memmap_genes_series = pd.Series(gene_names_from_adata)
             common_genes_mask = memmap_genes_series.isin(snp_gene_weight_adata.var.index)
             common_genes = gene_names_from_adata[common_genes_mask]
-            
+
             # Get indices for gene alignment
             self.memmap_gene_indices = np.where(common_genes_mask)[0]
             snp_gene_indices = [snp_gene_weight_adata.var.index.get_loc(g) for g in common_genes]
-            
+
             logger.info(f"Found {len(common_genes)} common genes between marker scores and SNP-gene weights")
-            
+
             # Extract SNP-gene weight matrix for common genes
             self.snp_gene_weight_sparse = snp_gene_weight_adata[snp_positions, snp_gene_indices].X
-            
+
             if hasattr(self.snp_gene_weight_sparse, 'nnz'):
                 logger.info(f"Using sparse SNP-gene matrix "
                            f"(shape: {self.snp_gene_weight_sparse.shape}, "
                            f"density: {self.snp_gene_weight_sparse.nnz / np.prod(self.snp_gene_weight_sparse.shape):.2%})")
-            
+
             # Convert sparse matrix to CSR format for faster multiplication
             if hasattr(self.snp_gene_weight_sparse, 'tocsr'):
                 self.snp_gene_weight_sparse = self.snp_gene_weight_sparse.tocsr()
-            
+
             # Set up chunking for memmap reading - based on filtered spots
             self.chunk_size = config.spots_per_chunk_quick_mode
             self.n_spots_filtered = len(self.spot_indices)
             self.chunk_starts = list(range(0, self.n_spots_filtered, self.chunk_size))
             self.n_spots = n_spots_memmap  # Keep original for memmap indexing
-            
+
             # Store flag for memmap mode
             self.use_memmap = True
-            
+
         else:
             # Original feather-based implementation
             if config.mkscore_feather_path is None:
                 raise ValueError("mkscore_feather_path must be provided when marker_score_format='feather'")
-            
+
             mkscore_path = Path(config.mkscore_feather_path)
             if not mkscore_path.exists():
                 raise FileNotFoundError(f"Marker score feather file not found at {mkscore_path}")
-            
+
             mk_score = pd.read_feather(mkscore_path)
             mk_score.set_index("HUMAN_GENE_SYM", inplace=True)
 
@@ -781,92 +778,92 @@ class QuickModeLDScore:
             if not snp_gene_weight_path.exists():
                 raise FileNotFoundError(f"SNP-gene weight matrix not found at {snp_gene_weight_path}")
             snp_gene_weight_adata = ad.read_h5ad(snp_gene_weight_path)
-            
+
             common_genes = mk_score.index.intersection(snp_gene_weight_adata.var.index)
-            
+
             self.snp_gene_weight_sparse = snp_gene_weight_adata[snp_positions, common_genes.to_list()].X
-            
+
             if hasattr(self.snp_gene_weight_sparse, 'nnz'):
                 logger.info(f"Using sparse SNP-gene matrix "
                            f"(shape: {self.snp_gene_weight_sparse.shape}, "
                            f"density: {self.snp_gene_weight_sparse.nnz / np.prod(self.snp_gene_weight_sparse.shape):.2%})")
-            
+
             # Convert sparse matrix to CSR format for faster multiplication
             if hasattr(self.snp_gene_weight_sparse, 'tocsr'):
                 self.snp_gene_weight_sparse = self.snp_gene_weight_sparse.tocsr()
-            
+
             self.mk_score = mk_score.loc[common_genes]
             self.chunk_size = config.spots_per_chunk_quick_mode
             self.chunk_starts = list(range(0, self.mk_score.shape[1], self.chunk_size))
-            
+
             # Pre-convert mk_score to float32 for efficiency
             self.mk_score_values = self.mk_score.values.astype(np.float32)
             self.use_memmap = False
-    
+
     def fetch_ldscore_by_chunk(self, chunk_index: int) -> Tuple[np.ndarray, pd.Index]:
         """Fetch LD score chunk using optimized sparse matrix multiplication."""
         start = self.chunk_starts[chunk_index]
-        
+
         if self.use_memmap:
             # Memory-mapped implementation - read only the needed chunk from disk
             end = min(start + self.chunk_size, self.n_spots_filtered)
-            
+
             # Since we verified spots are continuous, use direct slicing
             memmap_start = self.sample_start_offset + start
             memmap_end = self.sample_start_offset + end
-            
+
             # Select contiguous spots and aligned genes
             mk_score_chunk = self.mkscore_memmap[memmap_start:memmap_end, self.memmap_gene_indices]
             # Transpose to (n_genes, n_spots) for matrix multiplication
             mk_score_chunk = mk_score_chunk.T
-            
+
             # Ensure it's float32 for consistency
             mk_score_chunk = mk_score_chunk.astype(np.float32)
-            
+
             # Efficient sparse matrix multiplication
             ldscore_chunk = self.snp_gene_weight_sparse @ mk_score_chunk
-            
+
             # Convert sparse result to dense if needed
             if hasattr(ldscore_chunk, 'toarray'):
                 ldscore_chunk = ldscore_chunk.toarray()
-            
+
             # Use actual spot names from the filtered spots
             spot_names = pd.Index(self.spot_names_filtered[start:end])
-            
+
             return ldscore_chunk.astype(np.float32), spot_names
-            
+
         else:
             # Original feather-based implementation
             end = min(start + self.chunk_size, self.mk_score.shape[1])
-            
+
             # Use pre-converted float32 values
             mk_score_chunk = self.mk_score_values[:, start:end]
-            
+
             # Efficient sparse matrix multiplication
             ldscore_chunk = self.snp_gene_weight_sparse @ mk_score_chunk
-            
+
             # Convert sparse result to dense if needed
             if hasattr(ldscore_chunk, 'toarray'):
                 ldscore_chunk = ldscore_chunk.toarray()
-            
+
             return ldscore_chunk.astype(np.float32), self.mk_score.columns[start:end]
-    
+
     def get_total_chunks(self) -> int:
         """Return total number of chunks."""
         return len(self.chunk_starts)
-    
+
     def get_chunk_spot_range(self, chunk_index: int) -> Tuple[int, int, int]:
         """Get the absolute start, end positions in global adata, and total spots."""
         if self.use_memmap:
             # Get the chunk boundaries in filtered space
             start_in_filtered = self.chunk_starts[chunk_index]
             end_in_filtered = min(start_in_filtered + self.chunk_size, self.n_spots_filtered)
-            
+
             # Convert to absolute positions in global adata
             # spot_indices contains the absolute positions of filtered spots
             absolute_start = self.spot_indices[start_in_filtered]
             absolute_end = self.spot_indices[end_in_filtered - 1] + 1 if end_in_filtered > start_in_filtered else absolute_start
-            
+
             # Return absolute positions and total spots in original data
             return int(absolute_start), int(absolute_end), self.n_spots
         else:
@@ -874,14 +871,14 @@ class QuickModeLDScore:
             start = self.chunk_starts[chunk_index]
             end = min(start + self.chunk_size, self.mk_score.shape[1])
             return start, end, self.mk_score.shape[1]
-    
+
     def cleanup(self):
         """Clean up resources, particularly memory-mapped arrays."""
         if hasattr(self, 'mkscore_memmap'):
             # Memory-mapped arrays should be deleted to free resources
             del self.mkscore_memmap
             logger.debug("Cleaned up memory-mapped marker scores")
-    
+
     def __del__(self):
         """Ensure cleanup on deletion."""
         try:
@@ -928,8 +925,7 @@ def run_spatial_ldsc_single_trait(config: SpatialLDSCConfig,
     # Use unified processor only for memmap format
     if config.ldscore_save_format == "quick_mode":
         # Import the unified processor
-        from .spatial_ldsc_processor import SpatialLDSCProcessor
-        
+
         # Determine number of loader threads based on platform
         if jax.default_backend() == 'gpu':
             n_loader_threads = 10

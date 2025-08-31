@@ -25,7 +25,7 @@ from scipy.stats import norm
 from statsmodels.stats.multitest import multipletests
 from tqdm import tqdm
 
-from .config import SpatialLDSCConfig
+from ..config import SpatialLDSCConfig
 
 logger = logging.getLogger("gsMap.spatial_ldsc_processor")
 
@@ -77,8 +77,7 @@ class SpatialLDSCProcessor:
         self.max_spot_end = 0
         
         # Threading components
-        self.chunk_queue = queue.Queue(maxsize=n_loader_threads * 2)
-        self.result_queue = queue.Queue()
+        self.result_queue = queue.Queue(maxsize=n_loader_threads * 4)
         self.workers = []
         
     def _initialize_quick_mode(self):
@@ -413,7 +412,7 @@ class SpatialLDSCProcessor:
                     pbar.update(1)
                     
                     # Periodic memory check
-                    if n_chunks_processed % 10 == 0:
+                    if n_chunks_processed % 100 == 0:
                         gc.collect()
             
             # Wait for all workers to complete
