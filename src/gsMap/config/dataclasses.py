@@ -682,7 +682,7 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
 
     slice_id_key: Annotated[Optional[str], typer.Option(
         help="Key in adata.obs for slice IDs. For 3D data, should contain sequential integers representing z-axis order (0, 1, 2, ...). If None, assumes single 2D slice"
-    )] = None
+    )] = 'slice_id'
 
     # -------- IO parameters
     rank_batch_size:int = 1000

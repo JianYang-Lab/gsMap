@@ -29,8 +29,8 @@ def find_spatial_neighbors_with_slices(
     coords: np.ndarray,
     slice_ids: Optional[np.ndarray] = None,
     cell_mask: Optional[np.ndarray] = None,
-    k_central: int = 21,
-    k_adjacent: int = 7,
+    k_central: int = 101,
+    k_adjacent: int = 50,
     n_adjacent_slices: int = 1
 ) -> np.ndarray:
     """
@@ -91,45 +91,69 @@ def find_spatial_neighbors_with_slices(
     # Pre-compute KNN for each slice
     slice_knn_models = {}
     for slice_id, slice_local_indices in slice_to_indices.items():
-        assert len(slice_local_indices) >= max(k_central, k_adjacent)
-        slice_coords = masked_coords[slice_local_indices]
-        nbrs = NearestNeighbors(
-            n_neighbors=max(k_central, k_adjacent),
-            metric='euclidean',
-            algorithm='kd_tree'
-        )
-        nbrs.fit(slice_coords)
-        slice_knn_models[slice_id] = (nbrs, slice_local_indices)
+        if len(slice_local_indices) >= max(k_central, k_adjacent):
+            slice_coords = masked_coords[slice_local_indices]
+            nbrs = NearestNeighbors(
+                n_neighbors=max(k_central, k_adjacent),
+                metric='euclidean',
+                algorithm='kd_tree'
+            )
+            nbrs.fit(slice_coords)
+            slice_knn_models[slice_id] = (nbrs, slice_local_indices)
     
     # Batch process all cells
     for slice_id in unique_slices:
-        assert slice_id in slice_knn_models
+        if slice_id in slice_knn_models:
 
-        # Get all cells on this slice
-        cells_on_slice = slice_to_indices[slice_id]
-        query_coords = masked_coords[cells_on_slice]
-        
-        # Central slice neighbors (fixed k_central)
-        nbrs, slice_local_indices = slice_knn_models[slice_id]
-        _, local_neighbors = nbrs.kneighbors(query_coords, n_neighbors=k_central)
-        global_neighbors = cell_indices[slice_local_indices[local_neighbors]]
-        spatial_neighbors[cells_on_slice, :k_central] = global_neighbors
-        
-        # Adjacent slices (fixed k_adjacent for each)
-        col_offset = k_central
-        for offset in range(1, n_adjacent_slices + 1):
-            for direction in [1, -1]:
-                adjacent_slice = slice_id + direction * offset
-                if adjacent_slice in slice_knn_models:
-                    nbrs_adj, adj_local_indices = slice_knn_models[adjacent_slice]
-                    _, adj_local_neighbors = nbrs_adj.kneighbors(query_coords, n_neighbors=k_adjacent)
-                    adj_global_neighbors = cell_indices[adj_local_indices[adj_local_neighbors]]
-                    spatial_neighbors[cells_on_slice, col_offset:col_offset+k_adjacent] = adj_global_neighbors
-                else:
-                    # If adjacent slice doesn't exist, pad with self-indices
-                    self_indices = cell_indices[cells_on_slice]
-                    spatial_neighbors[cells_on_slice, col_offset:col_offset+k_adjacent] = -1
-                col_offset += k_adjacent
+            # Get all cells on this slice
+            cells_on_slice = slice_to_indices[slice_id]
+            query_coords = masked_coords[cells_on_slice]
+
+            # Central slice neighbors (fixed k_central)
+            nbrs, slice_local_indices = slice_knn_models[slice_id]
+            _, local_neighbors = nbrs.kneighbors(query_coords, n_neighbors=k_central)
+            global_neighbors = cell_indices[slice_local_indices[local_neighbors]]
+            spatial_neighbors[cells_on_slice, :k_central] = global_neighbors
+
+            # Adjacent slices (fixed k_adjacent for each)
+            col_offset = k_central
+            for offset in range(1, n_adjacent_slices + 1):
+                for direction in [1, -1]:
+                    adjacent_slice = slice_id + direction * offset
+                    if adjacent_slice in slice_knn_models:
+                        nbrs_adj, adj_local_indices = slice_knn_models[adjacent_slice]
+                        _, adj_local_neighbors = nbrs_adj.kneighbors(query_coords, n_neighbors=k_adjacent)
+                        adj_global_neighbors = cell_indices[adj_local_indices[adj_local_neighbors]]
+                        spatial_neighbors[cells_on_slice, col_offset:col_offset+k_adjacent] = adj_global_neighbors
+                    else:
+                        # If adjacent slice doesn't exist, pad with self-indices
+                        self_indices = cell_indices[cells_on_slice]
+                        spatial_neighbors[cells_on_slice, col_offset:col_offset+k_adjacent] = -1
+                    col_offset += k_adjacent
+
+    # Handle edge cases: cells on slices with too few points
+    for slice_id, slice_local_indices in slice_to_indices.items():
+        if slice_id not in slice_knn_models and len(slice_local_indices) > 0:
+            # These cells get padded with their own indices
+            cells_on_slice = slice_local_indices
+            n_cells_on_slice = len(slice_local_indices)
+
+            # Few cells on slice - use all available as neighbors, pad rest with -1
+            slice_coords = masked_coords[slice_local_indices]
+            nbrs = NearestNeighbors(
+                n_neighbors=min(n_cells_on_slice, k_central),
+                metric='euclidean',
+                algorithm='kd_tree'
+            )
+            nbrs.fit(slice_coords)
+            _, local_neighbors = nbrs.kneighbors(slice_coords)
+            global_neighbors = cell_indices[slice_local_indices[local_neighbors]]
+
+            # Fill what we can, pad the rest with -1
+            actual_k = min(n_cells_on_slice, k_central)
+            spatial_neighbors[cells_on_slice, :actual_k] = global_neighbors
+            if actual_k < total_k:
+                spatial_neighbors[cells_on_slice, actual_k:] = -1
 
     return spatial_neighbors
 
@@ -157,11 +181,16 @@ def _find_anchors_and_homogeneous_batch_jit(
     batch_size = emb_gcn_batch_norm.shape[0]
     
     # Step 1: Extract spatial neighbors' embeddings (already normalized)
-    spatial_emb_gcn_norm = all_emb_gcn_norm[spatial_neighbors]  # (batch_size, k1, d1)
+    # Use a safe index (0) for invalid neighbors, will mask them later
+    safe_neighbors = jnp.where(spatial_neighbors >= 0, spatial_neighbors, 0)
+    spatial_emb_gcn_norm = all_emb_gcn_norm[safe_neighbors]  # (batch_size, k1, d1)
     
     # Step 2: Find spatial anchors via cosine similarity
     # Compute similarities (embeddings are already normalized)
     anchor_sims = jnp.einsum('bd,bkd->bk', emb_gcn_batch_norm, spatial_emb_gcn_norm)
+    
+    # Mask out invalid neighbors by setting their similarities to -inf
+    anchor_sims = jnp.where(spatial_neighbors >= 0, anchor_sims, -jnp.inf)
     
     # Select top anchors
     top_anchor_idx = jnp.argsort(-anchor_sims, axis=1)[:, :num_anchor]
@@ -170,10 +199,15 @@ def _find_anchors_and_homogeneous_batch_jit(
     
     # Step 3: Find homogeneous neighbors from anchors
     # Extract anchor embeddings (already normalized)
-    anchor_emb_indv_norm = all_emb_indv_norm[spatial_anchors]  # (batch_size, num_anchor, d2)
+    # Use a safe index (0) for invalid anchors, will mask them later
+    safe_anchors = jnp.where(spatial_anchors >= 0, spatial_anchors, 0)
+    anchor_emb_indv_norm = all_emb_indv_norm[safe_anchors]  # (batch_size, num_anchor, d2)
     
     # Compute similarities (embeddings are already normalized)
     homo_sims = jnp.einsum('bd,bkd->bk', emb_indv_batch_norm, anchor_emb_indv_norm)
+    
+    # Mask out invalid anchors by setting their similarities to -inf
+    homo_sims = jnp.where(spatial_anchors >= 0, homo_sims, -jnp.inf)
     
     # Select top homogeneous neighbors
     top_homo_idx = jnp.argsort(-homo_sims, axis=1)[:, :num_homogeneous]
@@ -181,9 +215,8 @@ def _find_anchors_and_homogeneous_batch_jit(
     homogeneous_weights = homo_sims[batch_idx, top_homo_idx]
     
     # Apply similarity threshold: set similarities below threshold to -inf before softmax
-    # Also set weights to -inf for invalid neighbors (marked as -1)
     homogeneous_weights = jnp.where(
-        (homogeneous_weights >= similarity_threshold) & (homogeneous_neighbors != -1),
+        (homogeneous_weights >= similarity_threshold),
         homogeneous_weights,
         -jnp.inf
     )

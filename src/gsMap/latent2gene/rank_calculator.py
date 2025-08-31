@@ -257,9 +257,9 @@ class RankCalculator:
             adata = sc.read_h5ad(h5ad_path)
             
             # Add slice information
-            adata.obs['slice_id'] = sample_name
-            adata.obs['slice_numeric_id'] = st_id
-            
+            adata.obs['slice_id'] = st_id
+            adata.obs['slice_name'] = sample_name
+
             # Filter cells based on annotation group size if annotation is provided
             # This must be done BEFORE adding to rank zarr to maintain index consistency
             if annotation_key and annotation_key in adata.obs.columns:
