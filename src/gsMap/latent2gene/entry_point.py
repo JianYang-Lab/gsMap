@@ -3,17 +3,18 @@ Main entry point for the latent2gene subpackage
 """
 
 import logging
+from dataclasses import asdict
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 import json
 
 from .rank_calculator import RankCalculator
 from .marker_scores import MarkerScoreCalculator
-
+from ..config import LatentToGeneConfig
 logger = logging.getLogger(__name__)
 
 
-def run_latent_to_gene(config) -> Dict[str, Any]:
+def run_latent_to_gene(config: LatentToGeneConfig) -> Dict[str, Any]:
     """
     Main entry point for latent to gene conversion
     
@@ -90,16 +91,10 @@ def run_latent_to_gene(config) -> Dict[str, Any]:
     
     # Create overall metadata
     metadata = {
-        "config": {
-            "workdir": str(config.workdir),
-            "project_name": config.project_name,
+        "config":
+            {
             "samples": list(config.sample_h5ad_dict.keys()),
-            "num_neighbour_spatial": config.num_neighbour_spatial,
-            "num_anchor": config.num_anchor,
-            "num_neighbour": config.num_neighbour,
-            "gpu_batch_size": config.mkscore_batch_size,
-            "num_read_workers": config.rank_read_workers,
-            "mkscore_write_workers": config.mkscore_write_workers
+            **asdict(config)
         },
         "outputs": {
             "concatenated_latent_adata": str(rank_outputs["concatenated_latent_adata"]),
