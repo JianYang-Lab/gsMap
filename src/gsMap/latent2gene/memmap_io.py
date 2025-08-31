@@ -28,7 +28,7 @@ class MemMapDense:
         dtype=np.float32,
         mode: str = 'w',
         num_write_workers: int = 4,
-        flush_interval: float = 5,
+        flush_interval: float = 30,
     ):
         """
         Initialize a memory-mapped dense matrix.

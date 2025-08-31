@@ -12,7 +12,7 @@ from typing import List, Optional
 import argparse
 import yaml
 
-from gsMap.spatial_ldsc_jax_final import run_spatial_ldsc_jax
+from gsMap.spatial_ldsc.spatial_ldsc_jax_final import run_spatial_ldsc_jax
 
 # Add gsMap to path
 sys.path.append('/mnt/d/01_Project/01_Research/202312_gsMap/src/gsMap_develop/src')
@@ -156,7 +156,7 @@ def step2_calculate_gss(config: PipelineConfig, sample_name: Optional[str] = Non
         num_neighbour=21,
         rank_read_workers=config.num_read_workers,
         mkscore_batch_size=config.gpu_batch_size,
-
+        similarity_threshold=0.9,
     )
 
     run_latent_to_gene(run_latent_to_gene_config)

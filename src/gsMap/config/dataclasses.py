@@ -679,6 +679,11 @@ class LatentToGeneConfig(ConfigWithAutoPaths):
         max=5000
     )] = 500
     
+    similarity_threshold: Annotated[float, typer.Option(
+        help="Minimum similarity threshold for homogeneous neighbors.",
+        min=0.0,
+        max=1.0
+    )] = 0.0
 
     chunks_cells: Annotated[Optional[int], typer.Option(
         help="Chunk size for cells dimension (None for optimal)"

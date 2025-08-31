@@ -15,13 +15,15 @@ from sklearn.neighbors import NearestNeighbors
 from scipy.sparse import csr_matrix
 from tqdm import tqdm, trange
 
+from gsMap.config import LatentToGeneConfig
+
 logger = logging.getLogger(__name__)
 
 # Configure JAX
 jax.config.update("jax_enable_x64", False)  # Use float32 for speed
 
 
-@partial(jit, static_argnums=(5, 6))
+@partial(jit, static_argnums=(5, 6, 7))
 def _find_anchors_and_homogeneous_batch_jit(
     emb_gcn_batch_norm: jnp.ndarray,      # (batch_size, d1) - pre-normalized
     emb_indv_batch_norm: jnp.ndarray,      # (batch_size, d2) - pre-normalized
@@ -29,12 +31,17 @@ def _find_anchors_and_homogeneous_batch_jit(
     all_emb_gcn_norm: jnp.ndarray,         # (n_all, d1) - pre-normalized
     all_emb_indv_norm: jnp.ndarray,        # (n_all, d2) - pre-normalized
     num_anchor: int,
-    num_neighbour: int
+    num_neighbour: int,
+    similarity_threshold: float = 0.0
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """
     JIT-compiled function to find anchors and homogeneous neighbors.
     Processes a batch of cells to manage GPU memory.
     Expects pre-normalized embeddings for efficiency.
+    
+    Args:
+        similarity_threshold: Minimum similarity threshold. Weights for similarities 
+                            below this threshold will be set to 0 after softmax.
     """
     batch_size = emb_gcn_batch_norm.shape[0]
     
@@ -62,7 +69,14 @@ def _find_anchors_and_homogeneous_batch_jit(
     homogeneous_neighbors = spatial_anchors[batch_idx, top_homo_idx]  # (batch_size, num_neighbour)
     homogeneous_weights = homo_sims[batch_idx, top_homo_idx]
     
-    # Use softmax to normalize weights
+    # Apply similarity threshold: set similarities below threshold to -inf before softmax
+    homogeneous_weights = jnp.where(
+        homogeneous_weights >= similarity_threshold,
+        homogeneous_weights,
+        -jnp.inf
+    )
+    
+    # Use softmax to normalize weights (values with -inf will become 0)
     homogeneous_weights = jax.nn.softmax(homogeneous_weights, axis=1)
     
     return homogeneous_neighbors, homogeneous_weights
@@ -71,7 +85,7 @@ def _find_anchors_and_homogeneous_batch_jit(
 class ConnectivityMatrixBuilder:
     """Build connectivity matrix using JAX-accelerated computation with GPU memory optimization"""
     
-    def __init__(self, config):
+    def __init__(self, config: LatentToGeneConfig):
         """
         Initialize with configuration
         
@@ -152,7 +166,8 @@ class ConnectivityMatrixBuilder:
                 all_emb_gcn_norm_jax,
                 all_emb_indv_norm_jax,
                 self.config.num_anchor,
-                self.config.num_neighbour
+                self.config.num_neighbour,
+                self.config.similarity_threshold
             )
             
             # Convert back to numpy and append
