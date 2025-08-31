@@ -1,10 +1,6 @@
 ## Define the loss function
 import torch.nn.functional as F
-from gsMap.GNN.Distribution import NegativeBinomial, ZeroInflatedNegativeBinomial
-
-# import sys
-# sys.path.append("/storage/yangjianLab/songliyang/SpatialData/gsMap_software/gsMap_V2/GNN")
-# from Distribution import NegativeBinomial, ZeroInflatedNegativeBinomial
+from .Distribution import NegativeBinomial, ZeroInflatedNegativeBinomial
 
 def rec_loss(x_hat,x,logtheta,zi_logit,distribution):
     if distribution == 'nb':

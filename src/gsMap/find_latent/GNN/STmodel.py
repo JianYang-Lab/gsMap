@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-from gsMap.GNN.Encoder_Decoder import Encoder, Decoder
+from .Encoder_Decoder import Encoder, Decoder
 
 class StEmbeding(nn.Module):
     """

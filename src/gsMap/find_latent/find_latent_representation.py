@@ -10,11 +10,10 @@ from torch.utils.data import (
     TensorDataset,
     SubsetRandomSampler,
 )
-from gsMap.GNN.TrainStep import ModelTrain
-from gsMap.GNN.STmodel import StEmbeding
-from gsMap.ST_process import TrainingData, find_common_hvg, InferenceData
-from gsMap.config import FindLatentRepresentationsConfig
-from gsMap.slice_mean import process_slice_mean
+from .GNN.TrainStep import ModelTrain
+from .GNN.STmodel import StEmbeding
+from .ST_process import TrainingData, find_common_hvg, InferenceData
+from ..config import FindLatentRepresentationsConfig
 
 from operator import itemgetter
 

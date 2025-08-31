@@ -10,7 +10,7 @@ from pathlib import Path
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 from scipy.special import softmax
-from gsMap.GNN.GCN import GCN, build_spatial_graph
+from .GNN.GCN import GCN, build_spatial_graph
 from gsMap.config import FindLatentRepresentationsConfig
 
 logger = logging.getLogger(__name__)

@@ -3,11 +3,7 @@ import torch
 from tqdm import tqdm
 import torch.nn.functional as F
 
-from gsMap.GNN.Loss import rec_loss, ce_loss
-
-# import sys
-# sys.path.append("/storage/yangjianLab/songliyang/SpatialData/gsMap_software/gsMap_V2/GNN")
-# from Loss import rec_loss, ce_loss
+from .Loss import rec_loss, ce_loss
 
 class EarlyStopping:
     """Early stops the training if validation loss doesn't improve after a given patience."""
