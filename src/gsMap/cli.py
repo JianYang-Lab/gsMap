@@ -34,40 +34,40 @@ app = typer.Typer(
 # CLI Commands using dataclass_typer decorator
 # ============================================================================
 
-@app.command(name="quick-mode")
-@dataclass_typer
-def quick_mode(config: RunAllModeConfig):
-    """
-    Run the complete gsMap pipeline with all steps.
-    
-    This command runs the full gsMap analysis pipeline including:
-    - Data loading and preprocessing
-    - Gene expression analysis
-    - GWAS integration
-    - Spatial mapping
-    - Result generation
-    """
-    logger.info(f"Sample: {config.sample_name}")
-    logger.info(f"Trait: {config.trait_name}")
-    logger.info(f"Working directory: {config.workdir}")
-    logger.info(f"Project directory: {config.project_dir}")
-    
-    # Show some auto-generated paths
-    logger.info(f"Model will be saved to: {config.model_path}")
-    logger.info(f"LD scores will be saved to: {config.ldscore_save_dir}")
-    logger.info(f"Report will be saved to: {config.get_report_dir(config.trait_name)}")
-    
-    if config.use_jax:
-        logger.info("JAX acceleration enabled")
-    
-    try:
-        from gsMap.run_all_mode import run_pipeline
-        run_pipeline(config)
-        logger.info("✓ Pipeline completed successfully!")
-    except (ImportError, AttributeError) as e:
-        logger.info(f"Note: {e}")
-        logger.info("Running in demo mode...")
-        logger.info("✓ Demo completed!")
+# @app.command(name="quick-mode")
+# @dataclass_typer
+# def quick_mode(config: RunAllModeConfig):
+#     """
+#     Run the complete gsMap pipeline with all steps.
+#
+#     This command runs the full gsMap analysis pipeline including:
+#     - Data loading and preprocessing
+#     - Gene expression analysis
+#     - GWAS integration
+#     - Spatial mapping
+#     - Result generation
+#     """
+#     logger.info(f"Sample: {config.sample_name}")
+#     logger.info(f"Trait: {config.trait_name}")
+#     logger.info(f"Working directory: {config.workdir}")
+#     logger.info(f"Project directory: {config.project_dir}")
+#
+#     # Show some auto-generated paths
+#     logger.info(f"Model will be saved to: {config.model_path}")
+#     logger.info(f"LD scores will be saved to: {config.ldscore_save_dir}")
+#     logger.info(f"Report will be saved to: {config.get_report_dir(config.trait_name)}")
+#
+#     if config.use_jax:
+#         logger.info("JAX acceleration enabled")
+#
+#     try:
+#         from gsMap.run_all_mode import run_pipeline
+#         run_pipeline(config)
+#         logger.info("✓ Pipeline completed successfully!")
+#     except (ImportError, AttributeError) as e:
+#         logger.info(f"Note: {e}")
+#         logger.info("Running in demo mode...")
+#         logger.info("✓ Demo completed!")
 
 
 @app.command(name="find-latent")
@@ -170,10 +170,10 @@ def spatial_ldsc(config: SpatialLDSCConfig):
     
     try:
         if config.use_jax:
-            from gsMap.spatial_ldsc_jax_final import run_spatial_ldsc_jax
+            from gsMap.spatial_ldsc.spatial_ldsc_jax import run_spatial_ldsc_jax
             run_spatial_ldsc_jax(config)
         else:
-            from gsMap.spatial_ldsc_multiple_sumstats import run_spatial_ldsc
+            from gsMap.spatial_ldsc.spatial_ldsc_multiple_sumstats import run_spatial_ldsc
             run_spatial_ldsc(config)
         logger.info("✓ Spatial LDSC completed successfully!")
     except ImportError:
@@ -256,7 +256,7 @@ def main(
        gsmap spatial-ldsc ...
        gsmap report ...
     
-    For detailed documentation, visit: https://github.com/mcgilldinglab/gsMap
+    For detailed documentation, visit: https://github.com/JianYang-Lab/gsMap
     """
     pass
 
