@@ -419,7 +419,7 @@ def save_results(output_dict, config, running_chunk_number, start_chunk, end_chu
     for trait_name, out_chunk_list in output_dict.items():
         out_all = pd.concat(out_chunk_list, axis=0)
         sample_name = config.sample_name
-        if running_chunk_number == end_chunk - start_chunk + 1:
+        if running_chunk_number == determine_total_chunks(config):
             out_file_name = out_dir / f"{sample_name}_{trait_name}.csv.gz"
         else:
             out_file_name = (
