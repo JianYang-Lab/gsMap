@@ -16,6 +16,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
+  # Convert repository name to lowercase for Docker compatibility
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
@@ -31,6 +32,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+      
+      - name: Convert repository name to lowercase
+        id: repo
+        run: echo "name=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -49,17 +54,17 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event.inputs.push == 'true' }}
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.tag }}
+          tags: ${{ env.REGISTRY }}/${{ steps.repo.outputs.name }}:${{ github.event.inputs.tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Output instructions
         run: |
           if [ "${{ github.event.inputs.push }}" == "true" ]; then
-            echo "✅ Docker image pushed to: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.tag }}"
+            echo "✅ Docker image pushed to: ${{ env.REGISTRY }}/${{ steps.repo.outputs.name }}:${{ github.event.inputs.tag }}"
             echo ""
             echo "Pull with:"
-            echo "  docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.tag }}"
+            echo "  docker pull ${{ env.REGISTRY }}/${{ steps.repo.outputs.name }}:${{ github.event.inputs.tag }}"
           else
             echo "✅ Docker image built locally (not pushed)"
             echo ""
