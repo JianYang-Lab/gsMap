@@ -1,0 +1,67 @@
+name: Build Docker Image (Manual)
+
+# This workflow is for manual Docker builds only
+# For automatic releases, the release.yml workflow handles everything when you push a tag
+on:
+  workflow_dispatch:  # Manual trigger only
+    inputs:
+      tag:
+        description: 'Docker image tag (e.g., dev, test, custom-tag)'
+        required: false
+        default: 'manual'
+      push:
+        description: 'Push to registry (true/false)'
+        required: false
+        default: 'false'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    name: Build Docker Image (Manual)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: ${{ github.event.inputs.push == 'true' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event.inputs.push == 'true' }}
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Output instructions
+        run: |
+          if [ "${{ github.event.inputs.push }}" == "true" ]; then
+            echo "✅ Docker image pushed to: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.tag }}"
+            echo ""
+            echo "Pull with:"
+            echo "  docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.tag }}"
+          else
+            echo "✅ Docker image built locally (not pushed)"
+            echo ""
+            echo "To push manually, re-run workflow with push=true"
+          fi

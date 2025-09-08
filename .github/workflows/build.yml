@@ -1,0 +1,44 @@
+name: Build and Test
+
+# CI workflow that builds and validates the Python package on every push/PR
+# This ensures the package is always in a buildable state
+# For actual releases, use the release.yml workflow triggered by tags
+on: 
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    name: Build distribution 📦
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.x"
+      - name: Install pypa/build
+        run: >-
+          python3 -m
+          pip install
+          flit
+          --user
+      - name: Build a binary wheel and a source tarball
+        run: |
+          flit build
+          ls -lh dist
+      - name: Verify the built packages
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install twine
+          twine check dist/*
+      - name: Store the distribution packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/

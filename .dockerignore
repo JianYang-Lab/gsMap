@@ -1,0 +1,71 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info
+*.egg
+dist
+build
+eggs
+.eggs
+parts
+bin
+var
+sdist
+wheels
+pip-wheel-metadata
+*.manifest
+*.spec
+
+# Testing
+.pytest_cache
+.coverage
+htmlcov
+.tox
+.nox
+coverage.xml
+*.cover
+.hypothesis
+
+# Jupyter
+*.ipynb_checkpoints
+
+# Documentation
+docs/
+visualization_web_docs/
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Node
+node_modules/
+
+# Cache
+.ruff_cache/
+.claude/
+
+# Other
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.svg
