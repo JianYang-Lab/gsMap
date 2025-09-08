@@ -52,7 +52,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: ${{ github.event.inputs.push == 'true' }}
           tags: ${{ env.REGISTRY }}/${{ steps.repo.outputs.name }}:${{ github.event.inputs.tag }}
           cache-from: type=gha
