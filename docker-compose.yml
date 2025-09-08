@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  gsmap:
+    build: .
+    image: gsmap:latest
+    container_name: gsmap
+    volumes:
+      # Mount data directory for input/output files
+      - ./data:/data
+      # Mount results directory
+      - ./results:/results
+    working_dir: /data
+    # Override the default command as needed
+    command: ["--help"]
+    environment:
+      - PYTHONUNBUFFERED=1
