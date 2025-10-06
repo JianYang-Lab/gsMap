@@ -3,16 +3,16 @@ name: Build Docker Image (Manual)
 # This workflow is for manual Docker builds only
 # For automatic releases, the release.yml workflow handles everything when you push a tag
 on:
-  workflow_dispatch:  # Manual trigger only
+  workflow_dispatch: # Manual trigger only
     inputs:
       tag:
-        description: 'Docker image tag (e.g., dev, test, custom-tag)'
+        description: "Docker image tag (e.g., dev, test, custom-tag)"
         required: false
-        default: 'manual'
+        default: "manual"
       push:
-        description: 'Push to registry (true/false)'
+        description: "Push to registry (true/false)"
         required: false
-        default: 'false'
+        default: "false"
 
 env:
   REGISTRY: ghcr.io
@@ -32,7 +32,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      
+
       - name: Convert repository name to lowercase
         id: repo
         run: echo "name=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT

@@ -5,11 +5,11 @@ name: Release Pipeline
 on:
   push:
     tags:
-      - 'v*'  # Trigger ONLY on version tags
+      - "v*" # Trigger ONLY on version tags
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to release (e.g., v1.0.0)'
+        description: "Tag to release (e.g., v1.0.0)"
         required: true
         type: string
 
@@ -66,7 +66,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      
+
       - name: Convert repository name to lowercase
         id: repo
         run: echo "name=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
@@ -121,7 +121,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        
+
       - name: Download Python distributions
         uses: actions/download-artifact@v4
         with:
