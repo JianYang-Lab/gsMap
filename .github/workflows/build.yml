@@ -3,7 +3,7 @@ name: Build and Test
 # CI workflow that builds and validates the Python package on every push/PR
 # This ensures the package is always in a buildable state
 # For actual releases, use the release.yml workflow triggered by tags
-on: 
+on:
   push:
     branches:
       - main

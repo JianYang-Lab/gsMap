@@ -425,8 +425,11 @@ def add_spatial_ldsc_args(parser):
         "--chisq_max", type=int, help="Maximum chi-square value for filtering SNPs."
     )
     parser.add_argument(
-        "--chunk_range", nargs=2, type=int, default=None,
-        help="Range of chunks to run in this batch, omit to run all chunks"
+        "--chunk_range",
+        nargs=2,
+        type=int,
+        default=None,
+        help="Range of chunks to run in this batch, omit to run all chunks",
     )
     parser.add_argument(
         "--num_processes", type=int, default=4, help="Number of processes for parallel computing."

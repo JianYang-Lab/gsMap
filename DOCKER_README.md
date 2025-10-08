@@ -79,6 +79,7 @@ docker-compose run --rm gsmap format-sumstats \
 ## Volume Mounts
 
 The Docker setup includes two default volume mounts:
+
 - `./data:/data` - For input data files
 - `./results:/results` - For output results
 
@@ -104,12 +105,14 @@ docker-compose run --rm --entrypoint /bin/bash gsmap
 ## Tips for Reproducibility
 
 1. **Pin versions**: Consider updating the Dockerfile to use specific versions of dependencies
-2. **Document data**: Keep track of input data versions and sources
-3. **Tag images**: Use version tags for your Docker images
-   ```bash
-   docker build -t gsmap:v1.0.0 .
-   ```
-4. **Save configurations**: Store your command parameters in scripts or configuration files
+1. **Document data**: Keep track of input data versions and sources
+1. **Tag images**: Use version tags for your Docker images
+
+    ```bash
+    docker build -t gsmap:v1.0.0 .
+    ```
+
+1. **Save configurations**: Store your command parameters in scripts or configuration files
 
 ## Multi-platform builds (Optional)
 
