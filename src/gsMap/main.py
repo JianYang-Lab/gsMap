@@ -6,6 +6,12 @@ from gsMap.config import cli_function_registry
 
 def main():
     parser = create_parser()
+    try:
+        import argcomplete
+
+        argcomplete.autocomplete(parser)
+    except ImportError:
+        pass
     args = parser.parse_args()
     if args.subcommand is None:
         parser.print_help()
