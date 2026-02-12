@@ -177,9 +177,11 @@ class S_LDSC_Boost_with_pre_calculate_SNP_Gene_weight_matrix:
         snp_gene_weight_adata = ad.read_h5ad(config.snp_gene_weight_adata_path)
         common_genes = mk_score_genes.intersection(snp_gene_weight_adata.var.index)
         # common_snps = snp_gene_weight_adata.obs.index
-        self.snp_gene_weight_matrix = snp_gene_weight_adata[
-            common_snp_among_all_sumstats_pos, common_genes.to_list()
-        ].X
+        # Two-step indexing to avoid scipy sparse _get_arrayXarray broadcasting OOM
+        col_idx = snp_gene_weight_adata.var.index.get_indexer(common_genes)
+        self.snp_gene_weight_matrix = snp_gene_weight_adata.X[common_snp_among_all_sumstats_pos][
+            :, col_idx
+        ]
         self.mk_score_common = mk_score.loc[common_genes]
         self.chunk_starts = list(
             range(0, self.mk_score_common.shape[1], self.config.spots_per_chunk_quick_mode)
