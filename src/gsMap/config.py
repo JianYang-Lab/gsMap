@@ -432,6 +432,11 @@ def add_spatial_ldsc_args(parser):
         help="Range of chunks to run in this batch, omit to run all chunks",
     )
     parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Save spatial LDSC chunk checkpoints and reuse matching completed chunks.",
+    )
+    parser.add_argument(
         "--num_processes", type=int, default=4, help="Number of processes for parallel computing."
     )
     parser.add_argument(
@@ -671,6 +676,11 @@ def add_format_sumstats_args(parser):
 
 def add_run_all_mode_args(parser):
     add_shared_args(parser)
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Save spatial LDSC chunk checkpoints and reuse matching completed chunks.",
+    )
 
     # Required paths and configurations
     parser.add_argument(
@@ -1127,6 +1137,7 @@ class SpatialLDSCConfig(ConfigWithAutoPaths):
     chisq_max: int | None = None
     all_chunk: int | None = None
     chunk_range: tuple[int, int] | None = None
+    resume: bool = False
 
     ldscore_save_format: Literal["feather", "quick_mode"] = "feather"
 
@@ -1305,6 +1316,7 @@ class RunAllModeConfig(ConfigWithAutoPaths):
     homolog_file: str | None = None
 
     max_processes: int = 10
+    resume: bool = False
 
     def __post_init__(self):
         super().__post_init__()

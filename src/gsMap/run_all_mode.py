@@ -169,6 +169,7 @@ def run_pipeline(config: RunAllModeConfig):
             num_processes=config.max_processes,
             ldscore_save_format="quick_mode",
             snp_gene_weight_adata_path=config.snp_gene_weight_adata_path,
+            resume=config.resume,
         )
         run_spatial_ldsc(spatial_ldsc_config_trait)
     end_time = time.time()

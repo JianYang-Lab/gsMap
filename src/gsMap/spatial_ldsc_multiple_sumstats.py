@@ -1,9 +1,13 @@
 import gc
+import hashlib
+import json
 import logging
 import os
+import shutil
 from collections import defaultdict
 from functools import partial
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 import anndata as ad
 import numpy as np
@@ -13,8 +17,14 @@ from scipy.stats import norm
 from tqdm.contrib.concurrent import thread_map
 
 import gsMap.utils.jackknife as jk
+from gsMap import __version__
 from gsMap.config import SpatialLDSCConfig
-from gsMap.utils.regression_read import _read_ref_ld_v2, _read_sumstats, _read_w_ld
+from gsMap.utils.regression_read import (
+    _read_chr_files,
+    _read_ref_ld_v2,
+    _read_sumstats,
+    _read_w_ld,
+)
 
 logger = logging.getLogger("gsMap.spatial_ldsc")
 
@@ -226,11 +236,59 @@ def load_ldscore_chunk_from_feather(chunk_index, common_snp_among_all_sumstats_p
     return ref_ld_spatial.values, spatial_annotation_cnames
 
 
+def _get_checkpoint_dir(config):
+    """Get checkpoint directory for the current inputs."""
+    settings = {
+        "sample_name": config.sample_name,
+        "n_blocks": config.n_blocks,
+        "chisq_max": config.chisq_max,
+        "use_additional_baseline_annotation": config.use_additional_baseline_annotation,
+        "ldscore_save_format": config.ldscore_save_format,
+        "spots_per_chunk_quick_mode": config.spots_per_chunk_quick_mode,
+        "version": __version__,
+    }
+    # All traits determine the common SNPs
+    settings["traits"] = list(config.sumstats_config_dict.items())
+
+    paths = list(config.sumstats_config_dict.values())
+    ldscore_dir = Path(config.ldscore_save_dir)
+    prefixes = [config.w_file, ldscore_dir / "baseline" / "baseline."]
+    if config.use_additional_baseline_annotation:
+        prefixes.append(ldscore_dir / "additional_baseline" / "baseline.")
+    if config.ldscore_save_format == "quick_mode":
+        paths.extend([config.mkscore_feather_path, config.snp_gene_weight_adata_path])
+    elif config.ldscore_save_format == "feather":
+        prefixes.extend(
+            chunk_dir / f"{config.sample_name}."
+            for chunk_dir in ldscore_dir.glob(f"{config.sample_name}_chunk*")
+            if chunk_dir.is_dir()
+        )
+    elif config.ldscore_save_format == "zarr":
+        paths.extend(
+            path
+            for path in (ldscore_dir / f"{config.sample_name}.ldscore.zarr").rglob("*")
+            if path.is_file()
+        )
+    for prefix in prefixes:
+        paths.extend(_read_chr_files(str(prefix), ".l2.ldscore"))
+
+    settings["files"] = []
+    for path in sorted({Path(path).absolute() for path in paths}):
+        stat = path.stat()
+        settings["files"].append((str(path), str(path.resolve()), stat.st_size, stat.st_mtime_ns))
+    key = hashlib.sha256(json.dumps(settings, sort_keys=True, default=str).encode()).hexdigest()
+    checkpoint_dir = Path(config.ldsc_save_dir) / ".checkpoints" / key
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Spatial LDSC checkpoints: {checkpoint_dir}")
+    return checkpoint_dir
+
+
 def run_spatial_ldsc(config: SpatialLDSCConfig):
     """Run spatial LDSC analysis."""
     logger.info(f"------Running Spatial LDSC for {config.sample_name}...")
     n_blocks = config.n_blocks
     sample_name = config.sample_name
+    checkpoint_dir = _get_checkpoint_dir(config) if config.resume else None
 
     # Load regression weights
     w_ld = _read_w_ld(config.w_file)
@@ -294,6 +352,27 @@ def run_spatial_ldsc(config: SpatialLDSCConfig):
 
     output_dict = defaultdict(list)
     for chunk_index in range(start_chunk, end_chunk + 1):
+        pending_traits = {}
+        checkpoint_files = {}
+        for trait_index, (trait_name, sumstats) in enumerate(sumstats_cleaned_dict.items()):
+            if checkpoint_dir is not None:
+                checkpoint_file = checkpoint_dir / f"chunk{chunk_index}_trait{trait_index}.feather"
+                checkpoint_files[trait_name] = checkpoint_file
+                if checkpoint_file.exists():
+                    try:
+                        out_chunk = pd.read_feather(checkpoint_file).set_index("spot")
+                        if list(out_chunk.columns) != ["beta", "se", "z", "p"]:
+                            raise ValueError("Unexpected checkpoint columns")
+                    except (OSError, ValueError, KeyError) as e:
+                        logger.warning(f"Recomputing unreadable checkpoint {checkpoint_file}: {e}")
+                    else:
+                        output_dict[trait_name].append(out_chunk)
+                        logger.info(f"Resuming: skipped chunk-{chunk_index} for {trait_name}")
+                        continue
+            pending_traits[trait_name] = sumstats
+        if not pending_traits:
+            continue
+
         ref_ld_spatial, spatial_annotation_cnames = load_ldscore_chunk(
             chunk_index,
             common_snp_among_all_sumstats_pos,
@@ -304,7 +383,7 @@ def run_spatial_ldsc(config: SpatialLDSCConfig):
         )
         ref_ld_baseline_column_sum = ref_ld_baseline.sum(axis=1).values
 
-        for trait_name, sumstats in sumstats_cleaned_dict.items():
+        for trait_name, sumstats in pending_traits.items():
             spatial_annotation = ref_ld_spatial.astype(np.float32, copy=False)
             baseline_annotation = ref_ld_baseline.copy().astype(np.float32, copy=False)
             w_ld_common_snp = w_ld.astype(np.float32, copy=False)
@@ -347,12 +426,23 @@ def run_spatial_ldsc(config: SpatialLDSCConfig):
             out_chunk = out_chunk.dropna()
             out_chunk["z"] = out_chunk.beta / out_chunk.se
             out_chunk["p"] = norm.sf(out_chunk["z"])
+            if checkpoint_dir is not None:
+                with NamedTemporaryFile(dir=checkpoint_dir, suffix=".tmp", delete=False) as tmp:
+                    out_chunk.rename_axis("spot").reset_index().to_feather(tmp)
+                    tmp.flush()
+                    os.fsync(tmp.fileno())
+                os.replace(tmp.name, checkpoint_files[trait_name])
             output_dict[trait_name].append(out_chunk)
 
             del spatial_annotation, baseline_annotation, w_ld_common_snp
             gc.collect()
 
     save_results(output_dict, config, running_chunk_number, start_chunk, end_chunk)
+    if checkpoint_dir is not None and start_chunk == 1 and end_chunk == total_chunk_number_found:
+        shutil.rmtree(checkpoint_dir)
+        if not any(checkpoint_dir.parent.iterdir()):
+            checkpoint_dir.parent.rmdir()
+        logger.info(f"Removed checkpoints: {checkpoint_dir}")
     logger.info(f"------Spatial LDSC for {sample_name} finished!")
 
 
@@ -435,5 +525,8 @@ def save_results(output_dict, config, running_chunk_number, start_chunk, end_chu
 
         # clip the p-values
         out_all["p"] = out_all["p"].clip(1e-300, 1)
-        out_all.to_csv(out_file_name, compression="gzip", index=False)
+        # Replace the output after writing completes
+        tmp_file = out_file_name.with_suffix(".gz.tmp")
+        out_all.to_csv(tmp_file, compression="gzip", index=False)
+        os.replace(tmp_file, out_file_name)
         logger.info(f"Output saved to {out_file_name} for {trait_name}")
