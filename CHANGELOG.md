@@ -31,7 +31,7 @@ the code previewed on PyPI as `gsMap3D` (0.1.x); install this pre-release explic
     per-sample LD scores; `gsmap ldscore-weight-matrix` builds the matrix for a new reference.
 - Output directories and file formats changed. Start 2.x analyses in a new working directory.
 
-See [Upgrading to gsMap 2.0](https://yanglab-obs.lab.westlake.edu.cn/public/gsMap/gsMap3D-r1/docs/r1/upgrading.html)
+See [Upgrading to gsMap 2.0](https://github.com/JianYang-Lab/gsMap/blob/main/docs/source/upgrading.md)
 for the full command and option mapping.
 
 ### Changes since gsMap3D 0.1.4a2
