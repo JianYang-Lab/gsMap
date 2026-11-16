@@ -1,7 +1,7 @@
 name: docs
 
-# Build and validate the documentation. Publication to the OBS documentation
-# mirror is a maintainer step and is not performed by CI.
+# Build and validate the documentation on pull requests; on main (or a manual run on
+# main) also publish it to GitHub Pages: https://jianyang-lab.github.io/gsMap/
 on:
   push:
     branches:
@@ -12,6 +12,7 @@ on:
       - "src/gsMap/cli.py"
       - "pyproject.toml"
       - "CHANGELOG.md"
+      - ".github/workflows/docs.yml"
   pull_request:
     paths:
       - "docs/**"
@@ -19,7 +20,8 @@ on:
       - "src/gsMap/cli.py"
       - "pyproject.toml"
       - "CHANGELOG.md"
-  workflow_dispatch: # Allow manual trigger
+      - ".github/workflows/docs.yml"
+  workflow_dispatch: # Manual rebuild and publication
 
 permissions:
   contents: read
@@ -56,9 +58,36 @@ jobs:
           git diff --exit-code -- docs/source/cli_reference.md
           git diff --exit-code -- docs/source/downloads.md
           sphinx-build -W --keep-going -b html docs/source docs/build/html
+          rm -rf docs/build/html/.doctrees docs/build/html/.buildinfo
+          touch docs/build/html/.nojekyll
+
+      - name: Upload Pages artifact
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/build/html
 
       - name: Upload HTML for review
+        if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: docs-html
           path: docs/build/html
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

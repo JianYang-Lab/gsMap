@@ -34,17 +34,11 @@ published catalogue or change the software's resource-download settings.
 
 ## Publishing
 
-Maintainers publish the built HTML and resource bundles to the OBS mirror under the
-`gsmap_resource_base_url` prefix. Build into a fresh directory so obsolete pages are
-not carried into a release:
-
-```bash
-sphinx-build -E -a -W --keep-going -b html docs/source docs/build/obs-public-review
-```
-
-Upload credentials, endpoints and the step-by-step publication checklist are kept in
-the maintainers' private notes, not in this repository. Check the public page and
-asset URLs after an upload; a build or dry run alone is not a publication.
+The `docs` workflow builds the documentation on every pull request and publishes it
+to GitHub Pages (<https://jianyang-lab.github.io/gsMap/>) when `main` changes; it can also be run manually from the
+Actions tab. Resource bundles and report previews stay on the OBS mirror under the
+`gsmap_resource_base_url` prefix; maintainers publish those, and release snapshots of
+the documentation, with private tooling.
 
 ## Performance figures
 

@@ -13,9 +13,7 @@ from pathlib import Path
 
 from packaging.version import InvalidVersion, Version
 
-DOCS_INSTALL_URL = (
-    "https://yanglab-obs.lab.westlake.edu.cn/public/gsMap/gsMap3D-r1/docs/r1/install.html"
-)
+DOCS_INSTALL_URL = "https://jianyang-lab.github.io/gsMap/install.html"
 
 
 def changelog_section(text, version):

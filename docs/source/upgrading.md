@@ -6,12 +6,6 @@ gsMap 2.0 is a major release. It adds 3D spatial transcriptomics support and rep
 command-line interface, the reference resources and the output layout of gsMap 1.x.
 gsMap 1.x analyses are not affected: install `"gsMap<2"` to keep using them.
 
-```{note}
-gsMap 2.0 was previewed on PyPI as `gsMap3D` (0.1.x). The code is the same; only the
-package name changed. Both packages install the `gsMap` module, so run
-`pip uninstall gsMap3D` before installing gsMap 2.x.
-```
-
 ## Requirements
 
 - **Python 3.12 or later.** On Python 3.10 and 3.11, `pip install gsMap` keeps resolving to
@@ -22,18 +16,32 @@ package name changed. Both packages install the `gsMap` module, so run
 ## Commands
 
 Commands use hyphenated names. Run `gsmap COMMAND --help` or see {doc}`cli_reference`.
+Each step can also be run from Python with the configuration class of the same name
+from `gsMap.config`.
 
-| gsMap 1.x                               | gsMap 2.x                                                                 |
-| --------------------------------------- | ------------------------------------------------------------------------- |
-| `gsmap quick_mode`                      | `gsmap quick-mode`                                                        |
-| `gsmap run_find_latent_representations` | `gsmap find-latent`                                                       |
-| `gsmap run_latent_to_gene`              | `gsmap latent-to-gene`                                                    |
-| `gsmap run_generate_ldscore`            | `gsmap ldscore-weight-matrix`, run once per LD reference (see below)      |
-| `gsmap run_spatial_ldsc`                | `gsmap spatial-ldsc`                                                      |
-| `gsmap run_cauchy_combination`          | `gsmap cauchy-combination`                                                |
-| `gsmap run_report`                      | the `report` step of `gsmap quick-mode`; open it with `gsmap report-view` |
-| `gsmap format_sumstats`                 | `gsmap format-sumstats`                                                   |
-| `gsmap create_slice_mean`               | not needed: pass all sections to one run ({ref}`multiple-sections`)       |
+| gsMap 1.x                               | gsMap 2.x CLI                                                         | gsMap 2.x Python API                                                   |
+| --------------------------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `gsmap quick_mode`                      | `gsmap quick-mode`                                                    | `run_quick_mode(QuickModeConfig(...))`                                 |
+| `gsmap run_find_latent_representations` | `gsmap find-latent`                                                   | `run_find_latent_representation(FindLatentRepresentationsConfig(...))` |
+| `gsmap run_latent_to_gene`              | `gsmap latent-to-gene`                                                | `run_latent_to_gene(LatentToGeneConfig(...))`                          |
+| `gsmap run_generate_ldscore`            | `gsmap ldscore-weight-matrix`, once per LD reference (see below)      | `LDScorePipeline(LDScoreConfig(...)).run()`                            |
+| `gsmap run_spatial_ldsc`                | `gsmap spatial-ldsc`                                                  | `run_spatial_ldsc_jax(SpatialLDSCConfig(...))`                         |
+| `gsmap run_cauchy_combination`          | `gsmap cauchy-combination`                                            | `run_Cauchy_combination(CauchyCombinationConfig(...))`                 |
+| `gsmap run_report`                      | `gsmap quick-mode --start-step report`; view with `gsmap report-view` | `run_quick_mode(QuickModeConfig(..., start_step="report"))`            |
+| `gsmap format_sumstats`                 | `gsmap format-sumstats`                                               | `gwas_format(FormatSumstatsConfig(...))`                               |
+| `gsmap create_slice_mean`               | not needed: pass all sections to one run ({ref}`multiple-sections`)   | not needed                                                             |
+
+The Python functions are imported from:
+
+```python
+from gsMap.cauchy_combination_test import run_Cauchy_combination
+from gsMap.find_latent import run_find_latent_representation
+from gsMap.format_sumstats import gwas_format
+from gsMap.latent2gene import run_latent_to_gene
+from gsMap.ldscore.pipeline import LDScorePipeline
+from gsMap.pipeline import run_quick_mode
+from gsMap.spatial_ldsc.spatial_ldsc_jax import run_spatial_ldsc_jax
+```
 
 To run part of the pipeline, use `gsmap quick-mode --start-step STEP --stop-step STEP`
 with the steps `find_latent`, `latent2gene`, `spatial_ldsc`, `cauchy` and `report`.

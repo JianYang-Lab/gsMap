@@ -169,7 +169,7 @@ Home = "https://github.com/JianYang-Lab/gsMap"
 Source = "https://github.com/JianYang-Lab/gsMap"
 Issues = "https://github.com/JianYang-Lab/gsMap/issues"
 Changelog = "https://github.com/JianYang-Lab/gsMap/blob/main/CHANGELOG.md"
-Documentation = "https://yanglab.westlake.edu.cn/gsmap3d-portal/docs/"
+Documentation = "https://jianyang-lab.github.io/gsMap/"
 Website = "https://yanglab.westlake.edu.cn/gsmap3d-portal/"
 
 [project.scripts]

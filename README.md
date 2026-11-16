@@ -15,7 +15,8 @@ in 2D tissue sections and in 3D tissues.
 
 > __Note — gsMap 2.0 is in beta.__ Install it with an explicit version, as shown in
 > [Installation](#%EF%B8%8F-installation). Until 2.0.0 is released, `pip install gsMap` without a
-> version still installs gsMap 1.x. Looking for gsMap 1.x? See [gsMap 1.x](#gsmap-1x).
+> version still installs gsMap 1.x. Looking for gsMap 1.x? See
+> [Upgrading from gsMap 1.x](#-upgrading-from-gsmap-1x).
 
 ______________________________________________________________________
 
@@ -25,10 +26,11 @@ ______________________________________________________________________
     with optional matching of homogeneous cells across adjacent sections.
 - __Dual embeddings__ of molecular and spatial features for more accurate gene specificity scores.
 - __GPU acceleration__ of embeddings, gene specificity scores and spatial LDSC, including
-    multi-trait and single-node multi-GPU spatial LDSC.
-- __Interactive reports__ with trait comparison views and SpatialVista export for 3D data.
-- __Ancestry-specific GRCh38 LD references__ with matching regression weights and checksums.
-- __A new command-line interface and Python API.__ See [Upgrading](#-upgrading).
+    multi-trait and single-node multi-GPU spatial LDSC (see the
+    [scalability benchmarks](https://jianyang-lab.github.io/gsMap/scalability.html)).
+- __Interactive reports__ with trait comparison views (try the
+    [E11.5 mouse embryo report](https://yanglab-obs.lab.westlake.edu.cn/public/gsMap/gsMap3D-r1/reports/e11-ordinal/r1/index.html)) and export to
+    [SpatialVista](https://github.com/JianYang-Lab/spatial-vista-py) for 3D data.
 
 ______________________________________________________________________
 
@@ -44,7 +46,7 @@ ______________________________________________________________________
     Prioritizes putative causal genes by associating gene expression levels with cell–trait relevance.
 
 - __Scalability__\
-    Uses [JAX](https://github.com/jax-ml/jax) JIT compilation, GPU acceleration and disk-backed arrays to scale to spatial datasets with millions of cells.
+    Uses [JAX](https://github.com/jax-ml/jax) JIT compilation, GPU acceleration and disk-backed arrays to scale to spatial datasets with millions of cells ([benchmarks](https://jianyang-lab.github.io/gsMap/scalability.html)).
 
 ______________________________________________________________________
 
@@ -86,13 +88,13 @@ uv pip install "gsMap[cuda130]==2.0.0b1" --torch-backend=cu130
 gsmap --version
 ```
 
-The [Installation guide](https://yanglab-obs.lab.westlake.edu.cn/public/gsMap/gsMap3D-r1/docs/r1/install.html)
+The [Installation guide](https://jianyang-lab.github.io/gsMap/install.html)
 covers the CUDA 12.6 and TPU backends, Conda environments and installation from source.
 
 ## ▶️ Quick start
 
 Download the shared resources and a dataset from
-[Downloads](https://yanglab-obs.lab.westlake.edu.cn/public/gsMap/gsMap3D-r1/docs/r1/downloads.html),
+[Downloads](https://jianyang-lab.github.io/gsMap/downloads.html),
 then run the whole pipeline with one command:
 
 ```bash
@@ -114,69 +116,29 @@ gsmap quick-mode \
 gsmap report-view results/mouse-e16-mosta/gsmap_web_report
 ```
 
-Follow the [2D and 3D tutorials](https://yanglab-obs.lab.westlake.edu.cn/public/gsMap/gsMap3D-r1/docs/r1/3d_tutorial/human_gastrulation.html)
+Follow the [2D and 3D tutorials](https://jianyang-lab.github.io/gsMap/3d_tutorial/human_gastrulation.html)
 for complete examples. The
-[Customization Guide](https://yanglab-obs.lab.westlake.edu.cn/public/gsMap/gsMap3D-r1/docs/r1/advanced_usage.html)
+[Customization Guide](https://jianyang-lab.github.io/gsMap/advanced_usage.html)
 explains how to use your own data, reference weights, embeddings and analysis settings.
 
 ______________________________________________________________________
 
-## 🔄 Upgrading
+## 🔄 Upgrading from gsMap 1.x
 
-### From gsMap 1.x
-
-- __Python 3.12 or later is required.__ On Python 3.10 and 3.11, `pip install gsMap` keeps
-    resolving to gsMap 1.x.
-
-- __The command-line interface changed:__
-
-    | gsMap 1.x                               | gsMap 2.x                                                           |
-    | --------------------------------------- | ------------------------------------------------------------------- |
-    | `gsmap quick_mode`                      | `gsmap quick-mode`                                                  |
-    | `gsmap run_find_latent_representations` | `gsmap find-latent`                                                 |
-    | `gsmap run_latent_to_gene`              | `gsmap latent-to-gene`                                              |
-    | `gsmap run_generate_ldscore`            | `gsmap ldscore-weight-matrix` (run once per reference)              |
-    | `gsmap run_spatial_ldsc`                | `gsmap spatial-ldsc`                                                |
-    | `gsmap run_cauchy_combination`          | `gsmap cauchy-combination`                                          |
-    | `gsmap run_report`                      | report step of `gsmap quick-mode`; view it with `gsmap report-view` |
-    | `gsmap format_sumstats`                 | `gsmap format-sumstats`                                             |
-
-    Run `gsmap COMMAND --help` or see the
-    [CLI reference](https://yanglab-obs.lab.westlake.edu.cn/public/gsMap/gsMap3D-r1/docs/r1/cli_reference.html)
-    for the current options.
-
-- __Reference resources changed.__ gsMap 2.x reads a precomputed SNP-by-gene weight matrix
-    (`--snp-gene-weight-adata-path`) and matching regression weights (`--w-ld-dir`). Download them
-    from Downloads or build your own with `gsmap ldscore-weight-matrix`.
-
-- Start 2.x analyses in a new working directory; the output layout changed (see
-    [Output Files](https://yanglab-obs.lab.westlake.edu.cn/public/gsMap/gsMap3D-r1/docs/r1/output_files.html)).
-
-### From the gsMap3D preview (0.1.x)
-
-gsMap 2.0 continues the code previewed on PyPI as `gsMap3D`. Only the package name changed. Both
-packages install the same `gsMap` module, so remove the preview first:
-
-```bash
-pip uninstall gsMap3D
-```
-
-### gsMap 1.x
+gsMap 2.0 requires Python 3.12 or later and changes the command-line interface, Python API,
+reference resources and output layout. See
+[Upgrading to gsMap 2.0](https://jianyang-lab.github.io/gsMap/upgrading.html) for the mapping from 1.x commands.
 
 gsMap 1.x remains available for existing analyses and receives bug fixes only:
-
-```bash
-pip install "gsMap<2"
-```
-
-Its source is on the [`1.x` branch](https://github.com/JianYang-Lab/gsMap/tree/1.x) and its
-documentation is at [gsMap 1.x Documentation](https://yanglab.westlake.edu.cn/gsmap/document/software).
+`pip install "gsMap<2"`. Its source is on the
+[`1.x` branch](https://github.com/JianYang-Lab/gsMap/tree/1.x) and its documentation is at
+[gsMap 1.x Documentation](https://yanglab.westlake.edu.cn/gsmap/document/software).
 
 ______________________________________________________________________
 
 ## 📚 Documentation
 
-See the [Documentation](https://yanglab.westlake.edu.cn/gsmap3d-portal/docs) and
+See the [Documentation](https://jianyang-lab.github.io/gsMap/) and
 [Website](https://yanglab.westlake.edu.cn/gsmap3d-portal). Release notes are in
 [CHANGELOG.md](https://github.com/JianYang-Lab/gsMap/blob/main/CHANGELOG.md).
 

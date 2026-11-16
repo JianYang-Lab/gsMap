@@ -314,7 +314,7 @@ def main(
        gsmap quick-mode --start-step report ...
        gsmap report-view /path/to/project/gsmap_web_report
 
-    For detailed documentation, visit: https://yanglab.westlake.edu.cn/gsmap3d-portal/docs/
+    For detailed documentation, visit: https://jianyang-lab.github.io/gsMap/
     """
     configure_console_logging()
 

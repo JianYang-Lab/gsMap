@@ -5,6 +5,14 @@ Release notes on GitHub are generated from the section that matches each version
 
 <!-- release-notes-start -->
 
+## Unreleased
+
+- Documentation is published to GitHub Pages (<https://jianyang-lab.github.io/gsMap/>) from `main` by the docs
+    workflow.
+- The upgrade guide lists the gsMap 2.x Python API next to each command.
+- The README is shorter and links to the documentation for installation and upgrade
+    details.
+
 ## 2.0.0b1
 
 First beta of gsMap 2.0, which adds 3D spatial transcriptomics mapping. gsMap 2.0 continues

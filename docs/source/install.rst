@@ -146,16 +146,8 @@ activated environment instead of ``.venv``, use ``--active``:
    source /path/to/environment/bin/activate
    uv sync --active --extra cuda126
 
-Upgrading from gsMap 1.x or gsMap3D
------------------------------------
-
-gsMap 2.x replaces both gsMap 1.x and the ``gsMap3D`` preview package (0.1.x). The
-``gsMap3D`` preview installs the same ``gsMap`` module, so uninstall it before installing
-gsMap 2.x:
-
-.. code-block:: bash
-
-   uv pip uninstall gsMap3D
+Upgrading from gsMap 1.x
+------------------------
 
 gsMap 1.x users should read :doc:`upgrading` for the renamed commands and new reference
 resources. To keep using gsMap 1.x, install ``"gsMap<2"``; its source is on the
