@@ -2,7 +2,7 @@ name: test
 
 on:
   push:
-    branches: [main, "[0-9]+.[0-9]+.x"]
+    branches: [1.x, "[0-9]+.[0-9]+.x"]
   pull_request:
   schedule:
     - cron: "0 0 * * *"

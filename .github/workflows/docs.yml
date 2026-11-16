@@ -2,6 +2,8 @@ name: docs
 
 on:
   push:
+    # Only the 1.x maintenance branch deploys the 1.x documentation site.
+    branches: [1.x]
     paths:
       - "docs/**"
       - "visualization_web_docs/**"

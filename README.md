@@ -1,5 +1,12 @@
 # gsMap
 
+> [!NOTE]
+> **This is the gsMap 1.x maintenance branch.** It receives bug fixes only and is
+> released on PyPI as `gsMap` 1.73.x (`pip install "gsMap<2"`). Development of
+> gsMap 2.x, which adds 3D spatial transcriptomics support, continues on the
+> [`main` branch](https://github.com/JianYang-Lab/gsMap). The 1.x documentation remains at
+> [gsMap Documentation](https://yanglab.westlake.edu.cn/gsmap/document/software).
+
 |               |                                                                                                      |                |                                                                                                    |
 | ------------- | ---------------------------------------------------------------------------------------------------- | -------------- | -------------------------------------------------------------------------------------------------- |
 | __Version__   | [![PyPI version][pypi-badge]][pypi-url] [![Python][python-badge]][python-url]                        | __Status__     | [![Project Status][status-badge]][status-url] [![Maintenance][maintenance-badge]][maintenance-url] |
@@ -30,7 +37,7 @@ Install using pip:
 ```bash
 conda create -n gsMap python>=3.10
 conda activate gsMap
-pip install gsMap
+pip install "gsMap<2"
 ```
 
 Install using conda:
@@ -38,13 +45,13 @@ Install using conda:
 ```bash
 conda create -n gsMap python>=3.10
 conda activate gsMap
-conda install bioconda::gsmap
+conda install "bioconda::gsmap<2"
 ```
 
 Install from source:
 
 ```bash
-git clone https://github.com/JianYang-Lab/gsMap
+git clone --branch 1.x https://github.com/JianYang-Lab/gsMap
 cd gsMap
 pip install -e .
 ```

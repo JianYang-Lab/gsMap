@@ -10,13 +10,13 @@ The ``gsMap`` package can be installed via pip:
 
     conda create -n gsMap python>=3.10
     conda activate gsMap
-    pip install gsMap
+    pip install "gsMap<2"
 
 or via the source code:
 
 .. code-block:: bash
 
-    git clone https://github.com/JianYang-Lab/gsMap
+    git clone --branch 1.x https://github.com/JianYang-Lab/gsMap
     cd gsMap
     pip install -e .
 

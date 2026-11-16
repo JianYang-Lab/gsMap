@@ -90,7 +90,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=raw,value=latest
+            # 1.x is a maintenance line: never move `latest` away from 2.x.
 
       - name: Build and push Docker image
         id: push
@@ -165,6 +165,7 @@ jobs:
             '${{ github.ref_name }}' \
             --repo '${{ github.repository }}' \
             --title "gsMap ${{ github.ref_name }}" \
+            --latest=false \
             --notes-file release_notes.md
 
       - name: Upload artifacts to GitHub Release
