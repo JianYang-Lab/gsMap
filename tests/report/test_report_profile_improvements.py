@@ -43,7 +43,8 @@ def test_manhattan_cache_tracks_top_gene_limit(tmp_path, monkeypatch, recorded_l
             "{"
             if recorded_limit == "corrupt"
             else json.dumps(
-                recorded_limit if isinstance(recorded_limit, list)
+                recorded_limit
+                if isinstance(recorded_limit, list)
                 else {"top_corr_genes": recorded_limit}
             )
         )

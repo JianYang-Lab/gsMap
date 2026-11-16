@@ -13,7 +13,7 @@ integrates spatial transcriptomics (ST) data with genome-wide association study 
 summary statistics to map cells associated with human complex traits and diseases,
 in 2D tissue sections and in 3D tissues.
 
-> **Note — gsMap 2.0 is in beta.** Install it with an explicit version, as shown in
+> __Note — gsMap 2.0 is in beta.__ Install it with an explicit version, as shown in
 > [Installation](#%EF%B8%8F-installation). Until 2.0.0 is released, `pip install gsMap` without a
 > version still installs gsMap 1.x. Looking for gsMap 1.x? See [gsMap 1.x](#gsmap-1x).
 
@@ -21,29 +21,29 @@ ______________________________________________________________________
 
 ## ✨ What's new in gsMap 2.0
 
-- **3D spatial mapping** of registered multi-section data and single thick-tissue volumes,
+- __3D spatial mapping__ of registered multi-section data and single thick-tissue volumes,
     with optional matching of homogeneous cells across adjacent sections.
-- **Dual embeddings** of molecular and spatial features for more accurate gene specificity scores.
-- **GPU acceleration** of embeddings, gene specificity scores and spatial LDSC, including
+- __Dual embeddings__ of molecular and spatial features for more accurate gene specificity scores.
+- __GPU acceleration__ of embeddings, gene specificity scores and spatial LDSC, including
     multi-trait and single-node multi-GPU spatial LDSC.
-- **Interactive reports** with trait comparison views and SpatialVista export for 3D data.
-- **Ancestry-specific GRCh38 LD references** with matching regression weights and checksums.
-- **A new command-line interface and Python API.** See [Upgrading](#-upgrading).
+- __Interactive reports__ with trait comparison views and SpatialVista export for 3D data.
+- __Ancestry-specific GRCh38 LD references__ with matching regression weights and checksums.
+- __A new command-line interface and Python API.__ See [Upgrading](#-upgrading).
 
 ______________________________________________________________________
 
 ## 🚀 Features
 
-- **Spatially-aware High-Resolution Trait Mapping**\
+- __Spatially-aware High-Resolution Trait Mapping__\
     Maps trait-associated cells at single-cell resolution, offering insights into their spatial distributions.
 
-- **Spatial Region Identification**\
+- __Spatial Region Identification__\
     Aggregates trait–cell association p-values into trait–tissue region association p-values, prioritizing tissue regions relevant to traits of interest.
 
-- **Putative Causal Genes Identification**\
+- __Putative Causal Genes Identification__\
     Prioritizes putative causal genes by associating gene expression levels with cell–trait relevance.
 
-- **Scalability**\
+- __Scalability__\
     Uses [JAX](https://github.com/jax-ml/jax) JIT compilation, GPU acceleration and disk-backed arrays to scale to spatial datasets with millions of cells.
 
 ______________________________________________________________________
@@ -52,17 +52,17 @@ ______________________________________________________________________
 
 `gsMap` operates in four steps:
 
-1. **Gene specificity assessment in spatial context.** To address technical noise and capture
+1. __Gene specificity assessment in spatial context.__ To address technical noise and capture
     spatial correlations of gene expression across consecutive ST sections, `gsMap` constructs
     batch-corrected dual embeddings of molecular and spatial features. These embeddings identify
     homogeneous cells in 2D or 3D space. Gene specificity scores (GSS) are computed by aggregating
     normalized gene expression ranks across these homogeneous cells.
-1. **Linking gene specificity to genetic variants.** GSS are assigned to SNPs based on their
+1. __Linking gene specificity to genetic variants.__ GSS are assigned to SNPs based on their
     proximity to gene transcription start sites (TSS) and SNP-to-gene epigenetic linking maps.
-1. **Spatial S-LDSC for cell–trait association.** Stratified LD score regression (S-LDSC) relates
+1. __Spatial S-LDSC for cell–trait association.__ Stratified LD score regression (S-LDSC) relates
     the stratified LD scores of each cell to GWAS summary statistics, estimating the trait relevance
     of individual cells.
-1. **Spatial region–trait association.** The Cauchy combination test aggregates the p-values of
+1. __Spatial region–trait association.__ The Cauchy combination test aggregates the p-values of
     cells within a spatial region into region-level association statistics.
 
 ![gsMap method schematic](https://raw.githubusercontent.com/JianYang-Lab/gsMap/main/docs/source/_static/gsMap3D_Method_schematic.png)
@@ -125,10 +125,10 @@ ______________________________________________________________________
 
 ### From gsMap 1.x
 
-- **Python 3.12 or later is required.** On Python 3.10 and 3.11, `pip install gsMap` keeps
+- __Python 3.12 or later is required.__ On Python 3.10 and 3.11, `pip install gsMap` keeps
     resolving to gsMap 1.x.
 
-- **The command-line interface changed:**
+- __The command-line interface changed:__
 
     | gsMap 1.x                               | gsMap 2.x                                                           |
     | --------------------------------------- | ------------------------------------------------------------------- |
@@ -145,7 +145,7 @@ ______________________________________________________________________
     [CLI reference](https://yanglab-obs.lab.westlake.edu.cn/public/gsMap/gsMap3D-r1/docs/r1/cli_reference.html)
     for the current options.
 
-- **Reference resources changed.** gsMap 2.x reads a precomputed SNP-by-gene weight matrix
+- __Reference resources changed.__ gsMap 2.x reads a precomputed SNP-by-gene weight matrix
     (`--snp-gene-weight-adata-path`) and matching regression weights (`--w-ld-dir`). Download them
     from Downloads or build your own with `gsmap ldscore-weight-matrix`.
 

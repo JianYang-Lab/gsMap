@@ -185,7 +185,9 @@ These metrics can be used to identify spots with poor homogeneous neighbor cover
 import scanpy as sc
 
 # Load the concatenated latent adata
-adata = sc.read_h5ad("results/visium-coronal/latent_to_gene/concatenated_latent_adata.h5ad")
+adata = sc.read_h5ad(
+    "results/visium-coronal/latent_to_gene/concatenated_latent_adata.h5ad"
+)
 
 # Check median cell similarity distribution
 print(adata.obs["gsMap_homo_cell_sims_median"].describe())

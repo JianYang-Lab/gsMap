@@ -18,9 +18,8 @@ logger = logging.getLogger("gsMap.config")
 
 def should_export_spatialvista(config) -> bool:
     """SpatialVista is a default report output for spatial3D datasets only."""
-    return (
-        getattr(config, "dataset_type", None) == DatasetType.SPATIAL_3D
-        and getattr(config, "export_spatialvista", True)
+    return getattr(config, "dataset_type", None) == DatasetType.SPATIAL_3D and getattr(
+        config, "export_spatialvista", True
     )
 
 
@@ -33,11 +32,9 @@ def spatialvista_output_is_current(config) -> bool:
         return False
     try:
         with h5py.File(path, "r") as handle:
-            return (
-                handle["uns/gsmap/schema_version"][()] == 1
-                and handle["uns/gsmap/requested_max_spots"][()]
-                == (getattr(config, "spatialvista_max_spots", None) or 0)
-            )
+            return handle["uns/gsmap/schema_version"][()] == 1 and handle[
+                "uns/gsmap/requested_max_spots"
+            ][()] == (getattr(config, "spatialvista_max_spots", None) or 0)
     except (OSError, KeyError, TypeError, ValueError):
         return False
 

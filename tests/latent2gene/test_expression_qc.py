@@ -168,9 +168,15 @@ def test_noncounts_rank_stage_uses_feature_qc_and_log_ranks_without_changing_inp
     outputs = RankCalculator(config).calculate_ranks_and_concatenate(data_layer="X")
     outputs["rank_memmap_handle"].close()
     observed = ad.read_h5ad(config.concatenated_latent_adata_path)
-    assert observed.obs_names.tolist() == ["signed|external", "positive|external", "negative|external"]
+    assert observed.obs_names.tolist() == [
+        "signed|external",
+        "positive|external",
+        "negative|external",
+    ]
     assert observed.shape == (3, 25)
-    actual = np.memmap(config.rank_memmap_path.with_suffix(".dat"), dtype=np.float16, mode="r", shape=(3, 25))
+    actual = np.memmap(
+        config.rank_memmap_path.with_suffix(".dat"), dtype=np.float16, mode="r", shape=(3, 25)
+    )
     expected = np.log(rankdata(dense[:3], method="average", axis=1)).astype(np.float16)
     np.testing.assert_array_equal(actual, expected)
     assert np.isfinite(actual).all()

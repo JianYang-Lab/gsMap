@@ -38,7 +38,8 @@ class DataPreparationConfig(
         str, typer.Option(help="Last data stage (inclusive): find_latent or latent2gene")
     ] = "latent2gene"
     latent_representation_cell: Annotated[
-        str | None, typer.Option(help="Existing cell embedding for latent2gene, or generated embedding key")
+        str | None,
+        typer.Option(help="Existing cell embedding for latent2gene, or generated embedding key"),
     ] = None
 
     def __post_init__(self):
@@ -49,8 +50,12 @@ class DataPreparationConfig(
         if steps.index(self.start_step) > steps.index(self.stop_step):
             raise ValueError("start_step must not follow stop_step")
         validate_expression_contract(self, start_step=self.start_step)
-        if self.expression_data_type == 'noncounts' and (self.species is not None or self.homolog_file is not None):
-            raise ValueError("Noncounts latent2gene requires a pre-mapped gene axis; omit species/homolog_file")
+        if self.expression_data_type == "noncounts" and (
+            self.species is not None or self.homolog_file is not None
+        ):
+            raise ValueError(
+                "Noncounts latent2gene requires a pre-mapped gene axis; omit species/homolog_file"
+            )
         self.dataset_type = DatasetType(self.dataset_type)
         self.sample_h5ad_dict = process_h5ad_inputs(
             self,
@@ -90,14 +95,17 @@ class DataPreparationConfig(
             self.graph_mode = first.graph_mode
             self.species = first.species
         else:
-            if not isinstance(self.latent_representation_cell, str) or not self.latent_representation_cell.strip():
+            if (
+                not isinstance(self.latent_representation_cell, str)
+                or not self.latent_representation_cell.strip()
+            ):
                 raise ValueError("latent2gene requires an existing named cell representation")
             # Use the native validation fields without auto-detecting outputs
             # from an earlier analysis or initializing JAX during preflight.
             self._setup_and_validate_fields()
-            validate_h5ad_structure(self.sample_h5ad_dict, {
-                "data_layer": ("layers", self.data_layer, "Data layer")
-            })
+            validate_h5ad_structure(
+                self.sample_h5ad_dict, {"data_layer": ("layers", self.data_layer, "Data layer")}
+            )
         self.show_config(DataPreparationConfig)
 
     @property
@@ -108,8 +116,11 @@ class DataPreparationConfig(
     def find_latent_config(self):
         with reuse_spatial_validation(self):
             return FindLatentRepresentationsConfig(
-                **{field.name: getattr(self, field.name)
-                   for field in fields(FindLatentRepresentationsConfig) if field.init}
+                **{
+                    field.name: getattr(self, field.name)
+                    for field in fields(FindLatentRepresentationsConfig)
+                    if field.init
+                }
             )
 
     @property
@@ -121,6 +132,9 @@ class DataPreparationConfig(
         """
         with reuse_spatial_validation(self):
             return LatentToGeneConfig(
-                **{field.name: getattr(self, field.name)
-                   for field in fields(LatentToGeneConfig) if field.init}
+                **{
+                    field.name: getattr(self, field.name)
+                    for field in fields(LatentToGeneConfig)
+                    if field.init
+                }
             )

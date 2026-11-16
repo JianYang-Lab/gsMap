@@ -131,9 +131,14 @@ def check(output):
         page.get_by_role("radio", name="All sections", exact=True).check()
         page.wait_for_function("Alpine.$data(document.body).overviewData?.n_spots === 8")
         page.get_by_role("button", name="Toggle category Brain", exact=True).click()
-        assert page.evaluate("Alpine.$data(document.body).selectedAnnotationCategories") == ["Brain"]
+        assert page.evaluate("Alpine.$data(document.body).selectedAnnotationCategories") == [
+            "Brain"
+        ]
         page.get_by_role("button", name="Toggle category Heart", exact=True).click()
-        assert page.evaluate("Alpine.$data(document.body).selectedAnnotationCategories") == ["Brain", "Heart"]
+        assert page.evaluate("Alpine.$data(document.body).selectedAnnotationCategories") == [
+            "Brain",
+            "Heart",
+        ]
         page.get_by_role("button", name="Clear annotation selection", exact=True).click()
         selector = page.locator("#trait-selector")
         assert selector.input_value() == "Intelligence — cognitive performance"

@@ -85,9 +85,16 @@ def test_3d_fullscreen_resizes_on_enter_and_external_exit_without_resetting(run_
             size:app.spatial3dPointSize,opacity:app.spatial3dOpacity,busy:app.spatial3dFullscreenBusy}));
     """)
     assert result == {
-        "immediate": 1, "entered": {"active": True, "parent": True}, "exited": True,
-        "parent": True, "resizes": 2, "focused": 2, "hidden": 2,
-        "size": 0.9, "opacity": 0.5, "busy": False,
+        "immediate": 1,
+        "entered": {"active": True, "parent": True},
+        "exited": True,
+        "parent": True,
+        "resizes": 2,
+        "focused": 2,
+        "hidden": 2,
+        "size": 0.9,
+        "opacity": 0.5,
+        "busy": False,
     }
 
 
@@ -133,14 +140,20 @@ def test_2d_fullscreen_uses_2d_state_and_leaves_3d_untouched(run_js):
             busy:app.spatial2dFullscreenBusy}));
     """)
     assert result == {
-        "entered": True, "resizes": 2, "exited": True, "untouched": True,
-        "scale": 2, "kind": "samples", "busy": False,
+        "entered": True,
+        "resizes": 2,
+        "exited": True,
+        "untouched": True,
+        "scale": 2,
+        "kind": "samples",
+        "busy": False,
     }
 
 
 @pytest.mark.parametrize("fail", [False, True])
 def test_2d_fullscreen_resize_preserves_independent_viewports_and_flags(run_js, fail):
-    result = run_js("""
+    result = run_js(
+        """
         const fail=FAIL;
         const a={data:[{x:[1]}],__gsMapApplyingViewport:false},b={data:[{x:[2]}]};
         document.getElementById=id=>({spatial2dPlotTrait:a,spatial2dPlotAnnotation:b}[id]);
@@ -156,10 +169,15 @@ def test_2d_fullscreen_resize_preserves_independent_viewports_and_flags(run_js, 
         console.log(JSON.stringify({resizes,sizes,guarded,failed,
             restored:a.__gsMapApplyingViewport===false && b.__gsMapApplyingViewport===undefined,
             coordinates:[a.data[0].x[0],b.data[0].x[0]]}));
-    """.replace("FAIL", str(fail).lower()))
+    """.replace("FAIL", str(fail).lower())
+    )
     assert result == {
-        "resizes": 2, "sizes": 0 if fail else 2, "guarded": True, "failed": fail,
-        "restored": True, "coordinates": [1, 2],
+        "resizes": 2,
+        "sizes": 0 if fail else 2,
+        "guarded": True,
+        "failed": fail,
+        "restored": True,
+        "coordinates": [1, 2],
     }
 
 
@@ -178,8 +196,11 @@ def test_point_tooltip_is_created_inside_fullscreen_top_layer(run_js):
             id:first.id,style:first.className}));
     """)
     assert result == {
-        "inside": True, "same": True, "restored": True,
-        "id": "gsmapPointHoverTooltip", "style": "gsmap-hover-tooltip",
+        "inside": True,
+        "same": True,
+        "restored": True,
+        "id": "gsmapPointHoverTooltip",
+        "style": "gsmap-hover-tooltip",
     }
 
 
@@ -236,10 +257,20 @@ def test_sidebar_multiselection_filters_all_linked_views_and_clear_restores(run_
             query:app.overviewQuery,limit:app.overviewLimit}));
     """)
     assert result == {
-        "chosen": ["01", "2"], "table": ["01", "2"], "heatmap": ["01", "2"],
-        "points": [0, 1, 3], "umap": [0, 1, 3], "unchanged": ["01", "2"],
-        "removed": ["2"], "preserved": ["2"], "restored": 3,
-        "allPoints": None, "allUmap": None, "active": False, "query": "", "limit": 80,
+        "chosen": ["01", "2"],
+        "table": ["01", "2"],
+        "heatmap": ["01", "2"],
+        "points": [0, 1, 3],
+        "umap": [0, 1, 3],
+        "unchanged": ["01", "2"],
+        "removed": ["2"],
+        "preserved": ["2"],
+        "restored": 3,
+        "allPoints": None,
+        "allUmap": None,
+        "active": False,
+        "query": "",
+        "limit": 80,
     }
 
 
@@ -254,7 +285,12 @@ def test_sidebar_all_explicitly_selected_can_still_remove_one(run_js):
             visible:['1','2'].filter(c=>app.isAnnotationCategoryVisible(c)),
             otherAnnotation:app.isAnnotationCategoryVisible('unrelated','other')}));
     """)
-    assert result == {"all": ["1", "2"], "selected": ["2"], "visible": ["2"], "otherAnnotation": True}
+    assert result == {
+        "all": ["1", "2"],
+        "selected": ["2"],
+        "visible": ["2"],
+        "otherAnnotation": True,
+    }
 
 
 def test_annotation_overview_ignores_stale_scope_loads(run_js):
@@ -344,8 +380,16 @@ def test_spatial2d_hover_index_matches_exact_nearest_point_and_rebuilds(run_js):
             outside:app.findSpatial2dHoverPoint(filtered,-1,10),
             center:app.findSpatial2dHoverPoint(filtered,400,300)}));
     """)
-    assert result == {"mismatches": 0, "reused": True, "tie": 3, "zoomChanged": True,
-                      "filteredChanged": True, "n": 1, "outside": -1, "center": 0}
+    assert result == {
+        "mismatches": 0,
+        "reused": True,
+        "tie": 3,
+        "zoomChanged": True,
+        "filteredChanged": True,
+        "n": 1,
+        "outside": -1,
+        "center": 0,
+    }
 
 
 def test_spatial3d_projection_depth_clipping_and_camera_cache(run_js):
@@ -369,8 +413,16 @@ def test_spatial3d_projection_depth_clipping_and_camera_cache(run_js):
         console.log(JSON.stringify({reused,nearest,index:moved.point[hit],cameraChanged:moved!==index,empty,lost,
             oldPosition:app.findSpatial3dHoverPoint(moved,50,50),outside:app.findSpatial3dHoverPoint(moved,200,50)}));
     """)
-    assert result == {"reused": True, "nearest": 1, "index": 1, "cameraChanged": True,
-                      "oldPosition": -1, "outside": -1, "empty": True, "lost": True}
+    assert result == {
+        "reused": True,
+        "nearest": 1,
+        "index": 1,
+        "cameraChanged": True,
+        "oldPosition": -1,
+        "outside": -1,
+        "empty": True,
+        "lost": True,
+    }
 
 
 def test_spatial3d_hover_resolves_off_center_occlusion_and_rotation(run_js):
@@ -415,8 +467,14 @@ def test_spatial3d_hover_footprints_visibility_and_size_cache(run_js):
         console.log(JSON.stringify({throughGap,occluded,proximity,invisible,
             rebuilt:big!==small,empty:app.findSpatial3dHoverPoint(big,10,10)}));
     """)
-    assert result == {"throughGap": 0, "occluded": 1, "proximity": 1,
-                      "invisible": [0, 0, 0, 0, 0], "rebuilt": True, "empty": -1}
+    assert result == {
+        "throughGap": 0,
+        "occluded": 1,
+        "proximity": 1,
+        "invisible": [0, 0, 0, 0, 0],
+        "rebuilt": True,
+        "empty": -1,
+    }
 
 
 def test_spatial3d_transparent_order_is_global_and_camera_dependent(run_js):
@@ -478,7 +536,14 @@ def test_spatial3d_projection_rebuilds_missing_renderer_traces(run_js):
         console.log(JSON.stringify({rebuilt,created,redrawn,disposed,n:renderer.objects.length,
             suppressed:!native.isOpaque()&&!native.isTransparent()}));
     """)
-    assert result == {"rebuilt": 1, "created": 2, "redrawn": 2, "disposed": 1, "n": 2, "suppressed": True}
+    assert result == {
+        "rebuilt": 1,
+        "created": 2,
+        "redrawn": 2,
+        "disposed": 1,
+        "n": 2,
+        "suppressed": True,
+    }
 
 
 def test_spatial3d_hover_preserves_thin_section_depth(run_js):
@@ -508,8 +573,15 @@ def test_spatial3d_fully_opaque_overrides_signal_fading_without_changing_colors(
             colors:traces[0].marker.color,scale:traces[0].marker.colorscale,sources:traces[0].meta.sourceIndices,
             label,faded:faded.length>1 && faded.some(t=>t.marker.opacity<.8)}));
     """)
-    assert result == {"n": 1, "opacity": 1, "colors": [0, 5, 10], "scale": "Viridis",
-                      "sources": [4, 2, 0], "label": "Off · opaque", "faded": True}
+    assert result == {
+        "n": 1,
+        "opacity": 1,
+        "colors": [0, 5, 10],
+        "scale": "Viridis",
+        "sources": [4, 2, 0],
+        "label": "Off · opaque",
+        "faded": True,
+    }
 
 
 def test_spatial3d_opacity_bins_preserve_hover_source_indices(run_js):
@@ -524,7 +596,11 @@ def test_spatial3d_opacity_bins_preserve_hover_source_indices(run_js):
             app.pointHoverSourceIndex({pointNumber:j},app._pointHoverContexts[t.meta.hoverContextKey])}))).sort((a,b)=>a.x-b.x);
         console.log(JSON.stringify({rows,allSkip:traces.every(t=>t.hoverinfo==='skip'&&!t.hovertemplate)}));
     """)
-    assert result["rows"] == [{"x": 10, "source": 4}, {"x": 20, "source": 2}, {"x": 30, "source": 0}]
+    assert result["rows"] == [
+        {"x": 10, "source": 4},
+        {"x": 20, "source": 2},
+        {"x": 30, "source": 0},
+    ]
     assert result["allSkip"]
 
 
@@ -806,8 +882,14 @@ def test_heatmap_paging_and_search_reuse_model_and_global_scale(run_js):
             max: plot.traces[0].zmax, reused: model === app.cauchyHeatmapModel(),
             annotationPage: app.cauchyHeatmapAnnotationPage}));
     """)
-    assert result == dict(first=[[1]], second=dict(z=[[0.5]], raw=[[5]]),
-                          last=[[0]], max=1, reused=True, annotationPage=0)
+    assert result == dict(
+        first=[[1]],
+        second=dict(z=[[0.5]], raw=[[5]]),
+        last=[[0]],
+        max=1,
+        reused=True,
+        annotationPage=0,
+    )
 
 
 def test_large_sparse_heatmap_never_materializes_full_cartesian_matrix(run_js):
@@ -823,8 +905,15 @@ def test_large_sparse_heatmap_never_materializes_full_cartesian_matrix(run_js):
             annotations: model.annotations.length, traits: model.traits.length,
             max: plot.traces[0].zmax, pages: app.cauchyHeatmapTraitPages}));
     """)
-    assert result == dict(rows=40, cols=24, ordering="Fast pattern order (large matrix)",
-                          annotations=10000, traits=10000, max=9999, pages=417)
+    assert result == dict(
+        rows=40,
+        cols=24,
+        ordering="Fast pattern order (large matrix)",
+        annotations=10000,
+        traits=10000,
+        max=9999,
+        pages=417,
+    )
 
 
 def test_heatmap_all_pages_cover_every_label_and_transpose_preserves_values(run_js):
@@ -946,23 +1035,34 @@ def test_heatmap_incremental_trait_and_annotation_subsets_are_independent(run_js
         app.resetCauchyHeatmapFilters(); await app.renderCauchyHeatmap();
         console.log(JSON.stringify({duringSearch,subset,kept,removed,reset:[plot.traces[0].x.length,plot.traces[0].y.length]}));
     """)
-    assert result == dict(duringSearch=["IQ"], subset=dict(traits=["IQ", "SCZ"], annotations=["Brain"]),
-                          kept=["Brain"], removed=["SCZ"], reset=[3, 2])
+    assert result == dict(
+        duringSearch=["IQ"],
+        subset=dict(traits=["IQ", "SCZ"], annotations=["Brain"]),
+        kept=["Brain"],
+        removed=["SCZ"],
+        reset=[3, 2],
+    )
 
 
 @pytest.mark.parametrize("transpose", [False, True])
 def test_heatmap_hover_uses_annotation_color_and_original_value(run_js, transpose):
-    result = run_js("""
+    result = run_js(
+        """
         app.getAnnotationColor=(value,category) => value==='01' && category==='domain' ? '#00ff00' : '#000000';
-        const transpose=""" + json.dumps(transpose) + """;
+        const transpose="""
+        + json.dumps(transpose)
+        + """;
         const details=app.heatmapHoverDetails({x:transpose?'01':'IQ <test>',y:transpose?'IQ <test>':'01',
             z:0.5,customdata:20,data:{meta:{heatmapRole:'matrix',transpose,metricLabel:'P',annotationName:'domain'}}});
         app.cauchyHeatmapTranspose=transpose;
         app.cauchyHeatmapData=[{trait:'IQ',annotation:'01',mlog10_p_cauchy:20}];
         await app.renderCauchyHeatmap();
         console.log(JSON.stringify({details,stripAbove:plot.layout.yaxis2.domain[0]>plot.layout.yaxis.domain[1]}));
-    """)
-    assert result["details"] == dict(html="<b>01</b><br>IQ &lt;test&gt;<br>P: 20.00", background="#00ff00")
+    """
+    )
+    assert result["details"] == dict(
+        html="<b>01</b><br>IQ &lt;test&gt;<br>P: 20.00", background="#00ff00"
+    )
     assert result["stripAbove"] is transpose
 
 
@@ -1011,8 +1111,15 @@ def test_spatial2d_pan_adapter_preserves_data_and_updates_native_drag_ranges(run
         Plotly.version='4.0.0'; const unsupported=app.applySpatial2dPanViewport(p,{'xaxis.range':[6,16]});
         console.log(JSON.stringify({moved,saved,zoom,reset,unsupported,unchanged:original===JSON.stringify(p.data),calls}));
     """)
-    assert result == dict(moved=True, saved=[5, 15], zoom=False, reset=False, unsupported=False, unchanged=True,
-                          calls=[dict(range=[5, 12, 15, 2]), dict(color=True, depth=True), "draw"])
+    assert result == dict(
+        moved=True,
+        saved=[5, 15],
+        zoom=False,
+        reset=False,
+        unsupported=False,
+        unchanged=True,
+        calls=[dict(range=[5, 12, 15, 2]), dict(color=True, depth=True), "draw"],
+    )
 
 
 def test_spatial2d_pan_adapter_restores_axes_on_failure(run_js):
@@ -1039,7 +1146,9 @@ def test_spatial2d_sync_keeps_latest_request_during_slow_relayout(run_js):
         waiting.shift()(); await first;
         console.log(JSON.stringify({calls,busy:target.__gsMapApplyingViewport,pending:target.__gsMapPendingViewport}));
     """)
-    assert result == dict(calls=[{"xaxis.range": [1, 11]}, {"xaxis.range": [3, 13]}], busy=False, pending=None)
+    assert result == dict(
+        calls=[{"xaxis.range": [1, 11]}, {"xaxis.range": [3, 13]}], busy=False, pending=None
+    )
 
 
 def test_spatial2d_sync_merges_partial_ranges_without_conflicting_plotly_keys(run_js):
@@ -1081,11 +1190,14 @@ def test_spatial3d_sync_reads_current_camera_and_preserves_last_frame(run_js):
         a.handlers.plotly_relayout({'scene.camera':{eye:{x:102}}});
         console.log(JSON.stringify({frameCount,calls}));
     """)
-    assert result == dict(frameCount=1,calls=[
-        {"target":"b","camera":{"eye":{"x":7}}},
-        {"target":"a","camera":{"eye":{"x":3}}},
-        {"target":"b","camera":{"eye":{"x":5}}},
-    ])
+    assert result == dict(
+        frameCount=1,
+        calls=[
+            {"target": "b", "camera": {"eye": {"x": 7}}},
+            {"target": "a", "camera": {"eye": {"x": 3}}},
+            {"target": "b", "camera": {"eye": {"x": 5}}},
+        ],
+    )
 
 
 def test_spatial3d_camera_queue_coalesces_slow_updates_and_recovers_on_error(run_js):
@@ -1103,8 +1215,11 @@ def test_spatial3d_camera_queue_coalesces_slow_updates_and_recovers_on_error(run
         await app.queueSpatial3dCamera(target,{eye:{x:5}});
         console.log(JSON.stringify({calls,failedClean,busy:target.__gsMapApplyingCamera}));
     """)
-    assert result == dict(calls=[{"scene.camera":{"eye":{"x":value}}} for value in [1,3,5]],
-                          failedClean=True,busy=False)
+    assert result == dict(
+        calls=[{"scene.camera": {"eye": {"x": value}}} for value in [1, 3, 5]],
+        failedClean=True,
+        busy=False,
+    )
 
 
 def test_spatial3d_empty_wheel_event_tracks_camera_tail_then_stops(run_js):
@@ -1122,7 +1237,7 @@ def test_spatial3d_empty_wheel_event_tracks_camera_tail_then_stops(run_js):
         events.plotly_relayout({});dom.wheel();tick();x=10;tick();tick();tick();
         console.log(JSON.stringify({calls,pendingFrames:frames.size}));
     """)
-    assert result == dict(calls=[9,10],pendingFrames=0)
+    assert result == dict(calls=[9, 10], pendingFrames=0)
 
 
 def test_spatial2d_pan_sync_is_live_bidirectional_and_coalesces_frames(run_js):
@@ -1336,4 +1451,4 @@ def test_trait_change_refreshes_threshold_filtered_annotation_comparison(run_js)
         app.renderSpatial2DPlot({traitOnly:true});await app.renderSpatial3dViews({traitOnly:true});
         console.log(JSON.stringify(calls));
     """)
-    assert result == ['2d-trait', '2d-annotation', '3d-trait', '3d-annotation']
+    assert result == ["2d-trait", "2d-annotation", "3d-trait", "3d-annotation"]

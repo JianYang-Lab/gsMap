@@ -87,8 +87,7 @@ class PositionalEncoding(nn.Module):
         # pe is 1, maxlen, D
         if x.size(1) > self.pe.size(1):
             raise ValueError(
-                f"Sequence length {x.size(1)} exceeds positional encoding limit "
-                f"{self.pe.size(1)}"
+                f"Sequence length {x.size(1)} exceeds positional encoding limit {self.pe.size(1)}"
             )
         scaled_x = x * np.sqrt(self.d_model)
         encoded = scaled_x + self.pe[:, : x.size(1), :]

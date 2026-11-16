@@ -175,16 +175,16 @@ fraction means the proportion of cells expressing a gene.
 ````
 
 1. **Embeddings:** cell embeddings describe expression similarity; optional
-   niche embeddings add spatial context.
-2. **Homogeneous neighbors:** choose similar cells subject to spatial and
-   optional annotation constraints. Spatial2D stays within each section;
-   Spatial3D can also match cells in allowed neighboring sections.
-3. **Gene specificity:** aggregate neighbors' expression ranks using their
-   similarity weights and compare with the global reference to calculate GSS.
-4. **Spatial LDSC:** combine GSS, SNP × gene weights and GWAS statistics to
-   test cell–trait associations.
-5. **Group summaries and report:** combine cell-level p-values by annotation
-   using the Cauchy test, then explore the spatial maps and enrichment results.
+    niche embeddings add spatial context.
+1. **Homogeneous neighbors:** choose similar cells subject to spatial and
+    optional annotation constraints. Spatial2D stays within each section;
+    Spatial3D can also match cells in allowed neighboring sections.
+1. **Gene specificity:** aggregate neighbors' expression ranks using their
+    similarity weights and compare with the global reference to calculate GSS.
+1. **Spatial LDSC:** combine GSS, SNP × gene weights and GWAS statistics to
+    test cell–trait associations.
+1. **Group summaries and report:** combine cell-level p-values by annotation
+    using the Cauchy test, then explore the spatial maps and enrichment results.
 
 ```{note}
 Graph propagation and cross-section matching are separate. Allowing matches
@@ -220,7 +220,6 @@ adata = sc.read_h5ad("example_data/mouse-e16-mosta/ST/E16.5_E1S1.MOSTA.h5ad")
 print(adata.layers["count"].shape)
 print(adata.obsm["spatial"].shape)
 print(adata.obs["annotation"].value_counts().head())
-
 ```
 
 - **`--dataset-type`**:

@@ -12,16 +12,16 @@ For the underlying concepts, see {doc}`key_concepts`; for execution tuning, see
 
 ## File paths and configuration flags
 
-| File or folder | CLI flag | Python field |
-|---|---|---|
-| `snp_gene_weights.h5ad` | `--snp-gene-weight-adata-path` | `snp_gene_weight_adata_path` |
-| Matching `w_ld/` folder | `--w-ld-dir` | `w_ld_dir` |
-| `mouse_human_homologs.txt` | `--homolog-file` | `homolog_file` |
-| One ST H5AD | `--h5ad-path` | `h5ad_path=["..."]` |
-| Ordered `sample_paths.txt` | `--h5ad-list-file` | `h5ad_list_file` |
+| File or folder                   | CLI flag                              | Python field                  |
+| -------------------------------- | ------------------------------------- | ----------------------------- |
+| `snp_gene_weights.h5ad`          | `--snp-gene-weight-adata-path`        | `snp_gene_weight_adata_path`  |
+| Matching `w_ld/` folder          | `--w-ld-dir`                          | `w_ld_dir`                    |
+| `mouse_human_homologs.txt`       | `--homolog-file`                      | `homolog_file`                |
+| One ST H5AD                      | `--h5ad-path`                         | `h5ad_path=["..."]`           |
+| Ordered `sample_paths.txt`       | `--h5ad-list-file`                    | `h5ad_list_file`              |
 | One GWAS summary-statistics file | `--sumstats-file` with `--trait-name` | `sumstats_file`, `trait_name` |
-| Multiple GWAS in `gwas.yaml` | `--sumstats-config-file` | `sumstats_config_file` |
-| Output parent folder | `--workdir` | `workdir` |
+| Multiple GWAS in `gwas.yaml`     | `--sumstats-config-file`              | `sumstats_config_file`        |
+| Output parent folder             | `--workdir`                           | `workdir`                     |
 
 The tutorial folder names are a convenience, not a requirement. Use absolute paths
 when shared resources are stored elsewhere. Paths inside `sample_paths.txt` and
@@ -195,7 +195,7 @@ gsmap spatial-ldsc \
 - **Columns:** human gene symbols in `.var_names`.
 - **Values in X:** your gene-specificity/marker scores, not ordinary expression counts.
 - **Gene overlap:** only overlapping genes with the reference are used. Inspect
-  the overlap; the presence of a few common genes is not sufficient validation.
+    the overlap; the presence of a few common genes is not sufficient validation.
 
 Python uses `marker_score_format="h5ad"` and
 `marker_score_h5ad_path="inputs/custom_marker_scores.h5ad"` in `SpatialLDSCConfig`,
@@ -209,12 +209,12 @@ rows to canonical AnnData rows.
 
 ## Choose spatial geometry
 
-| Input | Mode | Homogeneous-neighbor search | Spatial report |
-|---|---|---|---|
-| One or more XY sections | `spatial2D` | XY, within each section | 2D |
-| One or more XYZ sections in 2D mode | `spatial2D` | First two coordinates only; a warning is shown | 2D |
-| Multiple registered XYZ sections | `spatial3D` | Full XYZ; optional cross-section matching | 3D and section views |
-| One XYZ H5AD (thick tissue) | `spatial3D` | Full XYZ within the volume | 3D, without section-style 2D maps |
+| Input                               | Mode        | Homogeneous-neighbor search                    | Spatial report                    |
+| ----------------------------------- | ----------- | ---------------------------------------------- | --------------------------------- |
+| One or more XY sections             | `spatial2D` | XY, within each section                        | 2D                                |
+| One or more XYZ sections in 2D mode | `spatial2D` | First two coordinates only; a warning is shown | 2D                                |
+| Multiple registered XYZ sections    | `spatial3D` | Full XYZ; optional cross-section matching      | 3D and section views              |
+| One XYZ H5AD (thick tissue)         | `spatial3D` | Full XYZ within the volume                     | 3D, without section-style 2D maps |
 
 For a thick-tissue volume, replace the tutorial input flags with:
 
@@ -318,14 +318,14 @@ Do not run the CLI and Python interfaces concurrently into the same project.
 
 ## Specify your own fields and traits
 
-| Input | CLI flag excerpt | Python field |
-|---|---|---|
-| Counts in a layer | `--data-layer counts` | `data_layer="counts"` |
-| Counts in X | `--data-layer X` | `data_layer="X"` |
-| Labels in `obs` | `--annotation cell_type` | `annotation="cell_type"` |
-| Coordinates in `obsm` | `--spatial-key spatial_aligned` | `spatial_key="spatial_aligned"` |
-| One GWAS | `--trait-name MyTrait --sumstats-file inputs/my_trait.sumstats.gz` | `trait_name`, `sumstats_file` |
-| Multiple GWAS | `--sumstats-config-file inputs/gwas.yaml` | `sumstats_config_file` |
+| Input                 | CLI flag excerpt                                                   | Python field                    |
+| --------------------- | ------------------------------------------------------------------ | ------------------------------- |
+| Counts in a layer     | `--data-layer counts`                                              | `data_layer="counts"`           |
+| Counts in X           | `--data-layer X`                                                   | `data_layer="X"`                |
+| Labels in `obs`       | `--annotation cell_type`                                           | `annotation="cell_type"`        |
+| Coordinates in `obsm` | `--spatial-key spatial_aligned`                                    | `spatial_key="spatial_aligned"` |
+| One GWAS              | `--trait-name MyTrait --sumstats-file inputs/my_trait.sumstats.gz` | `trait_name`, `sumstats_file`   |
+| Multiple GWAS         | `--sumstats-config-file inputs/gwas.yaml`                          | `sumstats_config_file`          |
 
 For multiple GWAS, replace the single-trait options; do not supply both forms.
 Paths in a GWAS YAML are relative to the **YAML directory**. For example, save

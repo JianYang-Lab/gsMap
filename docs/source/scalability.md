@@ -37,12 +37,12 @@ command. Python tuning snippets modify its `config` **before**
 
 - **Start with the defaults.** Measure the whole step, including loading and saving.
 - **Use a GPU when helpful.** Try one GPU for the compute-heavy stages; extra
-  workers or devices do not guarantee a faster run.
+    workers or devices do not guarantee a faster run.
 - **Use an SSD if I/O is slow.** It is optional; project storage is supported.
 - **Run multiple traits together.** Reuse GSS and share LD-score construction
-  within one run, rather than repeating it in a separate job for each trait.
+    within one run, rather than repeating it in a separate job for each trait.
 - **Leave room for memory and output.** More workers and larger batches can
-  increase memory use. Download size is not working disk space.
+    increase memory use. Download size is not working disk space.
 
 ## Choose CPU or GPU
 
@@ -139,8 +139,8 @@ Ranks and marker scores are stored on disk and read as needed. Use
 disk. Without it, gsMap uses project storage.
 
 1. Choose an existing, writable directory on the fast disk.
-2. Check that it has room for uncompressed arrays and temporary copies.
-3. Keep the project on persistent storage and let synchronization finish.
+1. Check that it has room for uncompressed arrays and temporary copies.
+1. Keep the project on persistent storage and let synchronization finish.
 
 For example, if `/fast-ssd/gsmap` is a directory on your SSD:
 
@@ -180,20 +180,20 @@ can coexist. This is a disk-size estimate, not a peak-RAM estimate.
 ## Tune memory and throughput
 
 1. **Identify the limiting step** in its log.
-2. **Change one setting** on the same input.
-3. **Compare total time and memory**, not just a batch's cells/s.
+1. **Change one setting** on the same input.
+1. **Compare total time and memory**, not just a batch's cells/s.
 
-| Setting | Default | When to adjust |
-|---|---|---|
-| `--mkscore-batch-size` | `0` (automatic) | Set a smaller explicit batch if marker-score computation runs out of memory. |
-| `--spots-per-chunk-quick-mode` | Automatic: **CPU 400, GPU 100** | Cells per compute chunk, per device. An explicit positive value overrides automatic selection. |
-| `--ldsc-read-workers` | `10` | Shared-LD input prefetch uses at most four readers for NumPy/memmap input and one for shared file handles. |
-| `--ldsc-gwas-workers` | `16` | Concurrent GWAS preparation, capped at 16 files in flight and available CPU cores. Use fewer workers to reduce temporary memory. |
-| `--ldsc-compute-workers` | `10` | Requested compute threads for the default CPU model; use the cores allocated to your run. |
-| `--ldsc-trait-batch-size` | `4` | Traits processed together within a shared-LD chunk; range 1–16. Not a limit on the total number of traits. |
-| `--ldsc-num-gpus` | `1` | GPUs used for spatial LDSC on one node. |
-| `--ldsc-share-ld` | Enabled | Reuse each LD-score chunk across all requested traits. |
-| `--ldsc-regression-backend` | `auto` | Optimize the common model automatically; retain general JAX support for other designs. |
+| Setting                        | Default                         | When to adjust                                                                                                                   |
+| ------------------------------ | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `--mkscore-batch-size`         | `0` (automatic)                 | Set a smaller explicit batch if marker-score computation runs out of memory.                                                     |
+| `--spots-per-chunk-quick-mode` | Automatic: **CPU 400, GPU 100** | Cells per compute chunk, per device. An explicit positive value overrides automatic selection.                                   |
+| `--ldsc-read-workers`          | `10`                            | Shared-LD input prefetch uses at most four readers for NumPy/memmap input and one for shared file handles.                       |
+| `--ldsc-gwas-workers`          | `16`                            | Concurrent GWAS preparation, capped at 16 files in flight and available CPU cores. Use fewer workers to reduce temporary memory. |
+| `--ldsc-compute-workers`       | `10`                            | Requested compute threads for the default CPU model; use the cores allocated to your run.                                        |
+| `--ldsc-trait-batch-size`      | `4`                             | Traits processed together within a shared-LD chunk; range 1–16. Not a limit on the total number of traits.                       |
+| `--ldsc-num-gpus`              | `1`                             | GPUs used for spatial LDSC on one node.                                                                                          |
+| `--ldsc-share-ld`              | Enabled                         | Reuse each LD-score chunk across all requested traits.                                                                           |
+| `--ldsc-regression-backend`    | `auto`                          | Optimize the common model automatically; retain general JAX support for other designs.                                           |
 
 ### How the automatic batch size is displayed
 
@@ -307,12 +307,12 @@ Run preprocessing once, then run the trait list together. The same workflow
 works on a workstation; a cluster simply supplies the allocated CPUs or GPUs.
 
 1. **Preprocess once.** Calculate embeddings and GSS.
-2. **Allocate resources.** Run on a compute node, not a login node. Set worker
-   counts for the CPUs assigned to the job, not the whole node.
-3. **Run shared multi-trait LDSC.** Use multiple CPU cores or GPUs within one job.
-   Do not launch overlapping jobs that write the same trait result files.
-4. **Check completion, then report.** Wait for all traits and any GPU workers to
-   finish. Generate the combined report once.
+1. **Allocate resources.** Run on a compute node, not a login node. Set worker
+    counts for the CPUs assigned to the job, not the whole node.
+1. **Run shared multi-trait LDSC.** Use multiple CPU cores or GPUs within one job.
+    Do not launch overlapping jobs that write the same trait result files.
+1. **Check completion, then report.** Wait for all traits and any GPU workers to
+    finish. Generate the combined report once.
 
 ### Example: calculate embeddings and GSS
 
@@ -432,13 +432,13 @@ shared storage.
 Report limits control browser views and diagnostic plots, **not which cells**
 enter spatial LDSC.
 
-| CLI flag | Default | Scope |
-|---|---|---|
-| `--downsampling-n-spots-2d` | `300000` | Displayed spots per section. |
-| `--downsampling-n-spots-3d` | `200000` | Displayed spots in the combined 3D view. |
-| `--downsampling-n-spots-umap` | `50000` | Spots used for each report UMAP. |
-| `--downsampling-n-spots-pcc` | `20000` | Sampled spots for GSS correlations. |
-| `--top-corr-genes` | `10` | Top correlated genes per trait for expression/GSS diagnostic plots and Manhattan highlights. |
+| CLI flag                      | Default  | Scope                                                                                        |
+| ----------------------------- | -------- | -------------------------------------------------------------------------------------------- |
+| `--downsampling-n-spots-2d`   | `300000` | Displayed spots per section.                                                                 |
+| `--downsampling-n-spots-3d`   | `200000` | Displayed spots in the combined 3D view.                                                     |
+| `--downsampling-n-spots-umap` | `50000`  | Spots used for each report UMAP.                                                             |
+| `--downsampling-n-spots-pcc`  | `20000`  | Sampled spots for GSS correlations.                                                          |
+| `--top-corr-genes`            | `10`     | Top correlated genes per trait for expression/GSS diagnostic plots and Manhattan highlights. |
 
 The default generates diagnostic plots for the top 10 correlated genes per
 trait. Use `--top-corr-genes 50` (Python: `top_corr_genes=50`) for more gene
@@ -511,12 +511,12 @@ The biological workflow diagram is in
 {ref}`Key Concepts <pipeline-overview>`. For performance diagnosis,
 start with the log for the slow step:
 
-| Step | What to check | Log under `logs/latest/` |
-|---|---|---|
-| Embeddings | Expression preparation, graph size, training and device memory | `01_find_latent.log` |
-| Ranks and marker scores | Expression/rank reading, score computation and output I/O | `02_latent_to_gene.log` |
-| Spatial LDSC | GSS-to-LD transformation and regression time | `03_spatial_ldsc.log` and per-trait logs |
-| Report | Plots, UMAP, sampled GSS reads and browser payload size | `05_report.log` |
+| Step                    | What to check                                                  | Log under `logs/latest/`                 |
+| ----------------------- | -------------------------------------------------------------- | ---------------------------------------- |
+| Embeddings              | Expression preparation, graph size, training and device memory | `01_find_latent.log`                     |
+| Ranks and marker scores | Expression/rank reading, score computation and output I/O      | `02_latent_to_gene.log`                  |
+| Spatial LDSC            | GSS-to-LD transformation and regression time                   | `03_spatial_ldsc.log` and per-trait logs |
+| Report                  | Plots, UMAP, sampled GSS reads and browser payload size        | `05_report.log`                          |
 
 For example, inspect the end of the E16.5 marker-score log:
 

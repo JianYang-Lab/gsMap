@@ -88,12 +88,17 @@ from gsMap.ldscore.pipeline import LDScorePipeline
 config = LDScoreConfig(
     bfile_root="resources/ldscore-tutorial/LD_Reference_Panel/1000G_EUR_Phase3_plink/1000G.EUR.QC.{chr}",
     hm3_snp_dir=Path("resources/ldscore-tutorial/hapmap3_snps"),
-    mapping_file=Path("resources/ldscore-tutorial/genome_annotation/gencode/gencode_v46lift37_protein_coding.bed"),
+    mapping_file=Path(
+        "resources/ldscore-tutorial/genome_annotation/gencode/gencode_v46lift37_protein_coding.bed"
+    ),
     mapping_type="bed",
     strategy="tss",
     feature_window_size=50000,
-    ld_unit="CM", ld_wind=1, mac_min=5,
-    mhc_start_bp=25000000, mhc_end_bp=34000000,
+    ld_unit="CM",
+    ld_wind=1,
+    mac_min=5,
+    mhc_start_bp=25000000,
+    mhc_end_bp=34000000,
     chromosomes="22",
     output_dir=Path("results/gencode-tss"),
     output_filename="gencode_v46_tss_50kb_weights",
@@ -143,12 +148,17 @@ from gsMap.ldscore.pipeline import LDScorePipeline
 config = LDScoreConfig(
     bfile_root="resources/ldscore-tutorial/LD_Reference_Panel/1000G_EUR_Phase3_plink/1000G.EUR.QC.{chr}",
     hm3_snp_dir=Path("resources/ldscore-tutorial/hapmap3_snps"),
-    mapping_file=Path("resources/ldscore-tutorial/genome_annotation/enhancer/by_tissue/BRN/ABC_roadmap_merged.bed"),
+    mapping_file=Path(
+        "resources/ldscore-tutorial/genome_annotation/enhancer/by_tissue/BRN/ABC_roadmap_merged.bed"
+    ),
     mapping_type="bed",
     strategy="center",
     feature_window_size=0,
-    ld_unit="CM", ld_wind=1, mac_min=5,
-    mhc_start_bp=25000000, mhc_end_bp=34000000,
+    ld_unit="CM",
+    ld_wind=1,
+    mac_min=5,
+    mhc_start_bp=25000000,
+    mhc_end_bp=34000000,
     chromosomes="22",
     output_dir=Path("results/enhancer-brain"),
     output_filename="brain_enhancer_abc_weights",
@@ -163,14 +173,14 @@ LDScorePipeline(config).run()
 
 Replace `BRN` in the mapping-file path to use another tissue:
 
-| Code | Tissue | Code | Tissue |
-|---|---|---|---|
-| `ALL` | All tissues | `BLD` | Blood |
-| `BRN` | Brain | `FAT` | Adipose |
-| `GI` | Gastrointestinal | `HRT` | Heart |
-| `KID` | Kidney | `LIV` | Liver |
-| `LNG` | Lung | `PANC` | Pancreas |
-| `SKIN` | Skin | | |
+| Code   | Tissue           | Code   | Tissue   |
+| ------ | ---------------- | ------ | -------- |
+| `ALL`  | All tissues      | `BLD`  | Blood    |
+| `BRN`  | Brain            | `FAT`  | Adipose  |
+| `GI`   | Gastrointestinal | `HRT`  | Heart    |
+| `KID`  | Kidney           | `LIV`  | Liver    |
+| `LNG`  | Lung             | `PANC` | Pancreas |
+| `SKIN` | Skin             |        |          |
 
 Each folder provides `roadmap.bed` and `ABC_roadmap_merged.bed`; `ABC.bed` is
 also included where available. The kidney folder has no separate ABC annotation.
@@ -203,15 +213,15 @@ Do not use a chromosome-22-only matrix for whole-genome spatial LDSC.
 
 ## Customize the mapping
 
-| Flag | Use |
-|---|---|
-| `--mapping-file` | BED file; column 4 supplies output gene/feature names. Use gene symbols compatible with your GSS matrix for spatial LDSC. |
-| `--strategy tss` | Resolve overlapping intervals by the closest TSS; requires BED strand information. |
-| `--strategy center` | Resolve overlapping intervals by the closest interval center. |
-| `--strategy score` | Select the highest-scoring overlap and use its score; requires numeric BED column 5. |
+| Flag                      | Use                                                                                                                         |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `--mapping-file`          | BED file; column 4 supplies output gene/feature names. Use gene symbols compatible with your GSS matrix for spatial LDSC.   |
+| `--strategy tss`          | Resolve overlapping intervals by the closest TSS; requires BED strand information.                                          |
+| `--strategy center`       | Resolve overlapping intervals by the closest interval center.                                                               |
+| `--strategy score`        | Select the highest-scoring overlap and use its score; requires numeric BED column 5.                                        |
 | `--strategy allow_repeat` | Retain all overlaps; uses BED scores when present, otherwise 1. Multiple intervals for the same SNP–gene pair add together. |
-| `--feature-window-size` | Extend annotation intervals by this many base pairs on each side. This is separate from the LD window. |
-| `--batch-size-hm3` | Number of target SNPs processed together; reduce it if memory is limited. It does not change the intended LD window. |
+| `--feature-window-size`   | Extend annotation intervals by this many base pairs on each side. This is separate from the LD window.                      |
+| `--batch-size-hm3`        | Number of target SNPs processed together; reduce it if memory is limited. It does not change the intended LD window.        |
 
 See {doc}`cli_reference` for all CLI and Python parameters.
 
@@ -223,16 +233,16 @@ annotation BED and MHC interval in the **same genome build**. The examples use
 GRCh37, so they explicitly override the GRCh38 MHC boundaries below.
 ```
 
-| CLI flag | Default | Meaning and tutorial setting |
-|---|---|---|
-| `--snps-only` | Enabled | Keep only biallelic A/C/G/T SNPs; exclude indels and other allele types. |
-| `--mac-min` | `5` | Keep variants with minor-allele count **MAC > 5**, not ≥5. MAC is calculated from nonmissing genotypes in the input panel. |
-| `--maf-min` | Unset | No additional minor-allele frequency filter. For example, `--maf-min 0.01` requires **MAF ≥ 0.01** as well as passing the MAC filter. |
-| `--ld-unit` / `--ld-wind` | `CM` / `1` | Sum LD within **±1 cM of each SNP**. For a physical ±1 Mb window, use `--ld-unit KB --ld-wind 1000`; this is not equivalent to ±1 cM. |
-| `--exclude-mhc-from-regression` | Enabled | Exclude chr6 MHC SNPs from HM3 output rows and from both sides of the `w_ld` calculation. Keep MHC variants in the broad reference used for annotation LD scores. |
-| `--mhc-start-bp` / `--mhc-end-bp` | `28510120` / `33480577` | Inclusive chr6 BP boundaries for GRCh38. **For this GRCh37 tutorial, use `25000000` / `34000000`.** These values are not inferred from the input files. |
-| `--calculate-w-ld` | Disabled | Enable to generate matching HM3 regression weights alongside the SNP × gene matrix, as in both examples. |
-| `--w-ld-dir` | Unset | Directory for those regression-weight files; set it explicitly when enabling `--calculate-w-ld`. |
+| CLI flag                          | Default                 | Meaning and tutorial setting                                                                                                                                      |
+| --------------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--snps-only`                     | Enabled                 | Keep only biallelic A/C/G/T SNPs; exclude indels and other allele types.                                                                                          |
+| `--mac-min`                       | `5`                     | Keep variants with minor-allele count **MAC > 5**, not ≥5. MAC is calculated from nonmissing genotypes in the input panel.                                        |
+| `--maf-min`                       | Unset                   | No additional minor-allele frequency filter. For example, `--maf-min 0.01` requires **MAF ≥ 0.01** as well as passing the MAC filter.                             |
+| `--ld-unit` / `--ld-wind`         | `CM` / `1`              | Sum LD within **±1 cM of each SNP**. For a physical ±1 Mb window, use `--ld-unit KB --ld-wind 1000`; this is not equivalent to ±1 cM.                             |
+| `--exclude-mhc-from-regression`   | Enabled                 | Exclude chr6 MHC SNPs from HM3 output rows and from both sides of the `w_ld` calculation. Keep MHC variants in the broad reference used for annotation LD scores. |
+| `--mhc-start-bp` / `--mhc-end-bp` | `28510120` / `33480577` | Inclusive chr6 BP boundaries for GRCh38. **For this GRCh37 tutorial, use `25000000` / `34000000`.** These values are not inferred from the input files.           |
+| `--calculate-w-ld`                | Disabled                | Enable to generate matching HM3 regression weights alongside the SNP × gene matrix, as in both examples.                                                          |
+| `--w-ld-dir`                      | Unset                   | Directory for those regression-weight files; set it explicitly when enabling `--calculate-w-ld`.                                                                  |
 
 For Python, replace hyphens with underscores: for example, `mac_min=5`,
 `maf_min=None`, and `calculate_w_ld=True`. MAC and MAF are different filters:
@@ -242,11 +252,11 @@ panel by upstream QC.
 
 The MHC setting distinguishes three SNP sets:
 
-| SNP set | Role | MHC |
-|---|---|---|
-| Broad reference | Variants summed over for annotation LD scores | Retained |
-| HM3 regression SNPs | GWAS observations used in regression | Excluded |
-| Weight-LD SNPs | Both targets and summed variants for `w_ld` | Excluded |
+| SNP set             | Role                                          | MHC      |
+| ------------------- | --------------------------------------------- | -------- |
+| Broad reference     | Variants summed over for annotation LD scores | Retained |
+| HM3 regression SNPs | GWAS observations used in regression          | Excluded |
+| Weight-LD SNPs      | Both targets and summed variants for `w_ld`   | Excluded |
 
 For cM windows, the BIM genetic positions must be finite, monotonic and
 nonconstant. An all-zero cM column is not a usable genetic map; an arbitrary

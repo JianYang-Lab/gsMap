@@ -225,10 +225,12 @@ def test_spatial2d_uses_plane_labels_and_point_colored_offset_tooltips(
     assert "tooltip.style.background = background" in report_template
 
 
-def test_spatial2d_disables_native_hover_and_automatic_margin_redraws(report_template: str) -> None:
-    renderer = report_template.split("renderSpatial2DPlotSingle(divId, plotType, options = {}) {", 1)[1].split(
-        "bindSpatial2dViewportSync(sourceId, targetId)", 1
-    )[0]
+def test_spatial2d_disables_native_hover_and_automatic_margin_redraws(
+    report_template: str,
+) -> None:
+    renderer = report_template.split(
+        "renderSpatial2DPlotSingle(divId, plotType, options = {}) {", 1
+    )[1].split("bindSpatial2dViewportSync(sourceId, targetId)", 1)[0]
     assert "hovermode: false" in renderer
     assert "autoexpand: false" in renderer
     assert "this.bindSpatial2dHover(plotDiv)" in renderer
@@ -239,10 +241,7 @@ def test_shared_annotation_selection_filters_all_point_maps(report_template: str
     assert "visibleUmapPointIndices()" in report_template
     assert "const annotation = this.spatial3dAnnotationCache?.[annotationName]" in report_template
     assert "this.renderSpatial2DPlotSingle('spatial2dPlotTrait', 'trait')" in report_template
-    assert (
-        "this.renderSpatial3dViews().catch(error => {"
-        in report_template
-    )
+    assert "this.renderSpatial3dViews().catch(error => {" in report_template
 
 
 def test_enrichment_uses_shared_annotation_color_reference(report_template: str) -> None:
@@ -290,9 +289,9 @@ def test_spatial3d_keeps_full_display_payload_during_camera_interaction(
     assert "spatial3dInteractionPointLimit" not in report_template
     assert "configureSpatial3dInteractionLod" not in report_template
     assert "applySpatial3dInteractionLod" not in report_template
-    camera_sync = report_template.split("bindSpatial3dCameraSync(sourceId, targetId) {", 1)[1].split(
-        "fittedSpatial3dCamera(current = null)", 1
-    )[0]
+    camera_sync = report_template.split("bindSpatial3dCameraSync(sourceId, targetId) {", 1)[
+        1
+    ].split("fittedSpatial3dCamera(current = null)", 1)[0]
     assert "plotly_relayouting" in camera_sync
     assert "queueSpatial3dCamera(target, camera)" in camera_sync
 
@@ -361,7 +360,7 @@ def test_sidebar_is_the_single_annotation_selection_control(
     assert 'id="association-overview"' in report_template
     assert 'aria-label="Clear annotation selection"' in report_template
     assert "toggleAnnotationFromEnrichment" not in report_template
-    sidebar = report_template.split('id="report-sidebar"', 1)[1].split('</aside>', 1)[0]
+    sidebar = report_template.split('id="report-sidebar"', 1)[1].split("</aside>", 1)[0]
     assert 'id="association-overview"' in sidebar
     assert report_template.count('id="association-overview"') == 1
     assert sidebar.count('name="overview-scope"') == 2
@@ -370,9 +369,7 @@ def test_sidebar_is_the_single_annotation_selection_control(
     assert 'x-model="overviewSort"' in sidebar
     assert 'aria-label="Sort annotation overview"' in sidebar
 
-    toggle_start = report_template.index(
-        "                toggleAnnotationCategory(category) {"
-    )
+    toggle_start = report_template.index("                toggleAnnotationCategory(category) {")
     toggle_handler = report_template[
         toggle_start : report_template.index(
             "                clearAnnotationSelection() {", toggle_start
@@ -399,7 +396,9 @@ def test_annotation_first_layout_and_shared_interactive_legend(report_template: 
     assert 'id="annotation-selection-help"' in report_template
     assert 'aria-describedby="annotation-selection-help"' in report_template
     for keyword in ["Click", "select", "remove", "Clear"]:
-        assert f'<strong class="font-semibold text-primary-700">{keyword}</strong>' in report_template
+        assert (
+            f'<strong class="font-semibold text-primary-700">{keyword}</strong>' in report_template
+        )
     assert "toggleAnnotationCategory(row.category)" in report_template
     assert "scheduleAnnotationLegendToggle" not in report_template
     assert "filterCategoricalPlotPoints" in report_template
