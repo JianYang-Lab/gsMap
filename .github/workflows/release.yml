@@ -58,7 +58,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/gsMap3D
+      url: https://pypi.org/p/gsMap
     permissions:
       id-token: write
     steps:
@@ -168,13 +168,13 @@ jobs:
           PRERELEASE: ${{ needs.build-python.outputs.prerelease }}
         run: |
           VERSION="$RELEASE_TAG"
-          echo "# gsMap3D ${VERSION}" > release_notes.md
+          echo "# gsMap ${VERSION}" > release_notes.md
           echo "" >> release_notes.md
           echo "## 📦 Installation" >> release_notes.md
           echo "" >> release_notes.md
           echo "### PyPI" >> release_notes.md
           echo '```bash' >> release_notes.md
-          echo "pip install gsMap3D==${RELEASE_VERSION}" >> release_notes.md
+          echo "pip install gsMap==${RELEASE_VERSION}" >> release_notes.md
           echo '```' >> release_notes.md
           echo "" >> release_notes.md
           if [ "$PRERELEASE" = "false" ]; then
@@ -207,7 +207,7 @@ jobs:
             "$RELEASE_TAG" \
             --repo '${{ github.repository }}' \
             --verify-tag \
-            --title "gsMap3D $RELEASE_TAG" \
+            --title "gsMap $RELEASE_TAG" \
             "${RELEASE_FLAGS[@]}" \
             --notes-file release_notes.md
 

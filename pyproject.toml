@@ -3,21 +3,21 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "gsMap3D"
+name = "gsMap"
 authors = [{ name = "liyang", email = "songliyang@westlake.edu.cn" },
     { name = "wenhao", email = "chenwenhao@westlake.edu.cn" }]
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.12"
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Operating System :: POSIX :: Linux",
 ]
-version = "0.1.4a2"
+version = "2.0.0b1"
 description = "Genetically informed spatial mapping of cells for complex traits"
 dependencies = [
     "numpy ~= 2.2",
@@ -57,7 +57,7 @@ dependencies = [
 # Acceleration backend — pick exactly one (cpu / cuda126 / cuda128 / cuda130 / tpu).
 # Each CUDA variant keeps torch and JAX on the same CUDA major so they share a
 # single set of nvidia-*-cuXX runtime wheels. torch is also a base dependency,
-# so a bare `pip install gsMap3D` still works (resolves torch from PyPI).
+# so a bare `pip install gsMap` still works (resolves torch from PyPI).
 cpu = [
     "torch >=2.8, <3.0",
 ]
@@ -168,7 +168,10 @@ torch = [
 ]
 
 [project.urls]
-Home = "https://github.com/Ganten-Hornby/gsMap3D"
+Home = "https://github.com/JianYang-Lab/gsMap"
+Source = "https://github.com/JianYang-Lab/gsMap"
+Issues = "https://github.com/JianYang-Lab/gsMap/issues"
+Changelog = "https://github.com/JianYang-Lab/gsMap/blob/main/CHANGELOG.md"
 Documentation = "https://yanglab.westlake.edu.cn/gsmap3d-portal/docs/"
 Website = "https://yanglab.westlake.edu.cn/gsmap3d-portal/"
 

@@ -17,13 +17,13 @@ SPEC.loader.exec_module(MODULE)
 @pytest.mark.parametrize(
     ("version", "prerelease"),
     [
-        ("0.1.4a1", "true"),
-        ("0.1.4a2", "true"),
-        ("0.1.4b1", "true"),
-        ("0.1.4rc1", "true"),
-        ("0.1.4.dev1", "true"),
-        ("0.1.4", "false"),
-        ("0.1.4.post1", "false"),
+        ("2.0.0a1", "true"),
+        ("2.0.0b1", "true"),
+        ("2.0.0rc1", "true"),
+        ("2.0.0.dev1", "true"),
+        ("2.0.0", "false"),
+        ("2.0.0.post1", "false"),
+        ("2.1.0", "false"),
     ],
 )
 def test_release_classification(version, prerelease):
@@ -35,11 +35,11 @@ def test_release_classification(version, prerelease):
 
 
 @pytest.mark.parametrize(
-    "tag", ["0.1.4a1", "v0.1.3", "v0.1.4alpha1", "v0.1.4a1\n", "v0.1.4a1+local"]
+    "tag", ["2.0.0b1", "v2.0.0", "v2.0.0beta1", "v2.0.0b1\n", "v2.0.0b1+local"]
 )
 def test_invalid_release_tags(tag):
     with pytest.raises(ValueError):
-        MODULE.release_metadata(tag, "0.1.4a1")
+        MODULE.release_metadata(tag, "2.0.0b1")
 
 
 def test_workflow_guards_and_tag_checkout():

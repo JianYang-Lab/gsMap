@@ -22,7 +22,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from functools import wraps
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import TYPE_CHECKING, ParamSpec, TypeVar
 
@@ -265,10 +264,9 @@ def _redact_argv(argv: list[str]) -> list[str]:
 
 
 def _package_version() -> str | None:
-    try:
-        return version("gsMap3D")
-    except PackageNotFoundError:
-        return None
+    from gsMap import __version__
+
+    return None if __version__ == "unknown" else __version__
 
 
 def resolve_project_dir(config_or_path: Any) -> Path:

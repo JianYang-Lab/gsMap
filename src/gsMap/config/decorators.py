@@ -10,6 +10,7 @@ import subprocess
 import time
 from dataclasses import fields
 from functools import wraps
+from importlib.metadata import PackageNotFoundError, distribution
 from typing import Annotated, Any, get_args, get_origin
 
 import pyfiglet
@@ -20,7 +21,7 @@ from gsMap.resource_usage import track_resource_usage as track_resource_usage
 logger = logging.getLogger("gsMap")
 
 
-def show_banner(command_name: str, version: str = "1.73.5"):
+def show_banner(command_name: str, version: str = "unknown"):
     """Display gsMap banner and version information."""
     command_name = command_name.replace("_", " ")
     gsMap_main_logo = pyfiglet.figlet_format(
@@ -38,6 +39,23 @@ def show_banner(command_name: str, version: str = "1.73.5"):
     # Record start time for the log message
     start_time = time.strftime("%Y-%m-%d %H:%M:%S")
     logger.info(f"Started at: {start_time}")
+
+
+def warn_superseded_distribution() -> None:
+    """Warn when the superseded ``gsMap3D`` preview distribution is also installed.
+
+    ``gsMap3D`` (0.1.x) and ``gsMap`` (>=2.0) install the same ``gsMap`` module, so
+    removing either distribution deletes files the other one still needs.
+    """
+    try:
+        distribution("gsMap3D")
+    except PackageNotFoundError:
+        return
+    logger.warning(
+        "The superseded 'gsMap3D' package is installed alongside 'gsMap'. Both provide the "
+        "same 'gsMap' module. Run 'pip uninstall gsMap3D' and then "
+        "'pip install --force-reinstall --no-deps gsMap' to repair the installation."
+    )
 
 
 def dataclass_typer(func):
@@ -63,6 +81,7 @@ def dataclass_typer(func):
             except ImportError:
                 version = "development"
             show_banner(func.__name__, version)
+            warn_superseded_distribution()
 
             # Create the config only after the project DEBUG log is active so
             # validation and auto-resolution messages are retained.
