@@ -490,33 +490,6 @@ def _read_file(file_path):
         raise
 
 
-def _read_ref_ld_v2(ld_file):
-    """Read reference LD scores for all chromosomes."""
-    suffix = ".l2.ldscore"
-    logger.info(f"Reading LD score annotations from {ld_file}[1-22]{suffix}...")
-
-    # Get the chromosome files
-    chr_files = _read_chr_files(ld_file, suffix)
-
-    # Read and concatenate all files
-    df_list = [_read_file(file) for file in chr_files]
-
-    if not df_list:
-        logger.error(f"No LD score files found matching pattern: {ld_file}*{suffix}*")
-        raise FileNotFoundError(f"No LD score files found matching pattern: {ld_file}*{suffix}*")
-
-    ref_ld = pd.concat(df_list, axis=0)
-    logger.info(f"Loaded {len(ref_ld)} SNPs from LD score files")
-
-    # Set SNP as index
-    if "index" in ref_ld.columns:
-        ref_ld.rename(columns={"index": "SNP"}, inplace=True)
-    if "SNP" in ref_ld.columns:
-        ref_ld.set_index("SNP", inplace=True)
-
-    return ref_ld
-
-
 def _read_w_ld(w_ld_dir):
     """Read LD weights for all chromosomes."""
     suffix = ".l2.ldscore"

@@ -1,3 +1,5 @@
+import logging
+
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -5,6 +7,8 @@ from tqdm import tqdm
 from gsMap.find_latent.checkpoint import save_checkpoint
 
 from .loss import ce_loss, rec_loss
+
+logger = logging.getLogger(__name__)
 
 
 class EarlyStopping:
@@ -160,8 +164,10 @@ class ModelTrain:
             # Update validation loss
             loss_track(val_loss)
             if loss_track.early_stop:
-                print(
-                    f"Stop training, as {self.mode} validation loss has not decreased for {patience} consecutive steps."
+                logger.info(
+                    "Stop training, as %s validation loss has not decreased for %s consecutive steps.",
+                    self.mode,
+                    patience,
                 )
                 break
 

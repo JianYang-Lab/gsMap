@@ -15,8 +15,7 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # Headless 3D report rendering (pyvista/VTK) can hang on a misconfigured
-    # display; cap the job so it fails fast instead of running to the 6h ceiling.
+    # Cap the job so a hung step fails fast instead of running to the 6h ceiling.
     timeout-minutes: 60
 
     defaults:
@@ -39,9 +38,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Set up headless display for pyvista/VTK 3D rendering
-        uses: pyvista/setup-headless-display-action@v3
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -93,8 +89,6 @@ jobs:
       - name: Run pytest
         env:
           MPLBACKEND: agg
-          # DISPLAY is provided by setup-headless-display-action (Xvfb); do not
-          # hard-code :0 — that points at a nonexistent server and hangs VTK.
           COLUMNS: 120
         run: |
           python -m pytest tests --cov=src \

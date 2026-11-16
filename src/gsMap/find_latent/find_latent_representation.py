@@ -35,7 +35,6 @@ from .st_process import (
     convert_to_human_genes,
     create_subsampled_adata,
     find_common_hvg,
-    setup_data_layer,
 )
 
 logger = logging.getLogger(__name__)
@@ -53,21 +52,6 @@ def _resolve_expression_model(is_count_data, requested_distribution, use_tf):
     if is_count_data:
         return requested_distribution, True, use_tf
     return "gaussian", False, False
-
-
-def _resolve_training_model_semantics(training_adata, config):
-    """Compatibility helper for callers that already loaded the training matrix."""
-
-    is_count_data, _ = setup_data_layer(
-        training_adata,
-        config.data_layer,
-        verbose=False,
-    )
-    return _resolve_expression_model(
-        is_count_data,
-        config.distribution,
-        config.use_tf,
-    )
 
 
 def set_seed(seed_value):
@@ -253,7 +237,7 @@ def run_find_latent_representation(config: FindLatentRepresentationsConfig) -> d
         feature_schema=feature_schema,
     )
     gsMap_embedding_finder.set_loaders(train_loader, val_loader)
-    print(gsMap_embedding_finder.model)
+    logger.debug("Embedding model architecture:\n%s", gsMap_embedding_finder.model)
 
     model_is_compatible = os.path.exists(config.model_path) and _load_compatible_model_state(
         gsMap_embedding_finder.model,

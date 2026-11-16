@@ -298,16 +298,3 @@ class GenerateLDScoreConfig(ConfigWithAutoPaths):
     def __post_init__(self):
         super().__post_init__()
         self.show_config(GenerateLDScoreConfig)
-
-
-def check_ldscore_done(config: GenerateLDScoreConfig) -> bool:
-    """
-    Check if generate_ldscore step is done.
-    """
-    # Assuming it's done if w_ld directory exists and has files
-    w_ld_dir = Path(config.ldscore_save_dir) / "w_ld"
-    if not w_ld_dir.exists():
-        return False
-
-    # Check if there are any .l2.ldscore.gz files
-    return any(w_ld_dir.glob("*.l2.ldscore.gz"))

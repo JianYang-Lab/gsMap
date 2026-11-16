@@ -6,9 +6,7 @@ import logging
 from collections import OrderedDict
 from pathlib import Path
 
-import anndata as ad
 import h5py
-import numpy as np
 import yaml
 
 logger = logging.getLogger("gsMap.config")
@@ -167,41 +165,6 @@ def inspect_h5ad_structure(filename):
                     structure[slot] = True
 
     return structure
-
-
-def get_h5ad_obsm_shape(filename: str | Path, key: str) -> tuple[int, ...]:
-    """Return the shape of one ``obsm`` array through AnnData's backed API."""
-
-    adata = ad.read_h5ad(filename, backed="r")
-    try:
-        return tuple(adata.obsm[key].shape)
-    finally:
-        adata.file.close()
-
-
-def get_h5ad_obsm_unique_values(
-    filename: str | Path,
-    key: str,
-    column: int,
-    *,
-    stop_after: int,
-) -> set[float]:
-    """Read unique ``obsm`` values through AnnData's backed API, with an early cap."""
-
-    unique_values: set[float] = set()
-    adata = ad.read_h5ad(filename, backed="r")
-    try:
-        array = np.asarray(adata.obsm[key])
-        chunk_rows = 1_000_000
-        for start in range(0, array.shape[0], chunk_rows):
-            values = np.unique(array[start : start + chunk_rows, column])
-            for value in values:
-                unique_values.add(float(value))
-                if len(unique_values) > stop_after:
-                    return unique_values
-        return unique_values
-    finally:
-        adata.file.close()
 
 
 def validate_h5ad_structure(sample_h5ad_dict, required_fields, optional_fields=None):

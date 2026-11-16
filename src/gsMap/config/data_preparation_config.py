@@ -4,8 +4,8 @@ This configuration deliberately inherits only the two data-stage configurations.
 Construction validates the selected source inputs; it never runs either stage.
 """
 
-from dataclasses import dataclass, fields
 from collections import OrderedDict
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Annotated
 

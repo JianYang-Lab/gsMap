@@ -210,28 +210,6 @@ class ConfigWithAutoPaths(BaseConfig):
         """Directory for gsMap report outputs - returns web_report_dir for backward compatibility"""
         return self.web_report_dir
 
-    @ensure_path_exists
-    def get_report_dir(self, trait_name: str) -> Path:
-        """Deprecated: Use report_dir property instead"""
-        return self.report_dir
-
-    def get_gsMap_report_file(self, trait_name: str) -> Path:
-        """Path to main HTML report file"""
-        return self.report_dir / "index.html"
-
-    @ensure_path_exists
-    def get_manhattan_html_plot_path(self, trait_name: str) -> Path:
-        """Path for Manhattan plot CSV data"""
-        return self.report_data_dir / "manhattan_data" / f"{trait_name}_manhattan.csv"
-
-    @ensure_path_exists
-    def get_GSS_plot_dir(self, trait_name: str) -> Path:
-        """Directory for gene diagnostic plots"""
-        return self.report_dir / "gene_diagnostic_plots"
-
-    def get_GSS_plot_select_gene_file(self, trait_name: str) -> Path:
-        return self.get_GSS_plot_dir(trait_name) / "plot_genes.csv"
-
     @property
     def ldsc_combined_parquet_path(self) -> Path:
         return self.cauchy_save_dir / f"{self.project_name}_combined_ldsc.parquet"
@@ -255,12 +233,3 @@ class ConfigWithAutoPaths(BaseConfig):
     def get_gene_diagnostic_info_save_path(self, trait_name: str) -> Path:
         """Path for gene diagnostic info CSV - uses trait prefix in gss_stats subfolder"""
         return self.report_data_dir / "gss_stats" / f"gene_trait_correlation_{trait_name}.csv"
-
-    @ensure_path_exists
-    def get_gsMap_plot_save_dir(self, trait_name: str) -> Path:
-        """Directory for spatial LDSC plots"""
-        return self.report_dir / "spatial_plots"
-
-    def get_gsMap_html_plot_save_path(self, trait_name: str) -> Path:
-        """Deprecated: Spatial plots are now PNG files in spatial_plots/"""
-        return self.get_gsMap_plot_save_dir(trait_name) / f"ldsc_{trait_name}.png"

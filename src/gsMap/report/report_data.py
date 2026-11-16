@@ -2676,35 +2676,6 @@ def _per_sample_spatial_outputs_current(data_dir: Path, js_data_dir: Path, meta:
     )
 
 
-def export_data_as_js_modules(data_dir: Path):
-    """
-    Convert the CSV data in the report directory into JavaScript modules (.js files)
-    that assign the data to window global variables.
-    This allows loading data via <script> tags locally without CORS issues.
-    """
-    logger.info("Exporting data as JS modules...")
-    js_data_dir = data_dir / "js_data"
-    js_data_dir.mkdir(exist_ok=True)
-
-    meta = {}
-    meta_file = data_dir / "report_meta.json"
-    if meta_file.exists():
-        try:
-            with open(meta_file) as f:
-                meta = json.load(f)
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"Failed to load report_meta.json: {e}")
-
-    # Use per-sample export for efficient on-demand loading (instead of monolithic _export_metadata_js)
-    _export_per_sample_spatial_js(data_dir, js_data_dir, meta)
-    _export_cauchy_js(data_dir, js_data_dir)
-    _export_manhattan_js(data_dir, js_data_dir)
-    _export_umap_js(data_dir, js_data_dir, meta)
-    _export_report_meta_js(data_dir, js_data_dir, meta)
-
-    logger.info(f"JS modules exported to {js_data_dir}")
-
-
 def _export_annotation_schemas_js(
     js_data_dir: Path,
     metadata: pd.DataFrame,

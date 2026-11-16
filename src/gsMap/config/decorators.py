@@ -2,11 +2,8 @@
 Decorators for CLI and resource tracking.
 """
 
-import functools
 import inspect
 import logging
-import re
-import subprocess
 import time
 from dataclasses import fields
 from functools import wraps
@@ -180,39 +177,3 @@ def dataclass_typer(func):
     wrapper.__doc__ = func.__doc__
 
     return wrapper
-
-
-@functools.cache
-def macos_timebase_factor():
-    """
-    On MacOS, `psutil.Process.cpu_times()` is not accurate, check activity monitor instead.
-    see: https://github.com/giampaolo/psutil/issues/2411#issuecomment-2274682289
-    """
-    default_factor = 1
-    ioreg_output_lines = []
-
-    try:
-        result = subprocess.run(
-            ["ioreg", "-p", "IODeviceTree", "-c", "IOPlatformDevice"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        ioreg_output_lines = result.stdout.splitlines()
-    except subprocess.CalledProcessError as e:
-        print(f"Command failed: {e}")
-        return default_factor
-
-    if not ioreg_output_lines:
-        return default_factor
-
-    for line in ioreg_output_lines:
-        if "timebase-frequency" in line:
-            match = re.search(r"<([0-9a-fA-F]+)>", line)
-            if not match:
-                return default_factor
-            byte_data = bytes.fromhex(match.group(1))
-            timebase_freq = int.from_bytes(byte_data, byteorder="little")
-            # Typically, it should be 1000/24.
-            return pow(10, 9) / timebase_freq
-    return default_factor

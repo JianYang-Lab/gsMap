@@ -59,7 +59,9 @@ def validate_expression_contract(config, *, start_step=None):
         if getattr(config, "high_quality_neighbor_filter", False) or getattr(
             config, "high_quality_cell_qc", False
         ):
-            raise ValueError("Noncounts expression cannot use count-based high-quality cell filtering")
+            raise ValueError(
+                "Noncounts expression cannot use count-based high-quality cell filtering"
+            )
         if getattr(config, "cell_qc_min_counts", None) is not None:
             raise ValueError("Noncounts expression cannot use cell_qc_min_counts")
     return data_type
@@ -444,18 +446,6 @@ class LatentToGeneConfig(LatentToGeneComputeConfig, LatentToGeneCoreConfig, Conf
             logger.info(
                 f"Auto-detected {len(self.sample_h5ad_dict)} samples from find_latent_metadata_path: {self.find_latent_metadata_path}"
             )
-
-    def _extract_sample_name(self, latent_file):
-        """Extract sample name from latent file path"""
-        filename = latent_file.stem
-
-        # Remove known suffixes
-        suffixes_to_remove = ["_latent_adata", "_add_latent"]
-        for suffix in suffixes_to_remove:
-            if filename.endswith(suffix):
-                return filename[: -len(suffix)]
-
-        return filename
 
     def _setup_and_validate_fields(self):
         """Set up required/optional fields and validate h5ad structure"""

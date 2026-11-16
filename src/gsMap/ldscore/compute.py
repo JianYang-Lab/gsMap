@@ -53,39 +53,6 @@ def compute_unbiased_l2_batch(
     return l2_unbiased
 
 
-def compute_ld_scores(
-    X_hm3: np.ndarray,
-    X_ref_block: np.ndarray,
-    ld_window_mask: np.ndarray | None = None,
-) -> np.ndarray:
-    """
-    Compute LD scores by summing unbiased L2 over reference SNPs.
-
-    Parameters
-    ----------
-    X_hm3 : np.ndarray
-        Standardized genotypes for HM3 SNPs, shape (n_individuals, n_hm3_snps)
-    X_ref_block : np.ndarray
-        Standardized genotypes for reference block, shape (n_individuals, n_ref_snps)
-
-    Returns
-    -------
-    np.ndarray
-        LD scores for each HM3 SNP, shape (n_hm3_snps,)
-    """
-    # Compute unbiased L2 matrix
-    l2_unbiased = compute_unbiased_l2_batch(X_hm3, X_ref_block)
-    if ld_window_mask is not None:
-        if ld_window_mask.shape != l2_unbiased.shape:
-            raise ValueError("LD-window mask shape does not match the L2 matrix")
-        np.multiply(l2_unbiased, ld_window_mask, out=l2_unbiased)
-
-    # Sum over reference SNPs (axis=1)
-    ld_scores = np.sum(l2_unbiased, axis=1)
-
-    return ld_scores
-
-
 def compute_batch_weights_sparse(
     X_hm3: np.ndarray,
     X_ref_block: np.ndarray,
