@@ -1,12 +1,10 @@
 name: docs
 
+# The self-hosted runner that deployed the 1.x docs is retired, so this no longer runs on
+# push. The 1.x docs are built from this branch and deployed by the maintainers to
+# yanglab.westlake.edu.cn/gps_data/website_docs/github_action_runner/gsmap/.
 on:
-  push:
-    # Only the 1.x maintenance branch deploys the 1.x documentation site.
-    branches: [1.x]
-    paths:
-      - "docs/**"
-      - "visualization_web_docs/**"
+  workflow_dispatch:
 
 jobs:
   deploy_docs:

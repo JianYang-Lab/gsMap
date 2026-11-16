@@ -40,6 +40,12 @@ html_static_path = ["_static"]
 templates_path = ["_templates"]
 
 html_theme_options = {
+    # Shown at the top of every page of the 1.x documentation.
+    "announcement": (
+        "<strong>gsMap 1.x is deprecated</strong> and receives bug fixes only; pin it with "
+        "<code>pip install \"gsMap&lt;2\"</code>. For new analyses, see the "
+        '<a href="https://jianyang-lab.github.io/gsMap/">gsMap 2.x documentation</a>.'
+    ),
     # "light_css_variables": {
     #     "color-brand-primary": "#7C4DFF",
     #     "color-brand-content": "#7C4DFF",

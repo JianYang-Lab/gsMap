@@ -4,7 +4,8 @@
 > **This is the gsMap 1.x maintenance branch.** It receives bug fixes only and is
 > released on PyPI as `gsMap` 1.73.x (`pip install "gsMap<2"`). Development of
 > gsMap 2.x, which adds 3D spatial transcriptomics support, continues on the
-> [`main` branch](https://github.com/JianYang-Lab/gsMap). The 1.x documentation remains at
+> [`main` branch](https://github.com/JianYang-Lab/gsMap)
+> ([gsMap 2.x documentation](https://jianyang-lab.github.io/gsMap/)). The 1.x documentation remains at
 > [gsMap Documentation](https://yanglab.westlake.edu.cn/gsmap/document/software).
 
 |               |                                                                                                      |                |                                                                                                    |
