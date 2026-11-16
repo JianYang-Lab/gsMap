@@ -41,6 +41,10 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: python .github/scripts/release_metadata.py "$RELEASE_TAG"
+      - name: Require curated release notes in CHANGELOG.md
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: python .github/scripts/release_notes.py "$RELEASE_TAG" --check
       - name: Build package
         run: |
           uv build --no-sources
@@ -160,38 +164,23 @@ jobs:
             ./dist/*.tar.gz
             ./dist/*.whl
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install release-notes dependencies
+        run: python -m pip install packaging
+
       - name: Generate Release Notes
-        id: release_notes
         env:
           RELEASE_TAG: ${{ needs.build-python.outputs.tag }}
-          RELEASE_VERSION: ${{ needs.build-python.outputs.version }}
           PRERELEASE: ${{ needs.build-python.outputs.prerelease }}
         run: |
-          VERSION="$RELEASE_TAG"
-          echo "# gsMap ${VERSION}" > release_notes.md
-          echo "" >> release_notes.md
-          echo "## 📦 Installation" >> release_notes.md
-          echo "" >> release_notes.md
-          echo "### PyPI" >> release_notes.md
-          echo '```bash' >> release_notes.md
-          echo "pip install gsMap==${RELEASE_VERSION}" >> release_notes.md
-          echo '```' >> release_notes.md
-          echo "" >> release_notes.md
-          if [ "$PRERELEASE" = "false" ]; then
-            echo "### Docker" >> release_notes.md
-            echo '```bash' >> release_notes.md
-            echo "docker pull ghcr.io/${GITHUB_REPOSITORY,,}:${RELEASE_VERSION}" >> release_notes.md
-            echo '```' >> release_notes.md
-          else
-            echo "This is a pre-release for testing. Stable Docker tags are unchanged." >> release_notes.md
-          fi
-          echo "" >> release_notes.md
-          echo "## 📋 What's Changed" >> release_notes.md
-          echo "" >> release_notes.md
-          PREVIOUS_TAG=$(git describe --tags --match 'v*' --abbrev=0 "${VERSION}^" 2>/dev/null || true)
-          if [ -n "$PREVIOUS_TAG" ]; then
-            echo "See [full changelog](https://github.com/${GITHUB_REPOSITORY}/compare/${PREVIOUS_TAG}...${VERSION})" >> release_notes.md
-          fi
+          python .github/scripts/release_notes.py "$RELEASE_TAG" \
+            --prerelease "$PRERELEASE" \
+            --repository "$GITHUB_REPOSITORY" \
+            --output release_notes.md
+          cat release_notes.md
 
       - name: Create GitHub Release
         env:
