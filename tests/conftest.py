@@ -1,4 +1,10 @@
+import os
 from pathlib import Path
+
+# Typer forces rich terminal styling when GITHUB_ACTIONS, FORCE_COLOR or PY_COLORS is set,
+# which inserts ANSI codes into --help output that tests compare as plain text. This must
+# be set before typer's rich_utils is first imported.
+os.environ.setdefault("_TYPER_FORCE_DISABLE_TERMINAL", "1")
 
 import pytest
 from typer.testing import CliRunner
