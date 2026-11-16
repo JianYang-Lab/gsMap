@@ -1,24 +1,20 @@
-import logging
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
+from tests.logging_guard import preserved_gsmap_logging
+
 
 @pytest.fixture(autouse=True)
 def isolate_gsmap_logging():
-    """Do not let CLI/logging tests change subsequent caplog capture behavior."""
-    from gsMap.logging_config import _reset_logging_for_tests
+    """Do not let CLI/logging tests change subsequent caplog capture behavior.
 
-    logger = logging.getLogger("gsMap")
-    level, propagate, disabled = logger.level, logger.propagate, logger.disabled
-    handlers = logger.handlers[:]
-    yield
-    _reset_logging_for_tests()
-    logger.handlers[:] = handlers
-    logger.setLevel(level)
-    logger.propagate = propagate
-    logger.disabled = disabled
+    Session-scoped fixtures run before this function-scoped fixture, so a fixture that
+    invokes the CLI must use ``preserved_gsmap_logging`` itself.
+    """
+    with preserved_gsmap_logging():
+        yield
 
 
 def pytest_addoption(parser):
