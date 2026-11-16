@@ -28,6 +28,10 @@ from gsMap.spatial_ldsc.data.loading import (
 )
 
 
+# Spawned children import torch/JAX/scanpy; this can exceed 10 s on slow filesystems.
+PROCESS_TIMEOUT = 120
+
+
 def _hold_marker_cache_lease(marker_path, cache_dir, metadata, ready, release):
     from gsMap.spatial_ldsc.data import loading as spatial_io
 
@@ -39,7 +43,7 @@ def _hold_marker_cache_lease(marker_path, cache_dir, metadata, ready, release):
         metadata,
     )
     ready.set()
-    release.wait(timeout=10)
+    release.wait(timeout=PROCESS_TIMEOUT)
     marker_lease.close()
 
 
@@ -127,25 +131,27 @@ def test_shared_marker_read_cache_is_retained_across_processes(tmp_path):
 
     try:
         first_process.start()
-        assert first_ready.wait(timeout=10)
+        assert first_ready.wait(timeout=PROCESS_TIMEOUT)
         second_process.start()
-        assert second_ready.wait(timeout=10)
+        assert second_ready.wait(timeout=PROCESS_TIMEOUT)
         cache_files = list((cache_dir / "gsmap_read_cache").glob("*.dat"))
         assert len(cache_files) == 1
 
         first_release.set()
-        first_process.join(timeout=10)
+        first_process.join(timeout=PROCESS_TIMEOUT)
         assert first_process.exitcode == 0
         assert cache_files[0].is_file()
 
         second_release.set()
-        second_process.join(timeout=10)
+        second_process.join(timeout=PROCESS_TIMEOUT)
         assert second_process.exitcode == 0
         assert not cache_files[0].exists()
     finally:
         first_release.set()
         second_release.set()
         for process in (first_process, second_process):
+            if process.pid is None:  # never started because an earlier wait failed
+                continue
             process.join(timeout=2)
             if process.is_alive():
                 process.terminate()
