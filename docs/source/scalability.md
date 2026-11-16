@@ -139,8 +139,8 @@ Ranks and marker scores are stored on disk and read as needed. Use
 disk. Without it, gsMap uses project storage.
 
 1. Choose an existing, writable directory on the fast disk.
-1. Check that it has room for uncompressed arrays and temporary copies.
-1. Keep the project on persistent storage and let synchronization finish.
+2. Check that it has room for uncompressed arrays and temporary copies.
+3. Keep the project on persistent storage and let synchronization finish.
 
 For example, if `/fast-ssd/gsmap` is a directory on your SSD:
 
@@ -180,8 +180,8 @@ can coexist. This is a disk-size estimate, not a peak-RAM estimate.
 ## Tune memory and throughput
 
 1. **Identify the limiting step** in its log.
-1. **Change one setting** on the same input.
-1. **Compare total time and memory**, not just a batch's cells/s.
+2. **Change one setting** on the same input.
+3. **Compare total time and memory**, not just a batch's cells/s.
 
 | Setting                        | Default                         | When to adjust                                                                                                                   |
 | ------------------------------ | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
@@ -307,11 +307,11 @@ Run preprocessing once, then run the trait list together. The same workflow
 works on a workstation; a cluster simply supplies the allocated CPUs or GPUs.
 
 1. **Preprocess once.** Calculate embeddings and GSS.
-1. **Allocate resources.** Run on a compute node, not a login node. Set worker
+2. **Allocate resources.** Run on a compute node, not a login node. Set worker
     counts for the CPUs assigned to the job, not the whole node.
-1. **Run shared multi-trait LDSC.** Use multiple CPU cores or GPUs within one job.
+3. **Run shared multi-trait LDSC.** Use multiple CPU cores or GPUs within one job.
     Do not launch overlapping jobs that write the same trait result files.
-1. **Check completion, then report.** Wait for all traits and any GPU workers to
+4. **Check completion, then report.** Wait for all traits and any GPU workers to
     finish. Generate the combined report once.
 
 ### Example: calculate embeddings and GSS

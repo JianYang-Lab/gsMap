@@ -67,12 +67,12 @@ wget -O example_data/example-traits.tar.gz \
 Each tutorial downloads only its own dataset, then shows how to run gsMap and
 open the report. Continue using this workspace.
 
-| Dataset                         | Tutorial                                                |
-| ------------------------------- | ------------------------------------------------------- |
-| Mouse brain and kidney, Visium  | {doc}`2D Visium <2d_tutorial/10x>`                      |
-| Mouse E16.5 embryo, MOSTA       | {doc}`2D embryo <2d_tutorial/mouse_embryo>`             |
-| Human CS8 embryo, 62 sections   | {doc}`3D gastrulation <3d_tutorial/human_gastrulation>` |
-| Mouse E11.5 embryo, 84 sections | {doc}`E11.5 tutorial <3d_tutorial/mouse_e11>`           |
+| Dataset | Tutorial |
+|---|---|
+| Mouse brain and kidney, Visium | {doc}`2D Visium <2d_tutorial/10x>` |
+| Mouse E16.5 embryo, MOSTA | {doc}`2D embryo <2d_tutorial/mouse_embryo>` |
+| Human CS8 embryo, 62 sections | {doc}`3D gastrulation <3d_tutorial/human_gastrulation>` |
+| Mouse E11.5 embryo, 84 sections | {doc}`E11.5 tutorial <3d_tutorial/mouse_e11>` |
 
 <details>
 <summary>Verify your download</summary>

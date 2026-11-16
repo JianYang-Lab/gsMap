@@ -57,12 +57,12 @@ ______________________________________________________________________
     batch-corrected dual embeddings of molecular and spatial features. These embeddings identify
     homogeneous cells in 2D or 3D space. Gene specificity scores (GSS) are computed by aggregating
     normalized gene expression ranks across these homogeneous cells.
-1. __Linking gene specificity to genetic variants.__ GSS are assigned to SNPs based on their
+2. __Linking gene specificity to genetic variants.__ GSS are assigned to SNPs based on their
     proximity to gene transcription start sites (TSS) and SNP-to-gene epigenetic linking maps.
-1. __Spatial S-LDSC for cell–trait association.__ Stratified LD score regression (S-LDSC) relates
+3. __Spatial S-LDSC for cell–trait association.__ Stratified LD score regression (S-LDSC) relates
     the stratified LD scores of each cell to GWAS summary statistics, estimating the trait relevance
     of individual cells.
-1. __Spatial region–trait association.__ The Cauchy combination test aggregates the p-values of
+4. __Spatial region–trait association.__ The Cauchy combination test aggregates the p-values of
     cells within a spatial region into region-level association statistics.
 
 ![gsMap method schematic](https://raw.githubusercontent.com/JianYang-Lab/gsMap/main/docs/source/_static/gsMap3D_Method_schematic.png)

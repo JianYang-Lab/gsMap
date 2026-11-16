@@ -176,14 +176,14 @@ fraction means the proportion of cells expressing a gene.
 
 1. **Embeddings:** cell embeddings describe expression similarity; optional
     niche embeddings add spatial context.
-1. **Homogeneous neighbors:** choose similar cells subject to spatial and
+2. **Homogeneous neighbors:** choose similar cells subject to spatial and
     optional annotation constraints. Spatial2D stays within each section;
     Spatial3D can also match cells in allowed neighboring sections.
-1. **Gene specificity:** aggregate neighbors' expression ranks using their
+3. **Gene specificity:** aggregate neighbors' expression ranks using their
     similarity weights and compare with the global reference to calculate GSS.
-1. **Spatial LDSC:** combine GSS, SNP × gene weights and GWAS statistics to
+4. **Spatial LDSC:** combine GSS, SNP × gene weights and GWAS statistics to
     test cell–trait associations.
-1. **Group summaries and report:** combine cell-level p-values by annotation
+5. **Group summaries and report:** combine cell-level p-values by annotation
     using the Cauchy test, then explore the spatial maps and enrichment results.
 
 ```{note}
@@ -239,7 +239,7 @@ There are three ways to provide input AnnData (.h5ad) files:
     --h5ad-path data/sample2.h5ad
     ```
 
-1. **YAML Configuration** (`--h5ad-yaml`):
+2. **YAML Configuration** (`--h5ad-yaml`):
     A YAML file where keys are sample names and values are file paths.
 
     ```yaml
@@ -247,7 +247,7 @@ There are three ways to provide input AnnData (.h5ad) files:
     sample2: /path/to/sample2.h5ad
     ```
 
-1. **List File** (`--h5ad-list-file`):
+3. **List File** (`--h5ad-list-file`):
     A text file where each line is a file path. Sample names are derived from filenames.
 
     ```text
@@ -355,7 +355,7 @@ There are two ways to provide GWAS summary statistics:
     --trait-name "IQ" --sumstats-file "example_data/example-traits/IQ.sumstats.gz"
     ```
 
-1. **Multiple Traits** (`--sumstats-config-file`):
+2. **Multiple Traits** (`--sumstats-config-file`):
     Provide a YAML configuration file mapping trait names to file paths.
 
     ```yaml

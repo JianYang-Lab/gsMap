@@ -108,15 +108,15 @@ docker-compose run --rm --entrypoint /bin/bash gsmap
 
 1. **Pin versions**: Consider updating the Dockerfile to use specific versions of dependencies
 
-1. **Document data**: Keep track of input data versions and sources
+2. **Document data**: Keep track of input data versions and sources
 
-1. **Tag images**: Use version tags for your Docker images
+3. **Tag images**: Use version tags for your Docker images
 
     ```bash
     docker build -t gsmap:2.0.0 .
     ```
 
-1. **Save configurations**: Store your command parameters in scripts or configuration files
+4. **Save configurations**: Store your command parameters in scripts or configuration files
 
 ## Multi-platform builds (Optional)
 
