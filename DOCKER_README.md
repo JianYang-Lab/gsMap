@@ -4,14 +4,16 @@ This guide explains how to build and run gsMap using Docker for reproducible ana
 
 ## Quick Start - Using Pre-built Images
 
-The easiest way to use gsMap with Docker is to pull the pre-built image from GitHub Container Registry:
+The easiest way to use gsMap with Docker is to pull the pre-built image from GitHub Container Registry.
+Images are published for stable releases only (pre-releases such as `2.0.0b1` do not update
+Docker tags) and run on the CPU.
 
 ```bash
-# Pull the latest image
+# Pull the latest stable image
 docker pull ghcr.io/jianyang-lab/gsmap:latest
 
 # Or pull a specific version
-docker pull ghcr.io/jianyang-lab/gsmap:v1.0.0
+docker pull ghcr.io/jianyang-lab/gsmap:2.0.0
 
 # Run gsMap
 docker run --rm ghcr.io/jianyang-lab/gsmap:latest --help
@@ -111,7 +113,7 @@ docker-compose run --rm --entrypoint /bin/bash gsmap
 1. **Tag images**: Use version tags for your Docker images
 
     ```bash
-    docker build -t gsmap:v1.0.0 .
+    docker build -t gsmap:2.0.0 .
     ```
 
 1. **Save configurations**: Store your command parameters in scripts or configuration files

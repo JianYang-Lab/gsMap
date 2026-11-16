@@ -2,6 +2,12 @@
 .git
 .gitignore
 
+# Local environments and data
+.venv
+venv
+resources/
+gsmap_workdir/
+
 # Python
 __pycache__
 *.pyc

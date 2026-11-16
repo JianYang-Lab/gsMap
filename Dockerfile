@@ -1,5 +1,5 @@
 FROM python:3.12-slim-trixie
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.10.0 /uv /uvx /bin/
 
 # Set working directory
 WORKDIR /app
@@ -18,11 +18,9 @@ RUN apt-get update && apt-get install -y \
 # Copy the entire project
 COPY . /app/
 
-## Install Python build tools
-#RUN pip install --no-cache-dir --upgrade pip setuptools wheel flit-core
-
-# Install the package and its dependencies using uv
-RUN uv pip install --system --no-cache .
+# CPU image: PyTorch from the CPU wheel index and CPU JAX, so both frameworks
+# share one runtime (a plain install would pull CUDA PyTorch next to CPU JAX).
+RUN uv pip install --system --no-cache --torch-backend=cpu ".[cpu]"
 
 # Set the entrypoint to gsmap command
 ENTRYPOINT ["gsmap"]
