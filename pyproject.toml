@@ -44,6 +44,8 @@ dependencies = [
     "statsmodels >= 0.13.0",
     "psutil >= 5.8.0",
     "typer ~= 0.20.0",
+    # typer 0.20 loses typer.Argument help text with click 8.5 (empty --help descriptions).
+    "click >=8.0, <8.5",
     "einops",
     "distinctipy>=1.3.4",
 ]

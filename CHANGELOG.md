@@ -43,6 +43,8 @@ for the full command and option mapping.
     only they needed (`pyvista`/VTK and `kaleido`), and the unused direct dependencies
     `bitarray`, `zarr` and `xarray` were dropped. Analysis results are unchanged.
 - The Docker image installs CPU PyTorch next to CPU JAX instead of CUDA PyTorch from PyPI.
+- `click` is pinned below 8.5: with the pinned `typer` 0.20, click 8.5 drops the help text of
+    positional arguments from `gsmap COMMAND --help`.
 - The embedding model architecture is written to the debug log instead of standard output.
 - Documentation: new upgrade guide, pre-release installation instructions and a regenerated
     CLI reference.
