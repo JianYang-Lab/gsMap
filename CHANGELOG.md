@@ -47,8 +47,8 @@ for the full command and option mapping.
 - Documentation: new upgrade guide, pre-release installation instructions and a regenerated
     CLI reference.
 - CI and test tooling: resource downloads send an explicit User-Agent (the resource server
-    rejects the default `Python-urllib` agent), and the 3D integration test uses registered
-    XYZ sections.
+    rejects the default `Python-urllib` agent), the 3D integration test uses registered
+    XYZ sections, and the 2D integration fixture no longer leaks CLI logging into later tests.
 
 ## gsMap3D preview releases
 
