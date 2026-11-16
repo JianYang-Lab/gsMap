@@ -12,6 +12,11 @@ Release notes on GitHub are generated from the section that matches each version
 - The upgrade guide lists the gsMap 2.x Python API next to each command.
 - The README is shorter and links to the documentation for installation and upgrade
     details.
+- Interactive reports: the 3D viewer draws its points from typed arrays in one WebGL layer
+    instead of Plotly point traces. Large 3D reports load without long freezes, use less
+    memory, and respond faster to orbiting and to trait, opacity, threshold, point-size and
+    category changes. Views look the same. Existing reports pick this up by re-rendering
+    `index.html`; the data files are unchanged.
 
 ## 2.0.0b1
 

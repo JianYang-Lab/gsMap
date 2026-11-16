@@ -3283,11 +3283,17 @@
                         await this.loadScript(this.spatial3dIndex.base_file);
                         const encoded = window.GSMAP_SPATIAL_3D_BASE;
                         if (!encoded) throw new Error('3D coordinate payload is missing');
+                        const x = this.decodeTypedArray(encoded.x);
+                        const y = this.decodeTypedArray(encoded.y);
+                        const z = this.decodeTypedArray(encoded.z);
+                        // Interleaved once; the point layer uploads it once per WebGL context.
+                        const positions = new Float32Array(x.length * 3);
+                        for (let i = 0; i < x.length; i++) {
+                            positions[i*3] = x[i]; positions[i*3+1] = y[i]; positions[i*3+2] = z[i];
+                        }
                         this.spatial3dBase = {
                             ...encoded,
-                            x: this.decodeTypedArray(encoded.x),
-                            y: this.decodeTypedArray(encoded.y),
-                            z: this.decodeTypedArray(encoded.z),
+                            x, y, z, positions,
                             sample: this.decodeCategoricalPayload(encoded.sample)
                         };
                         this.spatial3dPointSize = Number(encoded.point_size || 1.0);
@@ -3297,7 +3303,9 @@
                             this.loadSpatial3dTrait(this.selectedTrait),
                             this.loadSpatial3dAnnotation(this.selectedAnnotationCategory)
                         ]);
-                        this.$nextTick(() => this.renderSpatial3dViews());
+                        // Let the page paint before building the 3D views.
+                        await this.waitForLayoutPaint();
+                        await this.renderSpatial3dViews({ progressive: true });
                     } catch (error) {
                         this.spatial3dTraitLoading = false;
                         this.spatial3dAnnotationLoading = false;
@@ -3632,71 +3640,131 @@
                     return opacity;
                 },
 
-                buildSpatial3dAssociationTraces(
-                    points, values, marker, hovertemplate, name, q95, thresholdValue, strengthValue
-                ) {
-                    const strength = Math.max(0, Math.min(1, Number(strengthValue) || 0));
-                    const maximumOpacity = Number(marker.opacity) || 1;
-                    // The opacity endpoint must be genuinely opaque, including low-signal spots.
-                    if (maximumOpacity >= 1 || strength <= 0 || values.length === 0) {
-                        return values.length ? [{
-                            type: 'scatter3d', mode: 'markers',
-                            x: points.x, y: points.y, z: points.z,
-                            marker: { ...marker, color: values },
-                            meta: { sourceIndices: points.indices || null },
-                            hovertemplate,
-                            name
-                        }] : [];
+                spatial3dVisibleIndices(count, annotation, annotationName, values = null,
+                    thresholdValue = 0, x = null, y = null, z = null) {
+                    // Source rows drawn in one 3D view: visible categories, then the signal
+                    // cutoff, then finite coordinates. Rows stay in ascending source order.
+                    const visibilityKey = annotation?.codes ? this.annotationVisibilityKey(annotationName) : '';
+                    const visibleCodes = visibilityKey
+                        ? annotation.categories.map(category =>
+                            this.isAnnotationCategoryVisible(category, annotationName))
+                        : null;
+                    const codes = annotation?.codes;
+                    const threshold = Math.max(0, Number(thresholdValue) || 0);
+                    const filterValues = threshold > 0 && values ? values : null;
+                    const kept = new Uint32Array(count);
+                    let n = 0;
+                    for (let i = 0; i < count; i++) {
+                        if (visibleCodes && !visibleCodes[codes[i]]) continue;
+                        if (filterValues) {
+                            const value = filterValues[i];
+                            if (!Number.isFinite(value) || value < threshold) continue;
+                        }
+                        if (x && !(Number.isFinite(x[i]) && Number.isFinite(y[i]) && Number.isFinite(z[i]))) continue;
+                        kept[n++] = i;
                     }
+                    return kept.slice(0, n);
+                },
 
-                    const cmin = Number(marker.cmin) || 0;
-                    const lower = Math.max(cmin, Number(thresholdValue) || 0);
+                spatial3dVisibleBounds(x, y, z, visible) {
+                    if (!visible?.length) return null;
+                    const lower = [Infinity, Infinity, Infinity], upper = [-Infinity, -Infinity, -Infinity];
+                    for (let k = 0; k < visible.length; k++) {
+                        const i = visible[k], p = [x[i], y[i], z[i]];
+                        for (let c = 0; c < 3; c++) {
+                            if (p[c] < lower[c]) lower[c] = p[c];
+                            if (p[c] > upper[c]) upper[c] = p[c];
+                        }
+                    }
+                    return [lower, upper];
+                },
+
+                spatial3dTraitColors(values, visible, colors, cmin, cmax, opacityValue, q95,
+                    thresholdValue, strengthValue, out = null) {
+                    // Per-row RGBA (0-1) for visible rows: Plotly's colorscale (linear RGB
+                    // between evenly spaced stops, clamped, rounded to integer channels) and the
+                    // opacity of the former 8 signal-opacity traces (each bin's mean opacity).
+                    const count = values.length;
+                    const rgba = out?.length === count * 4 ? out : new Float32Array(count * 4);
+                    const stops = (colors?.length ? colors : ['#94a3b8']).map(color => this.colorChannels(color));
+                    const lo = Number(cmin), hi = Number(cmax), last = stops.length - 1;
+                    const domain = stops.map((_, i) => lo + (last > 0 ? i / last : 0) * (hi - lo));
+                    for (let k = 0; k < visible.length; k++) {
+                        const i = visible[k], value = values[i], offset = i * 4;
+                        let rgb;
+                        if (!Number.isFinite(value)) {
+                            rgb = [68, 68, 68]; // Plotly's default line color for non-numeric values
+                        } else if (last === 0 || !(domain[last] > domain[0])) {
+                            rgb = stops[value >= domain[last] ? last : 0];
+                        } else {
+                            const v = Math.min(domain[last], Math.max(domain[0], value));
+                            let segment = 0;
+                            while (segment < last - 1 && v >= domain[segment + 1]) segment++;
+                            const t = (v - domain[segment]) / (domain[segment + 1] - domain[segment]);
+                            const a = stops[segment], b = stops[segment + 1];
+                            rgb = [0, 1, 2].map(c => Math.round(a[c] + (b[c] - a[c]) * t));
+                        }
+                        rgba[offset] = rgb[0] / 255; rgba[offset + 1] = rgb[1] / 255; rgba[offset + 2] = rgb[2] / 255;
+                    }
+                    const opacity = Number(opacityValue);
+                    const strength = Math.max(0, Math.min(1, Number(strengthValue) || 0));
+                    const maximumOpacity = opacity || 1;
+                    if (maximumOpacity >= 1 || strength <= 0 || visible.length === 0) {
+                        for (let k = 0; k < visible.length; k++) rgba[visible[k] * 4 + 3] = opacity;
+                        return { rgba, opaque: opacity >= 1 };
+                    }
+                    const minimumCmin = Number(cmin) || 0;
+                    const lower = Math.max(minimumCmin, Number(thresholdValue) || 0);
                     const minimumOpacity = this.associationOpacityForValue(
-                        lower, cmin, q95, maximumOpacity, strength, thresholdValue
+                        lower, minimumCmin, q95, maximumOpacity, strength, thresholdValue
                     );
                     const opacitySpan = Math.max(Number.EPSILON, maximumOpacity - minimumOpacity);
-                    const binCount = 8;
-                    const bins = Array.from({ length: binCount }, () => []);
-                    const opacitySums = new Float64Array(binCount);
-                    for (let index = 0; index < values.length; index++) {
-                        const opacity = this.associationOpacityForValue(
-                            values[index], cmin, q95, maximumOpacity, strength, thresholdValue
+                    const binCount = 8, bin = new Uint8Array(visible.length);
+                    const sums = new Float64Array(binCount), counts = new Uint32Array(binCount);
+                    for (let k = 0; k < visible.length; k++) {
+                        const value = this.associationOpacityForValue(
+                            values[visible[k]], minimumCmin, q95, maximumOpacity, strength, thresholdValue
                         );
-                        const normalizedOpacity = Math.max(
-                            0, Math.min(1, (opacity - minimumOpacity) / opacitySpan)
-                        );
-                        const bin = Math.min(
-                            binCount - 1, Math.floor(normalizedOpacity * binCount)
-                        );
-                        bins[bin].push(index);
-                        opacitySums[bin] += opacity;
+                        const normalized = Math.max(0, Math.min(1, (value - minimumOpacity) / opacitySpan));
+                        const b = Math.min(binCount - 1, Math.floor(normalized * binCount));
+                        bin[k] = b; sums[b] += value; counts[b]++;
                     }
+                    const means = Array.from(sums, (sum, b) => counts[b] ? sum / counts[b] : 0);
+                    for (let k = 0; k < visible.length; k++) rgba[visible[k] * 4 + 3] = means[bin[k]];
+                    return { rgba, opaque: means.every((mean, b) => !counts[b] || mean >= 1) };
+                },
 
-                    let colorbarAvailable = Boolean(marker.showscale);
-                    const traces = [];
-                    for (let bin = 0; bin < bins.length; bin++) {
-                        const indices = bins[bin];
-                        if (!indices.length) continue;
-                        const showscale = colorbarAvailable;
-                        colorbarAvailable = false;
-                        traces.push({
-                            type: 'scatter3d', mode: 'markers',
-                            x: this.selectPointValues(points.x, indices),
-                            y: this.selectPointValues(points.y, indices),
-                            z: this.selectPointValues(points.z, indices),
-                            marker: {
-                                ...marker,
-                                color: this.selectPointValues(values, indices),
-                                opacity: opacitySums[bin] / indices.length,
-                                showscale
-                            },
-                            hovertemplate,
-                            name,
-                            meta: { sourceIndices: Uint32Array.from(indices, i => points.indices ? points.indices[i] : i) },
-                            showlegend: false
-                        });
+                spatial3dCategoryColors(codes, visible, colors, opacityValue, out = null) {
+                    // A discrete colorscale with half-integer limits maps code k to colors[k];
+                    // codes beyond the last category clamp to it, as Plotly does.
+                    const count = codes.length;
+                    const rgba = out?.length === count * 4 ? out : new Float32Array(count * 4);
+                    const palette = (colors?.length ? colors : ['#94a3b8']).map(color => this.colorChannels(color));
+                    const opacity = Number(opacityValue);
+                    for (let k = 0; k < visible.length; k++) {
+                        const i = visible[k], offset = i * 4;
+                        const rgb = palette[Math.min(palette.length - 1, Math.max(0, Number(codes[i]) || 0))];
+                        rgba[offset] = rgb[0] / 255; rgba[offset + 1] = rgb[1] / 255; rgba[offset + 2] = rgb[2] / 255;
+                        rgba[offset + 3] = opacity;
                     }
-                    return traces;
+                    return { rgba, opaque: opacity >= 1 };
+                },
+
+                spatial3dProxyTraces(bounds, marker, name) {
+                    // Plotly only needs the visible extent (autorange, aspect, axes) and the
+                    // marker settings (colorbar). The points themselves are drawn by our layer.
+                    if (!bounds) return [];
+                    const color = Number.isFinite(Number(marker.cmin)) ? Number(marker.cmin) : 0;
+                    return [{
+                        type: 'scatter3d', mode: 'markers',
+                        x: [bounds[0][0], bounds[1][0]],
+                        y: [bounds[0][1], bounds[1][1]],
+                        z: [bounds[0][2], bounds[1][2]],
+                        marker: { ...marker, color: [color, color] },
+                        hoverinfo: 'skip',
+                        showlegend: false,
+                        name
+                    }];
                 },
 
                 filterCategoricalPlotPoints(x, y, z, schema, annotationName) {
@@ -3799,6 +3867,21 @@
                     };
                 },
 
+                spatial3dReact(plot, traces, layout) {
+                    // Points, colours and opacity live in the point layer. Plotly only needs to
+                    // rebuild its scene when the proxy extent, colorbar or layout change; the
+                    // proxy's opacity is never drawn, and the camera is the plot's own.
+                    const { camera, ...scene } = layout.scene || {};
+                    const signature = JSON.stringify([
+                        traces.map(trace => ({ ...trace, marker: { ...trace.marker, opacity: undefined } })),
+                        { ...layout, scene }
+                    ]);
+                    if (plot.__gsMap3dSignature === signature && plot._fullLayout?.scene?._scene &&
+                        plot.data?.length === traces.length) return Promise.resolve();
+                    plot.__gsMap3dSignature = signature;
+                    return Plotly.react(plot, traces, layout, { ...this.getPlotlyConfig(true), scrollZoom: true });
+                },
+
                 spatial3dLayout(plot = null) {
                     const camera = plot?._fullLayout?.scene?.camera || this.fittedSpatial3dCamera();
                     return {
@@ -3812,27 +3895,93 @@
                     };
                 },
 
-                spatial3dDepthOrder(positions, camera, cached = null) {
+                spatial3dDepthOrder(positions, camera, cached = null, visible = null, scale = null) {
                     // Camera-space Z is affine. Translation/zoom does not change ordering.
-                    const v = camera.view, m = camera.model;
+                    // Rows are ordered far to near by Float64 depth, ties by input order, using a
+                    // stable radix sort on Float32 keys plus an exact pass over equal keys.
+                    const v = camera.view, m = camera.model, s = scale || [1, 1, 1];
                     const direction = [0, 1, 2].map(c =>
-                        v[2]*m[c*4] + v[6]*m[c*4+1] + v[10]*m[c*4+2]);
+                        (v[2]*m[c*4] + v[6]*m[c*4+1] + v[10]*m[c*4+2]) * s[c]);
                     const signature = direction.join(',');
-                    if (cached?.signature === signature && cached.positions === positions) return cached;
-                    const count = positions.length / 3;
-                    const order = cached?.order.length===count ? cached.order : Uint32Array.from({length:count}, (_,i) => i);
-                    const depth = cached?.depth.length===count ? cached.depth : new Float64Array(count);
-                    for (let i=0; i<count; i++) depth[i] = direction[0]*positions[i*3] +
-                        direction[1]*positions[i*3+1] + direction[2]*positions[i*3+2];
-                    // More negative camera Z is farther away. Sort across ALL opacity bins.
-                    order.sort((a,b) => depth[a]-depth[b] || a-b);
-                    return {signature, order, depth, positions};
+                    if (cached?.signature === signature && cached.positions === positions &&
+                        cached.visible === visible) return cached;
+                    const count = visible ? visible.length : positions.length / 3;
+                    const reuse = cached?.order?.length === count;
+                    const order = reuse ? cached.order : new Uint32Array(count);
+                    const depth = reuse ? cached.depth : new Float64Array(count);
+                    const keyFloats = reuse ? cached.keyFloats : new Float32Array(count);
+                    const rank = reuse ? cached.rank : new Uint32Array(count);
+                    const scratch = reuse ? cached.scratch : new Uint32Array(count);
+                    const histogram = cached?.histogram || new Uint32Array(65536);
+                    const keys = new Uint32Array(keyFloats.buffer);
+                    const [d0, d1, d2] = direction;
+                    for (let k = 0; k < count; k++) {
+                        const i = visible ? visible[k] : k;
+                        depth[k] = d0*positions[i*3] + d1*positions[i*3+1] + d2*positions[i*3+2] + 0;
+                        keyFloats[k] = depth[k];
+                        const bits = keys[k];
+                        keys[k] = bits & 0x80000000 ? ~bits >>> 0 : (bits | 0x80000000) >>> 0;
+                    }
+                    // Two stable 16-bit passes: low half into scratch, then high half into rank.
+                    for (const [shift, source, target] of [[0, null, scratch], [16, scratch, rank]]) {
+                        histogram.fill(0);
+                        for (let k = 0; k < count; k++) {
+                            const row = source ? source[k] : k;
+                            histogram[(keys[row] >>> shift) & 0xffff]++;
+                        }
+                        let total = 0;
+                        for (let b = 0; b < 65536; b++) { const n = histogram[b]; histogram[b] = total; total += n; }
+                        for (let k = 0; k < count; k++) {
+                            const row = source ? source[k] : k;
+                            target[histogram[(keys[row] >>> shift) & 0xffff]++] = row;
+                        }
+                    }
+                    // Equal Float32 keys can hide Float64 differences: order them exactly.
+                    for (let start = 0; start < count;) {
+                        let end = start + 1;
+                        while (end < count && keys[rank[end]] === keys[rank[start]]) end++;
+                        for (let a = start + 1; a < end; a++) {
+                            const row = rank[a];
+                            let b = a - 1;
+                            while (b >= start && (depth[rank[b]] > depth[row] ||
+                                (depth[rank[b]] === depth[row] && rank[b] > row))) {
+                                rank[b + 1] = rank[b]; b--;
+                            }
+                            rank[b + 1] = row;
+                        }
+                        start = end;
+                    }
+                    for (let k = 0; k < count; k++) order[k] = visible ? visible[rank[k]] : rank[k];
+                    // A global version tells every layer sharing this order to re-upload it.
+                    const version = globalThis.__gsMapDepthOrderVersion = (globalThis.__gsMapDepthOrderVersion || 0) + 1;
+                    return {signature, version, order, depth, positions, visible, keyFloats, rank, scratch, histogram};
                 },
 
-                createSpatial3dPointLayer(renderer, sources) {
-                    // Keep Plotly axes, cameras, colorbars and data/hover identities. Replace
-                    // only the point draw calls with one globally depth-sorted point layer.
-                    // One vertex per spot keeps orbit updates to a small index-buffer upload.
+                spatial3dSharedDepthOrder(state, camera, dataScale) {
+                    // Compare mode draws the same rows in two plots whose cameras are synced a
+                    // frame apart. Keep the last two orders per geometry, keyed by the view
+                    // direction (7 significant digits), so the trailing plot reuses the order the
+                    // leading plot computed. Evicted entries donate their buffers.
+                    const cache = state.positions.__gsMapDepthOrders ||= [];
+                    const v = camera.view, m = camera.model;
+                    const key = [0, 1, 2].map(c =>
+                        ((v[2]*m[c*4] + v[6]*m[c*4+1] + v[10]*m[c*4+2]) * dataScale[c]).toPrecision(7)).join(',');
+                    let entry = cache.find(item => item.key === key && item.order.visible === state.visible);
+                    if (!entry) {
+                        const recycled = cache.length >= 2 ? cache.shift() : null;
+                        const order = this.spatial3dDepthOrder(
+                            state.positions, camera, recycled?.order || null, state.visible, dataScale
+                        );
+                        entry = { key, order };
+                        cache.push(entry);
+                    }
+                    return entry.order;
+                },
+
+                createSpatial3dPointLayer(renderer, scene) {
+                    // Keep Plotly axes, cameras, colorbars and the scene lifecycle. Draw all
+                    // points in one globally depth-sorted layer fed directly from typed arrays:
+                    // positions upload once; color, visibility and size changes are buffer updates.
                     const gl = renderer.gl;
                     const vaoExtension = gl.getExtension('OES_vertex_array_object');
                     if (!gl.getExtension('OES_element_index_uint') || !vaoExtension) {
@@ -3857,15 +4006,15 @@
                             precision highp float;
                             attribute vec3 position;
                             attribute vec4 color;
-                            attribute float diameter;
                             uniform mat4 model, view, projection;
-                            uniform vec3 lower, upper;
-                            uniform float pixelRatio;
+                            uniform vec3 lower, upper, dataScale;
+                            uniform float pixelRatio, diameter;
                             varying vec4 rgba;
                             varying float pointDiameter;
                             void main() {
-                                bool clipped=diameter<=0. || color.a<=0. || any(lessThan(position,lower)) || any(greaterThan(position,upper));
-                                gl_Position=clipped ? vec4(2.,2.,2.,1.) : projection*view*model*vec4(position,1.);
+                                vec3 scaled=position*dataScale;
+                                bool clipped=diameter<=0. || color.a<=0. || any(lessThan(scaled,lower)) || any(greaterThan(scaled,upper));
+                                gl_Position=clipped ? vec4(2.,2.,2.,1.) : projection*view*model*vec4(scaled,1.);
                                 pointDiameter=diameter*pixelRatio;
                                 gl_PointSize=clipped ? 0. : pointDiameter;
                                 rgba=color;
@@ -3887,66 +4036,82 @@
                         program=gl.createProgram();gl.attachShader(program,vertex);gl.attachShader(program,fragment);
                         gl.linkProgram(program);
                         if(!gl.getProgramParameter(program,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
-                        const count=sources.reduce((n,s)=>n+s.points.length,0);
-                        const positions=new Float32Array(count*3), colors=new Float32Array(count*4), sizes=new Float32Array(count);
-                        const colorCache=new Map();let offset=0, opaque=true;
-                        // Plotly's native objects alone own autorange. A custom layer must
-                        // not contribute stale bounds while Plotly is updating filtered data.
-                        const bounds=[[Infinity,Infinity,Infinity],[-Infinity,-Infinity,-Infinity]];
-                        for(const source of sources) {
-                            const marker=source.object._trace.data.marker;
-                            const size=Number(marker.size)*3;
-                            for(let i=0;i<source.points.length;i++,offset++) {
-                                const p=source.points[i], finite=p.every(Number.isFinite);
-                                for(let k=0;k<3;k++) {
-                                    positions[offset*3+k]=finite ? p[k]:0;
-                                }
-                                const css=Array.isArray(source.colors) ? source.colors[i]:source.colors;
-                                let rgb=colorCache.get(css);
-                                if(!rgb) {rgb=this.colorChannels(css);colorCache.set(css,rgb);}
-                                for(let k=0;k<3;k++)colors[offset*4+k]=rgb[k]/255;
-                                colors[offset*4+3]=finite ? source.opacity:0;
-                                sizes[offset]=finite ? size:0;
-                            }
-                            opaque=opaque && source.opacity>=1;
-                        }
+                        const buffer = () => { const b = gl.createBuffer(); buffers.push(b); return b; };
+                        const positionBuffer = buffer(), colorBuffer = buffer(), indexBuffer = buffer();
                         vao=vaoExtension.createVertexArrayOES();vaoExtension.bindVertexArrayOES(vao);
-                        const attribute=(name,array,width) => {
-                            const buffer=gl.createBuffer();buffers.push(buffer);
-                            gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,array,gl.STATIC_DRAW);
+                        for (const [name, target, width] of [['position', positionBuffer, 3], ['color', colorBuffer, 4]]) {
+                            gl.bindBuffer(gl.ARRAY_BUFFER,target);
                             const location=gl.getAttribLocation(program,name);gl.enableVertexAttribArray(location);
                             gl.vertexAttribPointer(location,width,gl.FLOAT,false,0,0);
-                        };
-                        attribute('position',positions,3);attribute('color',colors,4);attribute('diameter',sizes,1);
-                        const indices=gl.createBuffer();buffers.push(indices);
-                        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,indices);
-                        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,Uint32Array.from({length:count},(_,i)=>i),gl.DYNAMIC_DRAW);
+                        }
+                        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,indexBuffer);
                         vaoExtension.bindVertexArrayOES(null);
-                        const uniforms=Object.fromEntries(['model','view','projection','lower','upper','pixelRatio','opaque']
-                            .map(name=>[name,gl.getUniformLocation(program,name)]));
-                        let sorted=null, disposed=false;
-                        const layer={
-                            __gsMapPointLayer:true, sources, bounds, dirty:true, pickSlots:0,
-                            _trace:sources[0].object._trace, pointCount:count,
-                            isOpaque:()=>opaque, isTransparent:()=>!opaque,
+                        const uniforms=Object.fromEntries(['model','view','projection','lower','upper','dataScale',
+                            'pixelRatio','diameter','opaque'].map(name=>[name,gl.getUniformLocation(program,name)]));
+                        const state = {positions:null, colors:null, colorsVersion:-1, colorLength:0, visible:null,
+                            count:0, opaque:true, diameter:0, sorted:null, sortedVersion:0};
+                        let disposed = false;
+                        const layer = {
+                            // Our own bounds never drive Plotly's autorange; the proxy traces do.
+                            __gsMapPointLayer:true, bounds:[[Infinity,Infinity,Infinity],[-Infinity,-Infinity,-Infinity]],
+                            dirty:true, pickSlots:0, _trace:null, state,
+                            get pointCount() { return state.count; },
+                            isOpaque:()=>state.opaque, isTransparent:()=>!state.opaque,
                             draw:camera=>draw(camera), drawTransparent:camera=>draw(camera),
-                            dispose:()=>{if(!disposed){disposed=true;dispose();}}
+                            dispose:()=>{if(!disposed){disposed=true;dispose();}},
+                            update:points=>{
+                                if (disposed) return false;
+                                let changed = false;
+                                vaoExtension.bindVertexArrayOES(vao);
+                                if (points.positions !== state.positions) {
+                                    gl.bindBuffer(gl.ARRAY_BUFFER,positionBuffer);
+                                    gl.bufferData(gl.ARRAY_BUFFER,points.positions,gl.STATIC_DRAW);
+                                    state.positions = points.positions; state.sorted = null; state.sortedVersion = 0; changed = true;
+                                }
+                                if (points.colors !== state.colors || points.colorsVersion !== state.colorsVersion) {
+                                    gl.bindBuffer(gl.ARRAY_BUFFER,colorBuffer);
+                                    if (points.colors.length === state.colorLength) gl.bufferSubData(gl.ARRAY_BUFFER,0,points.colors);
+                                    else gl.bufferData(gl.ARRAY_BUFFER,points.colors,gl.DYNAMIC_DRAW);
+                                    state.colors = points.colors; state.colorsVersion = points.colorsVersion;
+                                    state.colorLength = points.colors.length; changed = true;
+                                }
+                                if (points.visible !== state.visible) {
+                                    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,indexBuffer);
+                                    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,points.visible,gl.DYNAMIC_DRAW);
+                                    state.visible = points.visible; state.count = points.visible.length;
+                                    state.sorted = null; state.sortedVersion = 0; changed = true;
+                                }
+                                vaoExtension.bindVertexArrayOES(null);
+                                const diameter = Number(points.size) * 3;
+                                if (diameter !== state.diameter || Boolean(points.opaque) !== state.opaque) changed = true;
+                                state.diameter = diameter; state.opaque = Boolean(points.opaque);
+                                return changed;
+                            }
                         };
                         const draw=camera => {
-                            if(disposed || !count)return;
+                            if(disposed || !state.count)return;
+                            const dataScale = scene?.dataScale || [1,1,1];
                             vaoExtension.bindVertexArrayOES(vao);
-                            if(!opaque) {
-                                const next=this.spatial3dDepthOrder(positions,camera,sorted);
-                                if(next!==sorted) {
-                                    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,indices);
-                                    gl.bufferSubData(gl.ELEMENT_ARRAY_BUFFER,0,next.order);sorted=next;
+                            if(!state.opaque) {
+                                const next=this.spatial3dSharedDepthOrder(state,camera,dataScale);
+                                if(next.version!==state.sortedVersion) {
+                                    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,indexBuffer);
+                                    gl.bufferSubData(gl.ELEMENT_ARRAY_BUFFER,0,next.order);
+                                    state.sorted=next;state.sortedVersion=next.version;
                                 }
+                            } else if (state.sorted) {
+                                // Opaque points need no ordering: restore the source-order rows.
+                                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,indexBuffer);
+                                gl.bufferSubData(gl.ELEMENT_ARRAY_BUFFER,0,state.visible);
+                                state.sorted=null;state.sortedVersion=0;
                             }
                             gl.useProgram(program);
                             for(const name of ['model','view','projection']) gl.uniformMatrix4fv(uniforms[name],false,camera[name]);
                             gl.uniform3fv(uniforms.lower,renderer.bounds[0]);gl.uniform3fv(uniforms.upper,renderer.bounds[1]);
-                            gl.uniform1f(uniforms.pixelRatio,renderer.pixelRatio || 1);gl.uniform1f(uniforms.opaque,opaque?1:0);
-                            gl.drawElements(gl.POINTS,count,gl.UNSIGNED_INT,0);
+                            gl.uniform3fv(uniforms.dataScale,dataScale);
+                            gl.uniform1f(uniforms.pixelRatio,renderer.pixelRatio || 1);gl.uniform1f(uniforms.diameter,state.diameter);
+                            gl.uniform1f(uniforms.opaque,state.opaque?1:0);
+                            gl.drawElements(gl.POINTS,state.count,gl.UNSIGNED_INT,0);
                             vaoExtension.bindVertexArrayOES(null);
                         };
                         return layer;
@@ -3960,26 +4125,35 @@
                     // Plotly can recreate its WebGL scene on a projection-type change
                     // without repopulating traces. Rebuild from resolved data in that case.
                     const data=(plot._fullData || []).filter(t=>t.scene==='scene' && t.visible===true && t._length>0);
-                    if(!renderer.objects.length && data.length) {
+                    if(!renderer.objects.filter(o=>!o.__gsMapPointLayer).length && data.length) {
                         scene.plot(data,plot._fullLayout,plot.layout);
                         renderer=scene.glplot;
                     }
-                    const sources=renderer.objects.filter(o=>!o.__gsMapPointLayer && o._trace?.scatterPlot===o)
-                        .map(object=>({object,points:object._trace.dataPoints,colors:object._trace.color,
-                            opacity:object.opacity,size:object._trace.data.marker.size}));
-                    const previous=renderer.__gsMapPointLayer;
-                    const same=previous && previous.sources.length===sources.length && previous.sources.every((s,i)=>
-                        ['object','points','colors','opacity','size'].every(key=>s[key]===sources[i][key]));
-                    if(same)return;
-                    if(previous) {renderer.remove(previous);previous.dispose();delete renderer.__gsMapPointLayer;}
-                    if(!sources.length)return;
-                    const layer=this.createSpatial3dPointLayer(renderer,sources);
-                    for(const {object} of sources) {
-                        // Native objects still own Plotly's data, bounds and update lifecycle.
-                        // GPU hover picking is disabled; CPU picking retains source-row IDs.
+                    const natives=renderer.objects.filter(o=>!o.__gsMapPointLayer);
+                    let reallocatePicking=false;
+                    for(const object of natives) {
+                        // Native objects carry the extent and colorbar only; never draw them.
+                        // CPU picking returns source rows, so no GPU pick buffers (and no
+                        // per-frame readPixels) are needed: release their pick slots.
                         object.isOpaque=()=>false;object.isTransparent=()=>false;object.drawPick=()=>{};
+                        if(object.pickSlots) {object.pickSlots=0;reallocatePicking=true;}
                     }
-                    renderer.__gsMapPointLayer=layer;renderer.add(layer);renderer.redraw();
+                    const points=plot.__gsMap3dPoints;
+                    let layer=renderer.__gsMapPointLayer;
+                    if(!points || !data.length) {
+                        if(layer) {renderer.remove(layer);layer.dispose();delete renderer.__gsMapPointLayer;renderer.redraw();}
+                        return;
+                    }
+                    if(!layer) {
+                        layer=this.createSpatial3dPointLayer(renderer,scene);
+                        renderer.__gsMapPointLayer=layer;renderer.add(layer);
+                    } else if(reallocatePicking) {
+                        // Plotly assigns pick buffers when objects are added; re-adding our
+                        // layer makes it recount slots and drop the now-unused buffers.
+                        renderer.remove(layer);renderer.add(layer);
+                    }
+                    layer._trace=natives[0]?._trace || null;
+                    if(layer.update(points)) renderer.redraw();
                 },
 
                 spatial3dHoverIndex(plot) {
@@ -3992,14 +4166,15 @@
                         delete plot.__gsMapSpatial3dHoverIndex;
                         return null;
                     }
+                    const points = plot.__gsMap3dPoints;
+                    if (!points) return null;
                     const box = canvas.getBoundingClientRect();
                     if (!(box.width > 0 && box.height > 0)) return null;
-                    const traces = plot.data || [], old = plot.__gsMapSpatial3dHoverIndex;
+                    const old = plot.__gsMapSpatial3dHoverIndex;
                     const signature = [box.width, box.height, ...params.model, ...params.view,
-                        ...params.projection, ...scene.dataScale, ...traces.map(t =>
-                            [t.visible, t.opacity, t.marker?.opacity, t.marker?.size].join(':'))].join(',');
-                    if (old?.signature === signature && old.traces.length === traces.length &&
-                        old.traces.every((t, i) => t === traces[i])) return old;
+                        ...params.projection, ...scene.dataScale, points.size, points.opacity].join(',');
+                    if (old?.signature === signature && old.points === points &&
+                        old.visible === points.visible) return old;
                     const multiply = (a, b) => {
                         const out = new Float64Array(16);
                         for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) {
@@ -4010,39 +4185,34 @@
                     const m = multiply(params.projection, multiply(params.view, params.model));
                     const cell = 8, width = box.width, height = box.height;
                     const columns = Math.ceil(width / cell) + 1, rows = Math.ceil(height / cell) + 1;
-                    const count = traces.reduce((n, t) => n + (t.x?.length || 0), 0);
+                    // Our 3D points are screen-facing circles of ~3 * marker.size CSS-pixel
+                    // diameter in both camera projections (independent of device pixel ratio).
+                    const radius = Math.max(0, Number(points.size ?? 6)) * 1.5;
+                    const shown = radius > 0 && Number(points.opacity) > 0;
+                    const visible = points.visible;
+                    const count = shown ? visible.length : 0;
                     const heads = new Int32Array(columns * rows).fill(-1), next = new Int32Array(count);
                     const px = new Float32Array(count), py = new Float32Array(count);
                     // Thin sections can differ by less than Float32 precision after projection.
                     const depth = new Float64Array(count), curve = new Uint32Array(count), point = new Uint32Array(count);
-                    // Our 3D traces use scalar-size circles. Bundled Plotly scatter3d draws
-                    // these screen-facing glyphs at ~3 * marker.size CSS-pixel diameter,
-                    // in both camera projections (independent of device pixel ratio).
-                    const radii = traces.map(t => Math.max(0, Number(t.marker?.size ?? 6)) * 1.5);
-                    const maxRadius = Math.max(0, ...radii);
-                    let offset = 0;
-                    traces.forEach((trace, c) => {
-                        for (let j = 0; j < (trace.x?.length || 0); j++, offset++) {
-                            if (trace.visible === false || trace.visible === 'legendonly' ||
-                                trace.opacity === 0 || trace.marker?.opacity === 0 || !(radii[c] > 0)) continue;
-                            const x = trace.x[j]*scene.dataScale[0], y = trace.y[j]*scene.dataScale[1],
-                                z = trace.z[j]*scene.dataScale[2];
-                            if (!Number.isFinite(x+y+z) || [x,y,z].some((v,k) =>
-                                v < gl.bounds[0][k] || v > gl.bounds[1][k])) continue;
-                            const w = m[3]*x + m[7]*y + m[11]*z + m[15];
-                            if (!(w > 0)) continue;
-                            const sx = ((m[0]*x + m[4]*y + m[8]*z + m[12])/w + 1)*width/2;
-                            const sy = (1 - (m[1]*x + m[5]*y + m[9]*z + m[13])/w)*height/2;
-                            const sz = (m[2]*x + m[6]*y + m[10]*z + m[14])/w;
-                            if (sx < 0 || sy < 0 || sx > width || sy > height || sz < -1 || sz > 1) continue;
-                            px[offset] = sx; py[offset] = sy; depth[offset] = sz;
-                            curve[offset] = c; point[offset] = j;
-                            const bucket = Math.floor(sy/cell)*columns + Math.floor(sx/cell);
-                            next[offset] = heads[bucket]; heads[bucket] = offset;
-                        }
-                    });
-                    const index = {signature, traces: [...traces], cell, width, height, columns, rows,
-                        heads, next, px, py, depth, curve, point, radii, maxRadius};
+                    const [sx0, sy0, sz0] = scene.dataScale;
+                    for (let k = 0; k < count; k++) {
+                        const j = visible[k];
+                        const x = points.x[j]*sx0, y = points.y[j]*sy0, z = points.z[j]*sz0;
+                        if (!Number.isFinite(x+y+z) || [x,y,z].some((v,c) =>
+                            v < gl.bounds[0][c] || v > gl.bounds[1][c])) continue;
+                        const w = m[3]*x + m[7]*y + m[11]*z + m[15];
+                        if (!(w > 0)) continue;
+                        const sx = ((m[0]*x + m[4]*y + m[8]*z + m[12])/w + 1)*width/2;
+                        const sy = (1 - (m[1]*x + m[5]*y + m[9]*z + m[13])/w)*height/2;
+                        const sz = (m[2]*x + m[6]*y + m[10]*z + m[14])/w;
+                        if (sx < 0 || sy < 0 || sx > width || sy > height || sz < -1 || sz > 1) continue;
+                        px[k] = sx; py[k] = sy; depth[k] = sz; point[k] = j;
+                        const bucket = Math.floor(sy/cell)*columns + Math.floor(sx/cell);
+                        next[k] = heads[bucket]; heads[bucket] = k;
+                    }
+                    const index = {signature, points, visible, cell, width, height, columns, rows,
+                        heads, next, px, py, depth, curve, point, radii: [radius], maxRadius: radius};
                     plot.__gsMapSpatial3dHoverIndex = index;
                     return index;
                 },
@@ -4078,26 +4248,23 @@
                     return nearby < 0 ? -1 : frontAt(index.px[nearby], index.py[nearby]);
                 },
 
-                setSpatial3dHoverContexts(plot, traces, points, annotation, colors = null, feature = null) {
+                setSpatial3dHoverContexts(plot, points, annotation, colors = null, feature = null) {
+                    // One context per plot; tooltips address source rows directly.
                     const prefix = `spatial3d\u001f${plot.id}\u001f`;
                     this.clearPointHoverContexts(prefix);
-                    traces.forEach((trace, i) => {
-                        const indices = feature ? trace.meta?.sourceIndices : points.indices;
-                        const key = this.setPointHoverContext(`${prefix}${i}`, {
-                            hoverKind: feature ? 'trait' : 'annotation',
-                            indices,
-                            compactAnnotations: annotation ? {[this.selectedAnnotationCategory]: annotation.codes} : {},
-                            annotationSchemas: annotation ? {[this.selectedAnnotationCategory]: annotation} : {},
-                            annotation,
-                            colorMap: colors,
-                            cmin: feature?.cmin,
-                            cmax: feature?.cmax,
-                            axisTitles: this.spatial3dCoordinateInfo?.axis_titles || ['X','Y','Z']
-                        });
-                        trace.meta = {hoverContextKey: key};
-                        trace.hoverinfo = 'skip';
-                        delete trace.hovertemplate;
+                    points.hoverContextKey = this.setPointHoverContext(`${prefix}0`, {
+                        hoverKind: feature ? 'trait' : 'annotation',
+                        indices: null,
+                        compactAnnotations: annotation ? {[this.selectedAnnotationCategory]: annotation.codes} : {},
+                        annotationSchemas: annotation ? {[this.selectedAnnotationCategory]: annotation} : {},
+                        annotation,
+                        colorMap: colors,
+                        cmin: feature?.cmin,
+                        cmax: feature?.cmax,
+                        axisTitles: this.spatial3dCoordinateInfo?.axis_titles || ['X','Y','Z']
                     });
+                    points.hoverValues = feature ? feature.values : null;
+                    return points.hoverContextKey;
                 },
 
                 bindSpatial3dHover(plot) {
@@ -4140,12 +4307,13 @@
                             const index = this.spatial3dHoverIndex(plot);
                             const hit = this.findSpatial3dHoverPoint(index, e.clientX-box.left, e.clientY-box.top);
                             if (hit < 0) { hide(); return; }
-                            const trace = plot.data[index.curve[hit]], pointNumber = index.point[hit];
-                            const key = trace.meta?.hoverContextKey;
+                            const points = plot.__gsMap3dPoints, source = index.point[hit];
+                            const key = points?.hoverContextKey;
                             if (!key || !this._pointHoverContexts[key]) { hide(); return; }
                             this._pointHoverOwner = plot;
-                            this.showPointHoverTooltip({event:e,points:[{data:trace,pointNumber,
-                                x:trace.x[pointNumber],y:trace.y[pointNumber],z:trace.z[pointNumber]}]});
+                            this.showPointHoverTooltip({event:e,points:[{
+                                data:{meta:{hoverContextKey:key},marker:{color:points.hoverValues}},
+                                pointNumber:source,x:points.x[source],y:points.y[source],z:points.z[source]}]});
                         });
                     });
                     for (const name of ['pointerleave','pointercancel','pointerdown']) plot.addEventListener(name,cancel);
@@ -4157,6 +4325,32 @@
                     plot.on('plotly_relayout',cancel);
                 },
 
+                spatial3dSharedRows(plot, visible) {
+                    // Reuse the other 3D plot's row array when it holds the same rows, so both
+                    // plots can share one depth order while orbiting in compare mode.
+                    const otherId = plot.id === 'spatial3dPlotTrait' ? 'spatial3dPlotAnnotation' : 'spatial3dPlotTrait';
+                    for (const candidate of [plot.__gsMap3dPoints?.visible,
+                        document.getElementById(otherId)?.__gsMap3dPoints?.visible]) {
+                        if (!candidate || candidate.length !== visible.length) continue;
+                        let same = true;
+                        for (let k = 0; k < visible.length; k++) {
+                            if (candidate[k] !== visible[k]) { same = false; break; }
+                        }
+                        if (same) return candidate;
+                    }
+                    return visible;
+                },
+
+                spatial3dPointSet(plot, base, visible, colors, opaque, size, opacity) {
+                    // Per-plot draw state lives on the plot element (not in reactive data).
+                    const previous = plot.__gsMap3dPoints;
+                    return {
+                        x: base.x, y: base.y, z: base.z, positions: base.positions,
+                        visible: this.spatial3dSharedRows(plot, visible), colors, opaque, size, opacity,
+                        colorsVersion: (previous?.colorsVersion || 0) + 1
+                    };
+                },
+
                 renderSpatial3dTrait() {
                     const plot = document.getElementById('spatial3dPlotTrait');
                     const base = this.spatial3dBase;
@@ -4164,45 +4358,35 @@
                     if (!plot || !base || !feature || !this.plotlyReady) return;
                     const annotationName = this.selectedAnnotationCategory;
                     const annotation = this.spatial3dAnnotationCache?.[annotationName];
-                    const points = annotation
-                        ? this.filterCategoricalPlotPoints(
-                            base.x, base.y, base.z, annotation, annotationName
-                        )
-                        : { x: base.x, y: base.y, z: base.z, indices: null };
-                    const traitValues = this.selectPointValues(feature.values, points.indices);
                     const threshold = this.spatial3dAssociationMinLogP;
-                    const emphasis = this.spatial3dAssociationOpacityStrength;
-                    const associationPoints = this.filterAssociationPlotPoints(
-                        points, traitValues, threshold
+                    const visible = this.spatial3dVisibleIndices(
+                        base.x.length, annotation, annotationName, feature.values, threshold,
+                        base.x, base.y, base.z
                     );
                     const colors = this.spatial3dIndex?.colorscale || ['#313695', '#4575b4', '#74add1', '#fee090', '#fdae61', '#f46d43', '#d73027', '#a50026'];
+                    const opacity = Number(this.spatial3dOpacity);
+                    const { rgba, opaque } = this.spatial3dTraitColors(
+                        feature.values, visible, colors, feature.cmin, feature.cmax, opacity,
+                        feature.q95, threshold, this.spatial3dAssociationOpacityStrength,
+                        plot.__gsMap3dPoints?.colors
+                    );
+                    const size = Number(this.spatial3dPointSize);
                     const marker = {
-                        size: Number(this.spatial3dPointSize),
+                        size,
                         colorscale: colors.map((color, index) => [index / (colors.length - 1), color]),
                         cmin: feature.cmin,
                         cmax: feature.cmax,
-                        opacity: Number(this.spatial3dOpacity),
+                        opacity,
                         showscale: true,
                         colorbar: { title: { text: '−log10(P)', side: 'top' }, thickness: 14, len: 0.62 }
                     };
-                    const traces = this.buildSpatial3dAssociationTraces(
-                        associationPoints,
-                        associationPoints.values,
-                        marker,
-                        '<b>Association</b><br>−log10(P): %{marker.color:.2f}' +
-                            '<br>X: %{x:.2f}<br>Y: %{y:.2f}<br>Z: %{z:.2f}<extra></extra>',
-                        this.selectedTrait,
-                        feature.q95,
-                        threshold,
-                        emphasis
+                    const points = this.spatial3dPointSet(plot, base, visible, rgba, opaque, size, opacity);
+                    this.setSpatial3dHoverContexts(plot, points, annotation, colors, feature);
+                    plot.__gsMap3dPoints = points;
+                    const traces = this.spatial3dProxyTraces(
+                        this.spatial3dVisibleBounds(base.x, base.y, base.z, visible), marker, this.selectedTrait
                     );
-                    this.setSpatial3dHoverContexts(plot, traces, associationPoints, annotation, colors, feature);
-                    const rendered = Plotly.react(
-                        plot,
-                        traces,
-                        this.spatial3dLayout(plot),
-                        { ...this.getPlotlyConfig(true), scrollZoom: true }
-                    );
+                    const rendered = this.spatial3dReact(plot, traces, this.spatial3dLayout(plot));
                     return Promise.resolve(rendered).then(() => {
                         this.bindSpatial3dHover(plot);
                         this.bindSpatial3dCameraSync('spatial3dPlotTrait', 'spatial3dPlotAnnotation');
@@ -4215,62 +4399,64 @@
                     const feature = this.spatial3dAnnotationData;
                     if (!plot || !base || !feature || !this.plotlyReady) return;
                     const tickValues = feature.categories.map((_, index) => index);
-                    let points = this.filterCategoricalPlotPoints(
-                        base.x,
-                        base.y,
-                        base.z,
-                        feature,
+                    const traitFeature = this.spatial3dTraitData;
+                    const compareThreshold = this.spatial3dViewMode === 'compare' && traitFeature;
+                    const visible = this.spatial3dVisibleIndices(
+                        base.x.length, feature, this.selectedAnnotationCategory,
+                        compareThreshold ? traitFeature.values : null,
+                        compareThreshold ? this.spatial3dAssociationMinLogP : 0,
+                        base.x, base.y, base.z
+                    );
+                    const opacity = Number(this.spatial3dOpacity);
+                    const { rgba, opaque } = this.spatial3dCategoryColors(
+                        feature.codes, visible, feature.colors, opacity, plot.__gsMap3dPoints?.colors
+                    );
+                    const size = Number(this.spatial3dPointSize);
+                    const marker = {
+                        size,
+                        colorscale: this.discreteColorScale(feature.colors),
+                        cmin: -0.5,
+                        cmax: Math.max(0.5, feature.categories.length - 0.5),
+                        opacity,
+                        showscale: false,
+                        colorbar: {
+                            tickmode: 'array',
+                            tickvals: tickValues,
+                            ticktext: feature.categories,
+                            thickness: 14,
+                            len: 0.82,
+                            tickfont: { size: 9 }
+                        }
+                    };
+                    const points = this.spatial3dPointSet(plot, base, visible, rgba, opaque, size, opacity);
+                    this.setSpatial3dHoverContexts(plot, points, feature);
+                    plot.__gsMap3dPoints = points;
+                    const traces = this.spatial3dProxyTraces(
+                        this.spatial3dVisibleBounds(base.x, base.y, base.z, visible), marker,
                         this.selectedAnnotationCategory
                     );
-                    const traitFeature = this.spatial3dTraitData;
-                    if (this.spatial3dViewMode === 'compare' && traitFeature) {
-                        const traitValues = this.selectPointValues(traitFeature.values, points.indices);
-                        points = this.filterAssociationPlotPoints(
-                            points, traitValues, this.spatial3dAssociationMinLogP
-                        );
-                    }
-                    const traces = [{
-                        type: 'scatter3d', mode: 'markers',
-                        x: points.x, y: points.y, z: points.z,
-                        marker: {
-                            size: Number(this.spatial3dPointSize),
-                            color: points.codes,
-                            colorscale: this.discreteColorScale(feature.colors),
-                            cmin: -0.5,
-                            cmax: Math.max(0.5, feature.categories.length - 0.5),
-                            opacity: Number(this.spatial3dOpacity),
-                            showscale: false,
-                            colorbar: {
-                                tickmode: 'array',
-                                tickvals: tickValues,
-                                ticktext: feature.categories,
-                                thickness: 14,
-                                len: 0.82,
-                                tickfont: { size: 9 }
-                            }
-                        },
-                        name: this.selectedAnnotationCategory
-                    }];
-                    this.setSpatial3dHoverContexts(plot, traces, points, feature);
-                    const rendered = Plotly.react(
-                        plot,
-                        traces,
-                        this.spatial3dLayout(plot),
-                        { ...this.getPlotlyConfig(true), scrollZoom: true }
-                    );
+                    const rendered = this.spatial3dReact(plot, traces, this.spatial3dLayout(plot));
                     return Promise.resolve(rendered).then(() => {
                         this.bindSpatial3dHover(plot);
                         this.bindSpatial3dCameraSync('spatial3dPlotAnnotation', 'spatial3dPlotTrait');
                     });
                 },
 
-                async renderSpatial3dViews({ traitOnly = false } = {}) {
+                async renderSpatial3dViews({ traitOnly = false, progressive = false } = {}) {
                     if (!this.spatial3dBase) return;
                     const renders = [];
                     if (this.spatial3dViewMode !== 'annotation') renders.push(this.renderSpatial3dTrait());
                     const refreshAnnotation = !traitOnly ||
                         (this.spatial3dViewMode === 'compare' && Number(this.spatial3dAssociationMinLogP) > 0);
-                    if (refreshAnnotation && this.spatial3dViewMode !== 'trait') renders.push(this.renderSpatial3dAnnotation());
+                    if (refreshAnnotation && this.spatial3dViewMode !== 'trait') {
+                        if (progressive && renders.length) {
+                            // First load: let the first view paint before Plotly builds the
+                            // second WebGL scene, so neither blocks the page for long.
+                            await Promise.resolve(renders[0]);
+                            await new Promise(resolve => (globalThis.requestAnimationFrame || setTimeout)(() => resolve()));
+                        }
+                        renders.push(this.renderSpatial3dAnnotation());
+                    }
                     await Promise.all(renders.filter(Boolean).map(render => Promise.resolve(render)));
                 },
 

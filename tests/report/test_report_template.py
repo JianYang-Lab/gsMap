@@ -180,7 +180,7 @@ def test_spatial2d_has_scalable_controls_and_synchronized_comparison(
 
 
 def test_spatial_views_offer_scalable_hover_details(report_template: str) -> None:
-    assert "−log10(P): %{marker.color:.2f}" in report_template
+    assert "marker:{color:points.hoverValues}" in report_template
     assert "bindSpatial3dHover" in report_template
     assert "gl.mouseListener.enabled = false" in report_template
     assert "appendPointAnnotationLines(lines, context, sourceIndex)" in report_template
@@ -308,7 +308,7 @@ def test_spatial_association_views_have_independent_q95_opacity_controls(
     assert "filterAssociationPlotPoints(points, values, thresholdValue = 0)" in report_template
     assert "value, cmin, q95, maximumOpacity, strengthValue, thresholdValue" in report_template
     assert "const binCount = 8" in report_template
-    assert "opacitySums[bin] / indices.length" in report_template
+    assert "counts[b] ? sum / counts[b] : 0" in report_template
     assert "this.spatial3dViewMode === 'compare' && traitFeature" in report_template
     assert "this.spatial2dViewMode === 'compare' && comparisonTrait?.values" in report_template
 

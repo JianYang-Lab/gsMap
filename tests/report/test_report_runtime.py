@@ -398,7 +398,8 @@ def test_spatial3d_projection_depth_clipping_and_camera_cache(run_js):
         const params={model:identity(),view:identity(),projection:identity()};
         const gl={cameraParams:params,canvas:{getBoundingClientRect:()=>({width:100,height:100})},
             bounds:[[-1,-1,-1],[1,1,1]]};
-        const target={data:[{x:[0,0,4,NaN],y:[0,0,0,0],z:[.5,-.5,0,0]}],
+        const target={__gsMap3dPoints:{x:[0,0,4,NaN],y:[0,0,0,0],z:[.5,-.5,0,0],
+            visible:Uint32Array.from([0,1,2,3]),size:6,opacity:1},
             _fullLayout:{scene:{_scene:{glplot:gl,dataScale:[1,1,1]}}}};
         const index=app.spatial3dHoverIndex(target);
         const reused=app.spatial3dHoverIndex(target)===index;
@@ -431,7 +432,8 @@ def test_spatial3d_hover_resolves_off_center_occlusion_and_rotation(run_js):
         const params={model:identity(),view:identity(),projection:identity()};
         const gl={cameraParams:params,canvas:{getBoundingClientRect:()=>({width:100,height:100})},
             bounds:[[-1,-1,-1],[1,1,1]]};
-        const target={data:[{x:[0,.04],y:[0,0],z:[.5,-.5],marker:{size:2,opacity:1}}],
+        const target={__gsMap3dPoints:{x:[0,.04],y:[0,0],z:[.5,-.5],visible:Uint32Array.from([0,1]),
+            size:2,opacity:1},
             _fullLayout:{scene:{_scene:{glplot:gl,dataScale:[1,1,1]}}}};
         const before=app.spatial3dHoverIndex(target);
         const hidden=app.findSpatial2dHoverPoint(before,50,50);
@@ -449,19 +451,18 @@ def test_spatial3d_hover_footprints_visibility_and_size_cache(run_js):
         const identity=()=>Float64Array.from([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]);
         const gl={cameraParams:{model:identity(),view:identity(),projection:identity()},
             canvas:{getBoundingClientRect:()=>({width:100,height:100})},bounds:[[-1,-1,-1],[1,1,1]]};
-        const trace=(x,z,size)=>({x:[x],y:[0],z:[z],marker:{size,opacity:1}});
-        const target={data:[trace(0,.5,1),trace(.04,-.5,.4)],
-            _fullLayout:{scene:{_scene:{glplot:gl,dataScale:[1,1,1]}}}};
+        // Row 1 is nearer (z=-.5) but one pixel to the right of row 0.
+        const points={x:[0,.04],y:[0,0],z:[.5,-.5],visible:Uint32Array.from([0,1]),size:.4,opacity:1};
+        const target={__gsMap3dPoints:points,_fullLayout:{scene:{_scene:{glplot:gl,dataScale:[1,1,1]}}}};
         const small=app.spatial3dHoverIndex(target);
         const throughGap=app.findSpatial3dHoverPoint(small,50,50);
-        target.data[1].marker.size=2;
+        target.__gsMap3dPoints={...points,size:2};
         const big=app.spatial3dHoverIndex(target);
         const occluded=app.findSpatial3dHoverPoint(big,50,50);
         const proximity=app.findSpatial3dHoverPoint(big,45.5,50);
         const invisible=[];
-        for(const update of [{visible:false},{visible:'legendonly'},{opacity:0},
-            {marker:{size:2,opacity:0}},{marker:{size:0,opacity:1}}]) {
-            target.data[1]={...trace(.04,-.5,2),...update};
+        for(const update of [{visible:Uint32Array.from([0])},{opacity:0},{size:0}]) {
+            target.__gsMap3dPoints={...points,size:2,...update};
             invisible.push(app.findSpatial3dHoverPoint(app.spatial3dHoverIndex(target),50,50));
         }
         console.log(JSON.stringify({throughGap,occluded,proximity,invisible,
@@ -471,7 +472,8 @@ def test_spatial3d_hover_footprints_visibility_and_size_cache(run_js):
         "throughGap": 0,
         "occluded": 1,
         "proximity": 1,
-        "invisible": [0, 0, 0, 0, 0],
+        # A row filtered out is never picked; transparent or zero-size sets pick nothing.
+        "invisible": [0, -1, -1],
         "rebuilt": True,
         "empty": -1,
     }
@@ -523,26 +525,35 @@ def test_spatial3d_transparent_order_reallocates_for_new_geometry(run_js):
 
 def test_spatial3d_projection_rebuilds_missing_renderer_traces(run_js):
     result = run_js("""
-        const marker={size:2},full={scene:'scene',visible:true,_length:1,marker};
-        const native={opacity:.5};native._trace={data:full,dataPoints:[[0,0,0]],color:['rgb(1,2,3)'],scatterPlot:native};
-        let rebuilt=0,created=0,redrawn=0,disposed=0;
+        const full={scene:'scene',visible:true,_length:2,marker:{size:2}};
+        const native={pickSlots:1};native._trace={data:full,scatterPlot:native};
+        let rebuilt=0,created=0,redrawn=0,disposed=0,updates=0;
         const renderer={objects:[],add(o){this.objects.push(o)},remove(o){this.objects.splice(this.objects.indexOf(o),1)},redraw(){redrawn++}};
         const scene={glplot:renderer,plot(data){if(data[0]!==full)throw Error('Wrong data');rebuilt++;renderer.objects.push(native)}};
         const target={_fullData:[full],_fullLayout:{scene:{_scene:scene}},layout:{}};
-        app.createSpatial3dPointLayer=(r,sources)=>{created++;return {sources,__gsMapPointLayer:true,dispose(){disposed++}}};
+        app.createSpatial3dPointLayer=(r,s)=>{created++;let last=null;return {__gsMapPointLayer:true,
+            update(points){updates++;const changed=points!==last;last=points;return changed;},dispose(){disposed++}}};
+        target.__gsMap3dPoints={id:1};
         app.prepareSpatial3dRenderer(target);
+        const slots=native.pickSlots;
         app.prepareSpatial3dRenderer(target);
-        native.opacity=.7;app.prepareSpatial3dRenderer(target);
-        console.log(JSON.stringify({rebuilt,created,redrawn,disposed,n:renderer.objects.length,
-            suppressed:!native.isOpaque()&&!native.isTransparent()}));
+        target.__gsMap3dPoints={id:2};app.prepareSpatial3dRenderer(target);
+        const layer=renderer.__gsMapPointLayer;
+        target.__gsMap3dPoints=null;app.prepareSpatial3dRenderer(target);
+        console.log(JSON.stringify({rebuilt,created,redrawn,disposed,updates,slots,
+            removed:!renderer.objects.includes(layer)&&!renderer.__gsMapPointLayer,
+            suppressed:!native.isOpaque()&&!native.isTransparent(),traceLinked:layer._trace===native._trace}));
     """)
     assert result == {
         "rebuilt": 1,
-        "created": 2,
-        "redrawn": 2,
+        "created": 1,
+        "redrawn": 3,
         "disposed": 1,
-        "n": 2,
+        "updates": 3,
+        "slots": 0,
+        "removed": True,
         "suppressed": True,
+        "traceLinked": True,
     }
 
 
@@ -551,7 +562,8 @@ def test_spatial3d_hover_preserves_thin_section_depth(run_js):
         const identity=()=>Float64Array.from([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]);
         const gl={cameraParams:{model:identity(),view:identity(),projection:identity()},
             canvas:{getBoundingClientRect:()=>({width:100,height:100})},bounds:[[-1,-1,-1],[1,1,1]]};
-        const target={data:[{x:[.02,0],y:[0,0],z:[-.995000002,-.995000001],marker:{size:2}}],
+        const target={__gsMap3dPoints:{x:[.02,0],y:[0,0],z:[-.995000002,-.995000001],
+            visible:Uint32Array.from([0,1]),size:2,opacity:1},
             _fullLayout:{scene:{_scene:{glplot:gl,dataScale:[1,1,1]}}}};
         const index=app.spatial3dHoverIndex(target);
         console.log(JSON.stringify({picked:app.findSpatial3dHoverPoint(index,50,50),
@@ -562,46 +574,160 @@ def test_spatial3d_hover_preserves_thin_section_depth(run_js):
 
 def test_spatial3d_fully_opaque_overrides_signal_fading_without_changing_colors(run_js):
     result = run_js("""
-        const points={x:[10,20,30],y:[1,2,3],z:[4,5,6],indices:[4,2,0]},values=[0,5,10];
-        const marker={size:2,opacity:1,cmin:0,cmax:10,colorscale:'Viridis',showscale:true};
-        const traces=app.buildSpatial3dAssociationTraces(points,values,marker,'unused','IQ',10,0,.65);
+        const values=Float32Array.from([0,5,10,2.5,NaN,7]);
+        const visible=Uint32Array.from([0,1,2,3,4]);
+        const rgb=(out,i)=>Array.from(out.rgba.slice(i*4,i*4+3),v=>Math.round(v*255));
+        const opaque=app.spatial3dTraitColors(values,visible,['#000000','#ffffff'],0,10,1,8,0,.65);
         app.spatial3dOpacity=1;
         const label=app.spatial3dAssociationOpacityLabel;
-        app.spatial3dOpacity=.8;
-        const faded=app.buildSpatial3dAssociationTraces(points,values,{...marker,opacity:.8},'unused','IQ',10,0,.65);
-        console.log(JSON.stringify({n:traces.length,opacity:traces[0].marker.opacity,
-            colors:traces[0].marker.color,scale:traces[0].marker.colorscale,sources:traces[0].meta.sourceIndices,
-            label,faded:faded.length>1 && faded.some(t=>t.marker.opacity<.8)}));
+        const faded=app.spatial3dTraitColors(values,visible,['#000000','#ffffff'],0,10,.8,8,0,.65);
+        const alpha=out=>Array.from(visible,i=>Number(out.rgba[i*4+3].toFixed(4)));
+        console.log(JSON.stringify({opaque:opaque.opaque,alphas:alpha(opaque),
+            colors:Array.from(visible,i=>rgb(opaque,i)),sameColors:visible.every(i=>rgb(opaque,i).join()===rgb(faded,i).join()),
+            label,fadedOpaque:faded.opaque,faded:alpha(faded).some(a=>a<.8),max:Math.max(...alpha(faded)),
+            hiddenRowUntouched:opaque.rgba[5*4+3]===0}));
     """)
-    assert result == {
-        "n": 1,
-        "opacity": 1,
-        "colors": [0, 5, 10],
-        "scale": "Viridis",
-        "sources": [4, 2, 0],
-        "label": "Off · opaque",
-        "faded": True,
-    }
+    assert result["opaque"] is True
+    assert result["alphas"] == [1, 1, 1, 1, 1]
+    # Plotly's colorscale: linear RGB, clamped, rounded; non-numeric values use #444.
+    assert result["colors"] == [
+        [0, 0, 0],
+        [128, 128, 128],
+        [255, 255, 255],
+        [64, 64, 64],
+        [68, 68, 68],
+    ]
+    assert result["sameColors"]
+    assert result["label"] == "Off · opaque"
+    assert result["fadedOpaque"] is False
+    assert result["faded"]
+    assert result["max"] <= 0.8
+    assert result["hiddenRowUntouched"]
 
 
 def test_spatial3d_opacity_bins_preserve_hover_source_indices(run_js):
     result = run_js("""
-        const points={x:[10,20,30],y:[1,2,3],z:[4,5,6],indices:[4,2,0]};
-        const values=[0,5,10],marker={opacity:.8,cmin:0,cmax:10,showscale:true};
-        const traces=app.buildSpatial3dAssociationTraces(points,values,marker,'unused','IQ',10,0,.65);
+        // Bin means are the opacity of the former per-bin traces.
+        const values=Float32Array.from([0,5,10,9.9]); // 10 and 9.9 share the top bin
+        const visible=Uint32Array.from([0,1,2,3]);
+        const out=app.spatial3dTraitColors(values,visible,['#000000','#ffffff'],0,10,.8,10,0,.65);
+        const opacity=Array.from(values,v=>app.associationOpacityForValue(v,0,10,.8,.65,0));
+        const top=(opacity[2]+opacity[3])/2;
         app.selectedAnnotationCategory='celltype';
         const annotation={categories:['A','B'],colors:['red','blue'],codes:[0,1,1,0,0]};
-        app.setSpatial3dHoverContexts({id:'trait'},traces,points,annotation,['red','blue'],{cmin:0,cmax:10});
-        const rows=traces.flatMap(t=>Array.from(t.x,(_,j)=>({x:t.x[j],source:
-            app.pointHoverSourceIndex({pointNumber:j},app._pointHoverContexts[t.meta.hoverContextKey])}))).sort((a,b)=>a.x-b.x);
-        console.log(JSON.stringify({rows,allSkip:traces.every(t=>t.hoverinfo==='skip'&&!t.hovertemplate)}));
+        const points={x:[1,2,3,4,5],y:[1,2,3,4,5],z:[1,2,3,4,5]};
+        const key=app.setSpatial3dHoverContexts({id:'trait'},points,annotation,['red','blue'],
+            {cmin:0,cmax:10,values:[0,5,10,9.5,1]});
+        const context=app._pointHoverContexts[key];
+        console.log(JSON.stringify({sharedBin:Math.abs(out.rgba[2*4+3]-top)<1e-6&&Math.abs(out.rgba[3*4+3]-top)<1e-6,
+            ownBin:Math.abs(out.rgba[3]-opacity[0])<1e-6,
+            source:app.pointHoverSourceIndex({pointNumber:4},context),
+            value:app.pointMarkerColorValue({data:{marker:{color:points.hoverValues}},pointNumber:4}),
+            kind:context.hoverKind,key:points.hoverContextKey===key}));
     """)
-    assert result["rows"] == [
-        {"x": 10, "source": 4},
-        {"x": 20, "source": 2},
-        {"x": 30, "source": 0},
-    ]
-    assert result["allSkip"]
+    assert result == {
+        "sharedBin": True,
+        "ownBin": True,
+        "source": 4,
+        "value": 1,
+        "kind": "trait",
+        "key": True,
+    }
+
+
+def test_spatial3d_visible_rows_follow_categories_cutoff_and_finite_coordinates(run_js):
+    result = run_js("""
+        app.selectedAnnotationCategory='celltype';
+        const annotation={categories:['A','B'],colors:['red','blue'],codes:Uint16Array.from([0,1,1,0,1,0])};
+        const values=Float32Array.from([1,5,NaN,8,9,0.5]);
+        const x=Float32Array.from([0,1,2,3,NaN,5]),y=new Float32Array(6),z=new Float32Array(6);
+        const all=Array.from(app.spatial3dVisibleIndices(6,annotation,'celltype',values,0,x,y,z));
+        const cutoff=Array.from(app.spatial3dVisibleIndices(6,annotation,'celltype',values,2,x,y,z));
+        app.selectedAnnotationCategories=['B'];
+        const onlyB=Array.from(app.spatial3dVisibleIndices(6,annotation,'celltype',values,0,x,y,z));
+        const bounds=app.spatial3dVisibleBounds(x,y,z,Uint32Array.from([1,3]));
+        const traces=app.spatial3dProxyTraces(bounds,{size:1,cmin:0,cmax:10,showscale:true},'IQ');
+        console.log(JSON.stringify({all,cutoff,onlyB,bounds,points:traces[0].x.length,color:traces[0].marker.color,
+            skip:traces[0].hoverinfo,empty:app.spatial3dProxyTraces(null,{},'IQ').length}));
+    """)
+    assert result == {
+        "all": [0, 1, 2, 3, 5],
+        "cutoff": [1, 3],
+        "onlyB": [1, 2],
+        "bounds": [[1, 0, 0], [3, 0, 0]],
+        "points": 2,
+        "color": [0, 0],
+        "skip": "skip",
+        "empty": 0,
+    }
+
+
+def test_spatial3d_category_colors_match_discrete_scale(run_js):
+    result = run_js("""
+        const out=app.spatial3dCategoryColors(Uint16Array.from([0,1,2,7]),Uint32Array.from([0,1,3]),
+            ['#ff0000','#00ff00','#0000ff'],.5);
+        const rgb=i=>Array.from(out.rgba.slice(i*4,i*4+4),v=>Number((v*255).toFixed(1)));
+        console.log(JSON.stringify({rows:[rgb(0),rgb(1),rgb(3)],hidden:rgb(2),opaque:out.opaque}));
+    """)
+    assert result == {
+        "rows": [[255, 0, 0, 127.5], [0, 255, 0, 127.5], [0, 0, 255, 127.5]],
+        "hidden": [0, 0, 0, 0],
+        "opaque": False,
+    }
+
+
+def test_spatial3d_renders_tiny_proxy_traces_not_point_arrays(run_js):
+    result = run_js("""
+        const n=5000, plots={};
+        for(const id of ['spatial3dPlotTrait','spatial3dPlotAnnotation']) plots[id]={id,on(){},addEventListener(){}};
+        document.getElementById=id=>plots[id]||null;
+        app.plotlyReady=true;app.bindSpatial3dHover=()=>{};app.bindSpatial3dCameraSync=()=>{};
+        const x=Float32Array.from({length:n},(_,i)=>i%97),y=Float32Array.from({length:n},(_,i)=>i%13),
+            z=Float32Array.from({length:n},(_,i)=>i%7);
+        app.spatial3dBase={x,y,z,positions:new Float32Array(n*3)};
+        app.spatial3dTraitData={values:Float32Array.from({length:n},(_,i)=>i%11),cmin:0,cmax:10,q95:9};
+        app.selectedAnnotationCategory='celltype';
+        app.spatial3dAnnotationData={categories:['A','B'],colors:['#ff0000','#0000ff'],codes:Uint16Array.from({length:n},(_,i)=>i%2)};
+        app.spatial3dAnnotationCache={celltype:app.spatial3dAnnotationData};
+        app.spatial3dViewMode='compare';
+        await app.renderSpatial3dViews();
+        const trait=plots.spatial3dPlotTrait, annotation=plots.spatial3dPlotAnnotation;
+        console.log(JSON.stringify({traitPoints:trait.traces[0].x.length,annotationPoints:annotation.traces[0].x.length,
+            traitRows:trait.__gsMap3dPoints.visible.length,sharedRows:trait.__gsMap3dPoints.visible===annotation.__gsMap3dPoints.visible,
+            colorbar:trait.traces[0].marker.showscale,range:[trait.traces[0].x,trait.traces[0].z]}));
+    """)
+    assert result == {
+        "traitPoints": 2,
+        "annotationPoints": 2,
+        "traitRows": 5000,
+        "sharedRows": True,
+        "colorbar": True,
+        "range": [[0, 96], [0, 6]],
+    }
+
+
+def test_spatial3d_synced_plots_share_depth_orders(run_js):
+    result = run_js("""
+        const identity=()=>Float64Array.from([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]);
+        const positions=Float32Array.from({length:3000},(_,i)=>Math.sin(i*1.7));
+        const visible=Uint32Array.from({length:1000},(_,i)=>i);
+        const leading={positions,visible},trailing={positions,visible};
+        const first={view:identity(),model:identity()},second={view:identity(),model:identity()};
+        second.view[2]=.3;
+        const a1=app.spatial3dSharedDepthOrder(leading,first,[1,1,1]);
+        const a2=app.spatial3dSharedDepthOrder(leading,second,[1,1,1]);
+        const b1=app.spatial3dSharedDepthOrder(trailing,first,[1,1,1]);
+        const b2=app.spatial3dSharedDepthOrder(trailing,second,[1,1,1]);
+        console.log(JSON.stringify({reusedLagging:b1===a1,reusedCurrent:b2===a2,distinct:a1!==a2,
+            versions:a1.version!==a2.version,cache:positions.__gsMapDepthOrders.length}));
+    """)
+    assert result == {
+        "reusedLagging": True,
+        "reusedCurrent": True,
+        "distinct": True,
+        "versions": True,
+        "cache": 2,
+    }
 
 
 def test_spatial2d_hover_cancels_pending_frames_and_ignores_plotly_events(run_js):
@@ -1452,3 +1578,31 @@ def test_trait_change_refreshes_threshold_filtered_annotation_comparison(run_js)
         console.log(JSON.stringify(calls));
     """)
     assert result == ["2d-trait", "2d-annotation", "3d-trait", "3d-annotation"]
+
+
+def test_spatial3d_opacity_changes_skip_plotly_scene_rebuilds(run_js):
+    result = run_js("""
+        const n=500, view={id:'spatial3dPlotTrait',on(){},addEventListener(){}};
+        document.getElementById=id=>id===view.id?view:null;
+        app.plotlyReady=true;app.bindSpatial3dHover=()=>{};app.bindSpatial3dCameraSync=()=>{};
+        const x=Float32Array.from({length:n},(_,i)=>i%17),y=Float32Array.from({length:n},(_,i)=>i%5),
+            z=Float32Array.from({length:n},(_,i)=>i%3);
+        app.spatial3dBase={x,y,z,positions:new Float32Array(n*3)};
+        app.spatial3dTraitData={values:Float32Array.from({length:n},(_,i)=>i%11),cmin:0,cmax:10,q95:9};
+        app.spatial3dViewMode='trait';
+        await app.renderSpatial3dViews();
+        view._fullLayout={scene:{_scene:{},camera:{eye:{x:1,y:1,z:1}}}};
+        const counts=[view.renderCount];
+        app.spatial3dOpacity=1;await app.renderSpatial3dViews();
+        counts.push(view.renderCount);
+        const opaque=view.__gsMap3dPoints.opaque;
+        app.spatial3dPointSize=Number(app.spatial3dPointSize)+1;await app.renderSpatial3dViews();
+        counts.push(view.renderCount);
+        app.spatial3dTraitData={...app.spatial3dTraitData,cmax:20};await app.renderSpatial3dViews();
+        counts.push(view.renderCount);
+        delete view._fullLayout;app.spatial3dOpacity=.5;await app.renderSpatial3dViews();
+        counts.push(view.renderCount);
+        console.log(JSON.stringify({counts,opaque}));
+    """)
+    # Opacity alone: no rebuild. Point size, colour range and a purged scene: rebuild.
+    assert result == {"counts": [1, 1, 2, 3, 4], "opaque": True}
