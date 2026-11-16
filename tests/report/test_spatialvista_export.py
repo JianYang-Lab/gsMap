@@ -61,14 +61,17 @@ def project(tmp_path):
 def test_export_preserves_rows_labels_values_and_geometry(project):
     output = export_spatialvista(project)
     result = ad.read_h5ad(output)
-    assert result.X is None and result.shape == (4, 0)
+    assert result.X is None
+    assert result.shape == (4, 0)
     assert result.obs_names.tolist() == ["d|S2", "a|S1", "c|S2", "b|S1"]
     assert result.obs.annotation.tolist() == ["01", "NA", "Heart", "Unknown"]
     assert result.obs.sample_name.cat.categories.tolist() == ["S1", "S2"]
     np.testing.assert_equal(result.obsm["spatial"][:, 0], [40, 10, 30, 20])
     schema = result.uns["gsmap"]
-    assert schema["schema_version"] == 1 and schema["value_scale"] == "neg_log10_p"
-    assert schema["sampling"] == "all" and len(schema["traits"]) == 4
+    assert schema["schema_version"] == 1
+    assert schema["value_scale"] == "neg_log10_p"
+    assert schema["sampling"] == "all"
+    assert len(schema["traits"]) == 4
     key = next(key for key, label in schema["traits"].items() if label == "IQ")
     np.testing.assert_allclose(result.obs[key], [4, 1, np.nan, 2], equal_nan=True)
     assert all("/" not in key for key in schema["traits"])
@@ -90,7 +93,8 @@ def test_trait_selection_and_deterministic_sampling(project, tmp_path):
     b = ad.read_h5ad(export_spatialvista(project, tmp_path / "b.h5ad", traits=["AF"], max_spots=2))
     assert a.obs_names.tolist() == b.obs_names.tolist()
     assert list(a.uns["gsmap"]["traits"].values()) == ["AF"]
-    assert a.uns["gsmap"]["source_n_spots"] == 4 and a.n_obs == 2
+    assert a.uns["gsmap"]["source_n_spots"] == 4
+    assert a.n_obs == 2
 
 
 @pytest.mark.parametrize(
@@ -112,7 +116,7 @@ def test_bad_options(project, kwargs):
 
 
 @pytest.mark.parametrize(
-    "column,value", [("3d_x", np.inf), ("IQ", -1), ("IQ", np.inf), ("sample_name", "unknown")]
+    ("column", "value"), [("3d_x", np.inf), ("IQ", -1), ("IQ", np.inf), ("sample_name", "unknown")]
 )
 def test_bad_metadata(project, column, value):
     path = project / "report_data/spot_metadata.csv"
@@ -174,7 +178,7 @@ def test_report_hook_exports_in_memory_metadata(project, monkeypatch, caplog, ma
 
 
 @pytest.mark.parametrize(
-    "mode,enabled",
+    ("mode", "enabled"),
     [("spatial2D", True), ("scRNA", True), ("spatial3D", False)],
 )
 def test_non_3d_or_opt_out_skips_export(project, monkeypatch, caplog, mode, enabled):

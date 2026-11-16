@@ -35,7 +35,7 @@ def test_counts_sources_validate_without_future_embeddings_or_gwas(tmp_path):
     # The second-stage initializer is intentionally deferred until first-stage
     # output files exist, rather than reporting source counts as broken.
     with pytest.raises(ValueError, match='emb_cell'):
-        config.latent2gene_config
+        _ = config.latent2gene_config
 
 
 def test_noncounts_uses_supplied_pca_without_jax_or_gwas(tmp_path, monkeypatch):
@@ -54,7 +54,7 @@ def test_noncounts_uses_supplied_pca_without_jax_or_gwas(tmp_path, monkeypatch):
     assert config.latent_representation_cell == 'cell_emb_pca'
 
 
-@pytest.mark.parametrize('change,message', [
+@pytest.mark.parametrize(('change', 'message'), [
     ({'latent_representation_cell': None}, 'existing named'),
     ({'latent_representation_cell': 'missing_pca'}, 'missing_pca'),
     ({'start_step': 'find_latent'}, 'skip find_latent'),

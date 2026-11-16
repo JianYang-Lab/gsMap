@@ -105,7 +105,8 @@ def test_cs8_tutorial_names_and_geometry_summary_match_public_bundle():
     catalog = json.loads((REPO / "docs/resource_catalog.json").read_text())
     entry = next(item for item in catalog["resources"] if item["id"] == name)
     for description in (tutorial, entry["description"], entry["display"]["description"]):
-        assert "3D reconstruction" in description and "aligned" in description
+        assert "3D reconstruction" in description
+        assert "aligned" in description
         for detail in ("MAPS", "inferred Z", "not author-verified", "20 µm"):
             assert detail not in description
     assert entry["revision"] == "r1"

@@ -3,11 +3,6 @@
 import anndata as ad
 import numpy as np
 import pytest
-
-
-
-
-
 from typer.main import get_command
 
 from gsMap.cli import app

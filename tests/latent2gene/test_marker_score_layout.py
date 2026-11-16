@@ -27,7 +27,6 @@ from gsMap.spatial_ldsc.data.loading import (
     load_marker_scores_memmap_format,
 )
 
-
 # Spawned children import torch/JAX/scanpy; this can exceed 10 s on slow filesystems.
 PROCESS_TIMEOUT = 120
 

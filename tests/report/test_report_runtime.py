@@ -109,7 +109,9 @@ def test_3d_fullscreen_exit_rejection_and_unsupported_browser_are_safe(run_js):
     assert result["exits"] == 1
     assert "permissions" in result["rejected"]
     assert "not available" in result["unsupported"]
-    assert not result["active"] and not result["busy"] and not result["error"]
+    assert not result["active"]
+    assert not result["busy"]
+    assert not result["error"]
 
 
 def test_2d_fullscreen_uses_2d_state_and_leaves_3d_untouched(run_js):
@@ -196,9 +198,12 @@ def test_annotation_overview_density_and_focus_are_reversible(run_js):
             flat:app.overviewRidgePath([0,0]),ridge:app.overviewRidgePath([1,0,0])}));
     """)
     assert result["focused"] == {"categories": ["01"], "table": ["01"], "visible": ["01"]}
-    assert result["restored"] and result["table"] == 3
-    assert result["zero"] == "0.00" and result["missing"] == "—"
-    assert result["flat"] == "" and result["ridge"].endswith("Z")
+    assert result["restored"]
+    assert result["table"] == 3
+    assert result["zero"] == "0.00"
+    assert result["missing"] == "—"
+    assert result["flat"] == ""
+    assert result["ridge"].endswith("Z")
     assert "NaN" not in result["ridge"]
 
 
