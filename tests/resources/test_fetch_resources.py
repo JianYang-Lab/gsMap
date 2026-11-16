@@ -109,3 +109,73 @@ def test_external_only_resource_has_actionable_error(tmp_path):
     catalog.write_text(json.dumps({"resources": [{"id": "external"}]}))
     with pytest.raises(ValueError, match="external-only"):
         fetch(str(catalog), tmp_path / "output", ["external"])
+
+
+class _StallingResponse(io.BytesIO):
+    """A response that raises a read timeout after ``stall_after`` bytes."""
+
+    def __init__(self, payload, status, stall_after=None):
+        super().__init__(payload)
+        self.status = status
+        self.stall_after = stall_after
+
+    def read(self, size=-1):
+        if self.stall_after is not None and self.tell() >= self.stall_after:
+            raise TimeoutError("The read operation timed out")
+        if self.stall_after is not None and size and size > 0:
+            size = min(size, self.stall_after - self.tell())
+        return super().read(size)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
+def test_download_resumes_after_a_stalled_read(tmp_path, monkeypatch):
+    from tests.tools import fetch_resources
+
+    payload = bytes(range(256)) * 64
+    requests = []
+
+    def fake_open_url(url, timeout, headers=None):
+        requests.append(dict(headers or {}))
+        if len(requests) == 1:
+            return _StallingResponse(payload, 200, stall_after=1000)
+        start = int(headers["Range"].removeprefix("bytes=").rstrip("-"))
+        return _StallingResponse(payload[start:], 206)
+
+    monkeypatch.setattr(fetch_resources, "open_url", fake_open_url)
+    output = tmp_path / "bundle.tar.gz"
+    fetch_resources.download("https://example.invalid/bundle", output, pause=0)
+    assert output.read_bytes() == payload
+    assert requests == [{}, {"Range": "bytes=1000-"}]
+
+
+def test_download_restarts_when_range_is_ignored(tmp_path, monkeypatch):
+    from tests.tools import fetch_resources
+
+    payload = b"0123456789" * 100
+    calls = []
+
+    def fake_open_url(url, timeout, headers=None):
+        calls.append(headers)
+        stall = 300 if len(calls) == 1 else None
+        return _StallingResponse(payload, 200, stall_after=stall)
+
+    monkeypatch.setattr(fetch_resources, "open_url", fake_open_url)
+    output = tmp_path / "bundle.tar.gz"
+    fetch_resources.download("https://example.invalid/bundle", output, pause=0)
+    assert output.read_bytes() == payload
+
+
+def test_download_gives_up_after_the_last_attempt(tmp_path, monkeypatch):
+    from tests.tools import fetch_resources
+
+    def fake_open_url(url, timeout, headers=None):
+        return _StallingResponse(b"abc", 200, stall_after=0)
+
+    monkeypatch.setattr(fetch_resources, "open_url", fake_open_url)
+    with pytest.raises(TimeoutError):
+        fetch_resources.download("https://example.invalid/b", tmp_path / "b", attempts=2, pause=0)

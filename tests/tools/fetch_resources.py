@@ -2,11 +2,14 @@
 
 import argparse
 import hashlib
+import http.client
 import json
 import re
 import shutil
 import tarfile
 import tempfile
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path, PurePosixPath
 
@@ -15,9 +18,37 @@ DEFAULT_CATALOG = "https://yanglab.westlake.edu.cn/data/gsMap/gsMap3D-r1/catalog
 USER_AGENT = "gsMap-resource-fetch"
 
 
-def open_url(url, timeout):
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+# Long transfers from the resource server to CI runners can stall; resume them.
+DOWNLOAD_ATTEMPTS = 6
+TRANSIENT_ERRORS = (OSError, http.client.HTTPException)  # timeouts, resets, URLError
+
+
+def open_url(url, timeout, headers=None):
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, **(headers or {})})
     return urllib.request.urlopen(request, timeout=timeout)
+
+
+def download(url, output, attempts=DOWNLOAD_ATTEMPTS, timeout=120, pause=10):
+    """Download ``url`` to ``output``, resuming with HTTP Range after a stall."""
+    for attempt in range(1, attempts + 1):
+        offset = output.stat().st_size if output.exists() else 0
+        headers = {"Range": f"bytes={offset}-"} if offset else None
+        try:
+            with open_url(url, timeout, headers) as source:
+                resumed = offset and getattr(source, "status", 200) == 206
+                with output.open("ab" if resumed else "wb") as handle:
+                    shutil.copyfileobj(source, handle, length=8 << 20)
+            return
+        except urllib.error.HTTPError:
+            raise
+        except TRANSIENT_ERRORS as error:
+            if attempt == attempts:
+                raise
+            size = output.stat().st_size if output.exists() else 0
+            print(
+                f"Download interrupted at {size} bytes ({error}); retry {attempt}/{attempts - 1}"
+            )
+            time.sleep(pause * attempt)
 
 
 def digest(path):
@@ -97,11 +128,7 @@ def fetch(catalog_location, destination, identifiers):
                 if local.is_file():
                     shutil.copyfile(local.parent / entry["path"], partial)
                 else:
-                    with (
-                        open_url(entry["url"], timeout=120) as source,
-                        partial.open("wb") as output,
-                    ):
-                        shutil.copyfileobj(source, output, length=8 << 20)
+                    download(entry["url"], partial)
                 if digest(partial) != entry["sha256"]:
                     raise ValueError(f"Archive checksum failed: {identifier}")
                 partial.replace(archive_path)
