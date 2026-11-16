@@ -11,6 +11,13 @@ import urllib.request
 from pathlib import Path, PurePosixPath
 
 DEFAULT_CATALOG = "https://yanglab.westlake.edu.cn/data/gsMap/gsMap3D-r1/catalog.json"
+# The resource server rejects the default ``Python-urllib`` agent with HTTP 403.
+USER_AGENT = "gsMap-resource-fetch"
+
+
+def open_url(url, timeout):
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    return urllib.request.urlopen(request, timeout=timeout)
 
 
 def digest(path):
@@ -55,7 +62,7 @@ def fetch(catalog_location, destination, identifiers):
     if local.is_file():
         catalog = json.loads(local.read_text())
     else:
-        with urllib.request.urlopen(catalog_location, timeout=60) as response:
+        with open_url(catalog_location, timeout=60) as response:
             catalog = json.load(response)
     entries = catalog["resources"]
     catalog = {entry["id"]: entry for entry in entries}
@@ -91,7 +98,7 @@ def fetch(catalog_location, destination, identifiers):
                     shutil.copyfile(local.parent / entry["path"], partial)
                 else:
                     with (
-                        urllib.request.urlopen(entry["url"], timeout=120) as source,
+                        open_url(entry["url"], timeout=120) as source,
                         partial.open("wb") as output,
                     ):
                         shutil.copyfileobj(source, output, length=8 << 20)

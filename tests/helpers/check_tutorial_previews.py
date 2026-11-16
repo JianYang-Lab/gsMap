@@ -6,7 +6,7 @@ import re
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from playwright.sync_api import sync_playwright
 
@@ -54,7 +54,9 @@ def main():
             ):
                 url = f"{args.docs_url.rstrip('/')}/{tutorial}.html"
                 links = PreviewLinks()
-                with urlopen(url, timeout=60) as response:
+                with urlopen(
+                    Request(url, headers={"User-Agent": "gsMap-docs-check"}), timeout=60
+                ) as response:
                     assert response.status == 200, url
                     links.feed(response.read().decode("utf-8"))
                 targets = [urljoin(url, link) for link in links.targets]
