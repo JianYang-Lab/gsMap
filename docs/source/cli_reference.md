@@ -32,7 +32,7 @@ Requires pre-generated SNP-gene weight matrix and LD weights.
 | `--h5ad-path PATH` | Space-separated list of h5ad file paths. Sample names are derived from file names without suffix. |
 | `--h5ad-yaml FILE` | YAML file with sample names and h5ad paths |
 | `--h5ad-list-file FILE` | Each row is a h5ad file path, sample name is the file name without suffix |
-| `--data-layer TEXT` | Gene expression raw counts data layer in h5ad layers, e.g., 'count', 'counts'. Other wise use 'X' for adata.X  \[default: X] |
+| `--data-layer TEXT` | Expression data layer in h5ad layers, e.g., 'count', 'counts'; use 'X' for adata.X  \[default: X] |
 | `--cell-qc-min-genes INTEGER RANGE` | Minimum positive-expression genes before HVG, training, graph and inference  \[default: 20; x>=0] |
 | `--cell-qc-min-counts FLOAT RANGE` | Optional minimum total raw counts for front-end cell QC  \[x>=0] |
 | `--cell-qc-chunk-size INTEGER RANGE` | Rows per bounded expression QC/read block  \[default: 8192; x>=1] |
@@ -51,6 +51,7 @@ Requires pre-generated SNP-gene weight matrix and LD weights.
 | `--inference-chunk-size INTEGER RANGE` | Target number of focal spots per section-aligned inference chunk. Physical sections remain intact, all spots are retained, and section-aware chunks include graph halos.  \[default: 250000; x>=1] |
 | `--two-stage / --single-stage` | Tune the cell embeddings based on the provided annotation  \[default: single-stage] |
 | `--n-cell-training INTEGER RANGE` | Number of cells used for training  \[default: 100000; 1000<=x<=1000000] |
+| `--expression-data-type [counts\|noncounts]` | Expression QC contract: counts requires finite nonnegative values; noncounts permits finite signed values with external embeddings, counts distinct nonzero features for min_genes, and requires --no-expression-fraction.  \[default: counts] |
 | `--spatial-neighbors INTEGER RANGE` | k1: Number of spatial neighbors in it's own slice for spatial dataset  \[default: 301; 10<=x<=5000] |
 | `--homogeneous-neighbors INTEGER RANGE` | k3: Number of homogeneous neighbors per cell (for spatial) or KNN neighbors (for scRNA-seq)  \[default: 21; 1<=x<=200] |
 | `--cell-embedding-similarity-threshold FLOAT RANGE` | Minimum similarity threshold for cell embedding.  \[default: 0.0; 0.0<=x<=1.0] |
@@ -181,7 +182,8 @@ This step:
 | `--h5ad-yaml FILE` | YAML file with sample names and h5ad paths |
 | `--h5ad-list-file FILE` | Each row is a h5ad file path, sample name is the file name without suffix |
 | `--annotation TEXT` | Cell type annotation in adata.obs to use. This would constrain finding homogeneous spots within each cell type |
-| `--data-layer TEXT` | Gene expression raw counts data layer in h5ad layers, e.g., 'count', 'counts'. Other wise use 'X' for adata.X  \[default: X] |
+| `--data-layer TEXT` | Expression data layer in h5ad layers, e.g., 'count', 'counts'; use 'X' for adata.X  \[default: X] |
+| `--expression-data-type [counts\|noncounts]` | Expression QC contract: counts requires finite nonnegative values; noncounts permits finite signed values with external embeddings, counts distinct nonzero features for min_genes, and requires --no-expression-fraction.  \[default: counts] |
 | `--latent-representation-niche TEXT` | Key for spatial niche embedding in obsm |
 | `--latent-representation-cell TEXT` | Key for cell identity embedding in obsm  \[default: emb_cell] |
 | `--spatial-key TEXT` | Spatial key in adata.obsm  \[default: spatial] |

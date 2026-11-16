@@ -1,19 +1,26 @@
-Welcome to gsMap3D's documentation!
-===================================
+Welcome to gsMap's documentation!
+=================================
 
-**gsMap3D**: **g**\ enetically informed **s**\ patial **Map**\ ping of cells for complex traits in **3D**.
+**gsMap**: **g**\ enetically informed **s**\ patial **Map**\ ping of cells for complex traits.
 
-**gsMap3D** integrates 3D spatial transcriptomics (ST) data with genome-wide association study (GWAS) summary statistics to map cells associated with human complex traits and diseases.
+**gsMap** integrates spatial transcriptomics (ST) data, from 2D tissue sections to 3D tissues, with genome-wide association study (GWAS) summary statistics to map cells associated with human complex traits and diseases.
+
+.. note::
+
+   This documentation describes gsMap 2.x, currently in beta. gsMap 1.x users should read
+   :doc:`upgrading`. The gsMap 1.x documentation remains at
+   `gsMap 1.x Documentation <https://yanglab.westlake.edu.cn/gsmap/document/software>`_.
 
 
-What's New
-----------
+What's New in gsMap 2.0
+-----------------------
 
 .. important::
 
-   - Support for **3D** ST data mapping
+   - Support for **3D** ST data mapping of registered sections and thick tissues
    - **Dual-embedding** strategy for more accurate gene specificity scoring
    - **GPU support** for embeddings, gene specificity scoring and spatial LDSC
+   - **Multi-trait** and multi-GPU spatial LDSC with interactive reports
 
 
 Features
@@ -25,8 +32,8 @@ Features
 - **Scalability**: Supports CPU/GPU computation and disk-backed arrays for large spatial datasets.
 
 
-Explore gsMap3D
----------------------
+Explore gsMap
+-------------
 
 .. list-table::
    :widths: 50 50
@@ -34,7 +41,7 @@ Explore gsMap3D
 
    * - **Installation**
 
-       Get gsMap3D running on your system using uv, pip, or conda.
+       Get gsMap running on your system using uv, pip, or conda.
 
        :doc:`Go to Installation <install>`
      - **Key Concepts**
@@ -65,47 +72,47 @@ Explore gsMap3D
 
        :doc:`Go to Scalability Guide <scalability>`
 
-Overview of ``gsMap3D`` Method
-------------------------------------
+Overview of the ``gsMap`` Method
+--------------------------------
 
-``gsMap3D`` operates on a four-step process:
+``gsMap`` operates on a four-step process:
 
 1. **Gene Specificity Assessment in 3D Spatial Contexts**:
    To address technical noise and capture spatial correlations of gene expression across consecutive ST sections,
-   ``gsMap3D`` constructs batch-corrected dual embeddings of molecular and spatial features.
+   ``gsMap`` constructs batch-corrected dual embeddings of molecular and spatial features.
    These embeddings jointly model transcriptomic similarity and local spatial context to identify homogeneous cells
    in 3D space. Gene specificity scores (GSS) are then computed by aggregating normalized gene expression ranks
    across these 3D homogeneous cells, enabling robust identification of genes that are both highly and specifically
    expressed in focal cells.
 
 2. **Linking Gene Specificity to Genetic Variants**:
-   ``gsMap3D`` links gene specificity scores to single nucleotide polymorphisms (SNPs) by assigning GSS to SNPs
+   ``gsMap`` links gene specificity scores to single nucleotide polymorphisms (SNPs) by assigning GSS to SNPs
    based on their proximity to gene transcription start sites (TSS) and SNP-to-gene epigenetic linking maps,
    thereby connecting spatially resolved gene expression patterns with trait-associated genetic variation.
 
 3. **3D Spatial S-LDSC for Cell–Trait Association**:
-   To quantify cell–trait associations in 3D space, ``gsMap3D`` integrates the 3D gene specificity scores with
+   To quantify cell–trait associations in 3D space, ``gsMap`` integrates the 3D gene specificity scores with
    genome-wide association study (GWAS) summary statistics using stratified LD score regression (S-LDSC).
    This framework enables the estimation of trait relevance for individual cells by associating their stratified
    LD scores with GWAS signals.
 
 4. **Spatial Region–Trait Association Analysis**:
-   To evaluate associations between traits and spatial regions, ``gsMap3D`` aggregates p-values from cells
+   To evaluate associations between traits and spatial regions, ``gsMap`` aggregates p-values from cells
    within a given 3D spatial region using the Cauchy combination test, yielding region-level association
    statistics that reflect coordinated genetic effects across spatially organized cell populations.
 
 .. figure:: /_static/gsMap3D_Method_schematic.png
    :align: center
    :width: 100%
-   :alt: gsMap3D Method Schematic
+   :alt: gsMap Method Schematic
 
 
 How to Cite
 ------------
 If you use ``gsMap`` in your studies, please cite:
-   gsMap3D: to be update.
-
    gsMap: Song, L., Chen, W., Hou, J., Guo, M. & Yang, J. "**Spatially resolved mapping of cells associated with human complex traits.**" *Nature* (2025). `doi:10.1038/s41586-025-08757-x <https://doi.org/10.1038/s41586-025-08757-x>`_
+
+   A citation for the gsMap 2.0 methods will be added here when available.
 
 
 .. toctree::
@@ -113,6 +120,7 @@ If you use ``gsMap`` in your studies, please cite:
     :hidden:
 
     install
+    upgrading
     downloads
     key_concepts
     2D Mapping <2d_tutorial/index>

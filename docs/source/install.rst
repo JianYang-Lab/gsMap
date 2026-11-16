@@ -3,11 +3,11 @@
 Installation
 ============
 
-**gsMap3D** requires Python 3.12 or later and is currently supported on Linux.
+**gsMap** 2.x requires Python 3.12 or later and is currently supported on Linux.
 Windows compatibility has not been verified, so Windows installation instructions are
 not provided.
 
-gsMap3D uses both **PyTorch** and **JAX**. Select exactly one optional dependency for the
+gsMap uses both **PyTorch** and **JAX**. Select exactly one optional dependency for the
 compute backend so that both libraries use compatible runtimes. Do not combine backend
 extras or use ``--all-extras``.
 
@@ -58,6 +58,11 @@ Install a released package with one compute backend. ``uv``'s
 editable installation or the dataset-preparation utilities supplied with the
 repository, use **Install from source**.
 
+.. note::
+
+   gsMap 2.0 is in beta. The commands below pin the pre-release ``2.0.0b1``; without
+   a version, ``pip`` and ``uv`` keep installing gsMap 1.x until 2.0.0 is released.
+
 Install ``uv`` and create the environment:
 
 .. code-block:: bash
@@ -71,14 +76,14 @@ Install exactly one backend:
 .. code-block:: bash
 
    # Choose exactly one command.
-   uv pip install "gsMap3D[cpu]" --torch-backend=cpu
-   uv pip install "gsMap3D[cuda126]" --torch-backend=cu126
-   uv pip install "gsMap3D[cuda128]" --torch-backend=cu128
-   uv pip install "gsMap3D[cuda130]" --torch-backend=cu130
-   uv pip install "gsMap3D[tpu]" --torch-backend=cpu
+   uv pip install "gsMap[cpu]==2.0.0b1" --torch-backend=cpu
+   uv pip install "gsMap[cuda126]==2.0.0b1" --torch-backend=cu126
+   uv pip install "gsMap[cuda128]==2.0.0b1" --torch-backend=cu128
+   uv pip install "gsMap[cuda130]==2.0.0b1" --torch-backend=cu130
+   uv pip install "gsMap[tpu]==2.0.0b1" --torch-backend=cpu
 
 ``--torch-backend`` is an ``uv pip`` option. It ensures that PyTorch comes from the
-selected wheel channel while gsMap3D and JAX are installed from PyPI.
+selected wheel channel while gsMap and JAX are installed from PyPI.
 
 Create an environment with Conda
 --------------------------------
@@ -88,16 +93,16 @@ selects its binary backend:
 
 .. code-block:: bash
 
-   conda create --name gsmap3d python=3.13 pip
-   conda activate gsmap3d
+   conda create --name gsmap python=3.13 pip
+   conda activate gsmap
    python -m pip install uv
 
    # Choose exactly one command.
-   uv pip install "gsMap3D[cpu]" --torch-backend=cpu
-   uv pip install "gsMap3D[cuda126]" --torch-backend=cu126
-   uv pip install "gsMap3D[cuda128]" --torch-backend=cu128
-   uv pip install "gsMap3D[cuda130]" --torch-backend=cu130
-   uv pip install "gsMap3D[tpu]" --torch-backend=cpu
+   uv pip install "gsMap[cpu]==2.0.0b1" --torch-backend=cpu
+   uv pip install "gsMap[cuda126]==2.0.0b1" --torch-backend=cu126
+   uv pip install "gsMap[cuda128]==2.0.0b1" --torch-backend=cu128
+   uv pip install "gsMap[cuda130]==2.0.0b1" --torch-backend=cu130
+   uv pip install "gsMap[tpu]==2.0.0b1" --torch-backend=cpu
 
 This approach uses Conda only to isolate Python. Installing the project with ``uv`` keeps
 the backend selection identical to the direct PyPI instructions.
@@ -110,8 +115,8 @@ conditional package indexes make each backend reproducible:
 
 .. code-block:: bash
 
-   git clone https://github.com/Ganten-Hornby/gsMap3D.git
-   cd gsMap3D
+   git clone https://github.com/JianYang-Lab/gsMap.git
+   cd gsMap
    git rev-parse HEAD
 
    # Choose exactly one command.
@@ -121,7 +126,7 @@ conditional package indexes make each backend reproducible:
    uv sync --locked --python 3.13 --extra cuda130
    uv sync --locked --python 3.13 --extra tpu
 
-``uv sync`` creates ``.venv``, installs gsMap3D in editable mode, and applies ``uv.lock``.
+``uv sync`` creates ``.venv``, installs gsMap in editable mode, and applies ``uv.lock``.
 ``--locked`` checks that the lockfile matches project metadata, without silently
 updating it; see the `uv sync documentation
 <https://docs.astral.sh/uv/concepts/projects/sync/>`_. Activate ``.venv`` before
@@ -140,6 +145,21 @@ activated environment instead of ``.venv``, use ``--active``:
 
    source /path/to/environment/bin/activate
    uv sync --active --extra cuda126
+
+Upgrading from gsMap 1.x or gsMap3D
+-----------------------------------
+
+gsMap 2.x replaces both gsMap 1.x and the ``gsMap3D`` preview package (0.1.x). The
+``gsMap3D`` preview installs the same ``gsMap`` module, so uninstall it before installing
+gsMap 2.x:
+
+.. code-block:: bash
+
+   uv pip uninstall gsMap3D
+
+gsMap 1.x users should read :doc:`upgrading` for the renamed commands and new reference
+resources. To keep using gsMap 1.x, install ``"gsMap<2"``; its source is on the
+`1.x branch <https://github.com/JianYang-Lab/gsMap/tree/1.x>`_.
 
 Verify the installation
 -----------------------

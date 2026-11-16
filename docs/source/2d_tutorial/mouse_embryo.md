@@ -61,7 +61,7 @@ report's spatial maps and gene expression/GSS plots, not the analysis results.
 # Create output directory
 mkdir -p results
 
-# Run gsMap3D in quick mode
+# Run gsMap in quick mode
 gsmap quick-mode \
     --workdir "results" \
     --project-name "mouse-e16-mosta" \

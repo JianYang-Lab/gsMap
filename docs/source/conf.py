@@ -1,9 +1,15 @@
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _distribution_version
 from urllib.parse import urlsplit
 
 project = "gsMap"
-copyright = "2026, JianYang-Lab"
+copyright = "2024-2026, JianYang-Lab"
 author = "Liyang, Wenhao"
-# release = gsMap.__version__
+try:
+    release = _distribution_version("gsMap")
+except PackageNotFoundError:  # building from a checkout without installing gsMap
+    release = "2.x"
+version = release
 
 # Downloads, tutorial commands and report previews share this resource root.
 # Change this value or pass

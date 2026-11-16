@@ -263,3 +263,6 @@ run_gsmap3d.py
 /RULES.md
 /rebuttal/
 /comments_response_plan.docx
+# Paper-derived method description; publish with the paper
+/docs/gsmap3d_method_description.md
+/docs/tools/*.private.md

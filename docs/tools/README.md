@@ -32,44 +32,19 @@ The resource directory layout must be the same under the new prefix.
 This configures documentation links only: it does not move files, update the
 published catalogue or change the software's resource-download settings.
 
-## Publishing to OBS
+## Publishing
 
-Future documentation and resource updates go directly to OBS, not the YangLab
-Nginx filesystem. The local publish tree is
-`/storage/yangjianLab/chenwenhao/resources/gsMap_public/publish/`; its root maps
-to `s3://public/gsMap/gsMap3D-r1/`. Full setup, backup and validation instructions
-are in `/storage/yangjianLab/chenwenhao/resources/gsMap_public/README.md`.
-
-AWS CLI v2 is available at `/home/yangjianLab/chenwenhao/.local/bin/aws`,
-independent of the gsMap Python environment. Use the `garage` profile with
-region `garage`, path-style addressing and endpoint `http://10.0.3.164:3900`.
-Credentials belong only in the user's private `~/.aws/credentials`, never in
-this repository or public files. The private API endpoint is for uploads;
-the HTTPS OBS prefix above is for readers.
-
-Build into a fresh directory to avoid carrying obsolete pages into a release:
+Maintainers publish the built HTML and resource bundles to the OBS mirror under the
+`gsmap_resource_base_url` prefix. Build into a fresh directory so obsolete pages are
+not carried into a release:
 
 ```bash
 sphinx-build -E -a -W --keep-going -b html docs/source docs/build/obs-public-review
 ```
 
-After validation, back up the previous local `publish/docs/r1/` and replace
-that local directory with the public build outputs; do not copy `.doctrees/`,
-`.buildinfo` or other internal build caches. Then inspect a documentation-only dry-run:
-
-```bash
-aws s3 sync \
-    /storage/yangjianLab/chenwenhao/resources/gsMap_public/publish/docs/r1/ \
-    s3://public/gsMap/gsMap3D-r1/docs/r1/ \
-    --profile garage --endpoint-url http://10.0.3.164:3900 \
-    --no-follow-symlinks --no-progress --dryrun
-```
-
-Remove `--dryrun` only for an intended release, after preserving any remote
-contents that will be overwritten. Do not add `--delete` by default. Save the
-upload log and exit status; check public page/asset URLs and file checksums.
-Do not claim publication from a build or dry-run alone. Old YangLab receipts
-are historical evidence, not proof of a new OBS publication.
+Upload credentials, endpoints and the step-by-step publication checklist are kept in
+the maintainers' private notes, not in this repository. Check the public page and
+asset URLs after an upload; a build or dry run alone is not a publication.
 
 ## Performance figures
 
