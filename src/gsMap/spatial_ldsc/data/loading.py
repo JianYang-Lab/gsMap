@@ -13,7 +13,6 @@ import pandas as pd
 import psutil
 import pyarrow.feather as feather
 import scipy.sparse as sp
-from statsmodels.stats.multitest import multipletests
 
 from gsMap.config import SpatialLDSCConfig
 from gsMap.latent2gene.marker_layout import open_marker_obs_indices
@@ -695,12 +694,22 @@ def load_common_resources_direct_ldscore(
     w_ld = _read_w_ld(config.w_ld_dir)
     w_ld.set_index("SNP", inplace=True)
 
-    # 2. Open the pre-computed ldscore h5ad in backed mode (can be large)
-    logger.info(f"Opening pre-computed ldscore h5ad from {config.ldscore_h5ad_path} ...")
+    # 2. Load the pre-computed ldscore h5ad into memory. Chunks are cell-column
+    # slices, which are fast in memory but strided (slow) reads from a backed file.
+    logger.info(f"Loading pre-computed ldscore h5ad into memory: {config.ldscore_h5ad_path}")
     ldscore_adata = ad.read_h5ad(
         config.ldscore_h5ad_path,
     )
-    logger.info(f"ldscore_adata: {ldscore_adata.n_obs} SNPs × {ldscore_adata.n_vars} cells")
+    matrix = ldscore_adata.X
+    matrix_bytes = (
+        matrix.data.nbytes + matrix.indices.nbytes + matrix.indptr.nbytes
+        if hasattr(matrix, "indptr")
+        else getattr(matrix, "nbytes", 0)
+    )
+    logger.info(
+        f"ldscore_adata: {ldscore_adata.n_obs} SNPs × {ldscore_adata.n_vars} cells "
+        f"({matrix_bytes / 2**30:.2f} GiB in memory)"
+    )
 
     # 3. Start with the intersection of ldscore SNPs and w_ld SNPs
     common_snps = ldscore_adata.obs_names.intersection(w_ld.index)
@@ -777,6 +786,13 @@ def prepare_trait_data(
     # Calculate genomic control lambda (λGC) before filtering
     logger.info(f"Lambda GC (genomic control λ): {lambda_gc:.4f}")
 
+    # A missing or non-positive sample size would make every weight (and so every
+    # spot's regression) NaN; drop such SNPs like missing Z values.
+    valid_n = np.isfinite(sumstats.N.to_numpy()) & (sumstats.N.to_numpy() > 0)
+    n_invalid_n = int((~valid_n).sum())
+    if n_invalid_n:
+        logger.warning(f"Dropping {n_invalid_n:,} SNPs with a missing or non-positive N")
+        sumstats = sumstats[valid_n]
     sumstats = sumstats[sumstats.chisq < chisq_max]
     logger.info(
         "Filtered to %d %sSNPs with chi^2 < %s",
@@ -953,55 +969,37 @@ def load_marker_scores_memmap_format(
     return adata
 
 
-def generate_expected_output_filename(config: SpatialLDSCConfig, trait_name: str) -> str | None:
+def generate_expected_output_filename(
+    config: SpatialLDSCConfig, trait_name: str, n_spots: int | None = None
+) -> str | None:
+    """Name of a complete result for ``trait_name``, or None when it cannot be predicted.
+
+    Matches ``writer.result_filename``: a ``cell_indices_range`` is clamped to the
+    ``n_spots`` input spots when that number is known.
+    """
     base_name = f"{config.project_name}_{trait_name}"
 
-    # If we have cell indices range, include it in filename
     if config.cell_indices_range:
         start_cell, end_cell = config.cell_indices_range
+        if n_spots is not None:
+            start_cell, end_cell = max(start_cell, 0), min(end_cell, n_spots)
         return f"{base_name}_cells_{start_cell}_{end_cell}.csv.gz"
 
-    # If sample filter is set, filename will include sample info
-    # but we can't predict exact start/end without loading data
-    # For now, just check the simple complete case
-    # If using sample filter, we might not be able to easily predict output name
-    # without knowing the sample filtering results.
-    # But usually we don't skip in that case or logic is handled by caller.
+    # With a sample filter the processed range is known only after filtering.
     if config.sample_filter:
         return None
 
-    # Default case: complete coverage
     return f"{base_name}.csv.gz"
 
 
 def log_existing_result_statistics(result_path: Path, trait_name: str):
+    """Log a reused result without re-reading it (statistics were logged when it was written)."""
     try:
-        # Read the existing result
-        logger.info(f"Reading existing result from: {result_path}")
-        df = pd.read_csv(result_path, compression="gzip")
-
-        n_spots = len(df)
-        bonferroni_threshold = 0.05 / n_spots
-        n_bonferroni_sig = (df["p"] < bonferroni_threshold).sum()
-
-        # FDR correction
-        reject, _, _, _ = multipletests(df["p"], alpha=0.001, method="fdr_bh")
-        n_fdr_sig = reject.sum()
-
-        logger.info("=" * 70)
-        logger.info(f"EXISTING RESULT SUMMARY - {trait_name}")
-        logger.info("=" * 70)
-        logger.info(f"Total spots: {n_spots:,}")
-        logger.info(f"Max -log10(p): {df['neg_log10_p'].max():.2f}")
-        logger.info("-" * 70)
-        logger.info(f"Nominally significant (p < 0.05): {(df['p'] < 0.05).sum():,}")
-        logger.info(f"Bonferroni threshold: {bonferroni_threshold:.2e}")
-        logger.info(f"Bonferroni significant: {n_bonferroni_sig:,}")
-        logger.info(f"FDR significant (alpha=0.001): {n_fdr_sig:,}")
-        logger.info("=" * 70)
-
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"Could not read existing result statistics: {e}")
+        size_mib = result_path.stat().st_size / 2**20
+    except OSError as error:
+        logger.warning(f"Could not stat existing result for {trait_name}: {error}")
+        return
+    logger.info(f"Reusing existing result for {trait_name}: {result_path} ({size_mib:.1f} MiB)")
 
 
 class LazyFeatherX:

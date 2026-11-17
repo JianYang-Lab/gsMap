@@ -24,10 +24,27 @@ CPU_BACKEND_VALUES = {"0", "false", "off", "disable", "disabled", "cpu"}
 GPU_BACKEND_VALUES = {"auto", "torch"}
 
 
+_GPU_MEMORY_ERROR_MARKERS = (
+    "out of memory",  # torch.OutOfMemoryError, CUDA_ERROR_OUT_OF_MEMORY
+    "resource_exhausted",  # XLA allocation failures
+    "resource exhausted",
+    "cudaerrormemoryallocation",
+    "cublas_status_alloc_failed",
+    "cusparse_status_alloc_failed",
+    "failed to allocate",
+)
+
+
 def is_gpu_memory_error(exc: BaseException) -> bool:
-    """Return True for common CUDA out-of-memory exceptions."""
+    """Return True for GPU out-of-memory errors.
+
+    Only allocation failures qualify. Errors such as "an illegal memory access was
+    encountered" leave the CUDA context unusable and must propagate, not fall back.
+    """
+    if type(exc).__name__ == "OutOfMemoryError":
+        return True
     message = str(exc).lower()
-    return "out of memory" in message or ("cuda" in message and "memory" in message)
+    return any(marker in message for marker in _GPU_MEMORY_ERROR_MARKERS)
 
 
 class LDScoreBackend(ABC):

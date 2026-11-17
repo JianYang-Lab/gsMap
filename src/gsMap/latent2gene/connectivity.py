@@ -7,7 +7,6 @@ import logging
 from functools import partial
 
 import anndata as ad
-import jax
 import jax.numpy as jnp
 import numpy as np
 import scanpy as sc
@@ -34,9 +33,6 @@ from gsMap.config import (
 from gsMap.logging_config import is_interactive_output
 
 logger = logging.getLogger(__name__)
-
-# Configure JAX
-jax.config.update("jax_enable_x64", False)  # Use float32 for speed
 
 
 def find_spatial_neighbors_with_slices(

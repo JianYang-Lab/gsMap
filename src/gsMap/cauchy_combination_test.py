@@ -31,6 +31,8 @@ logger = logging.getLogger(__name__)
 _CSV_BLOCK_SIZE = 32 << 20
 _PARQUET_ROW_GROUP_SIZE = 250_000
 _MAX_READER_WORKERS = 4
+# Smallest p-value used downstream; matches the LDSC writer's -log10(p) ceiling of 300.
+_MIN_P_VALUE = 1e-300
 _MAX_CALCULATION_WORKERS = 4
 
 
@@ -235,6 +237,10 @@ def _read_trait_into_row(
         p_values = batch.column("p").to_numpy(zero_copy_only=False)
         if np.any((p_values < 0) | (p_values > 1)):
             raise ValueError(f"LDSC result for {trait} contains p-values outside [0, 1]: {path}")
+        if np.any(p_values == 0):
+            # p underflows to 0 for z > ~38. Use the writer's -log10(p) ceiling (300)
+            # so the outlier filter and ACAT stay finite instead of failing on +inf.
+            p_values = np.where(p_values == 0, _MIN_P_VALUE, p_values)
         with np.errstate(divide="ignore", invalid="ignore"):
             np.log10(p_values, out=destination[offset:end])
             np.negative(destination[offset:end], out=destination[offset:end])
@@ -342,15 +348,22 @@ def _load_trait_matrix(
                 f"{metadata.n_spots / max(elapsed, 1e-12):,.0f} spots/s"
             )
 
+    # A spot is kept when any trait has a p-value; each trait skips only its own
+    # missing values, so one trait's failed cells never change another trait's result.
     # Avoid a traits x spots temporary boolean matrix (1.28 GiB for the macaque run).
-    valid_spots = np.ones(metadata.n_spots, dtype=bool)
-    for trait_values in values:
-        np.logical_and(valid_spots, ~np.isnan(trait_values), out=valid_spots)
+    valid_spots = np.zeros(metadata.n_spots, dtype=bool)
+    for trait, trait_values in zip(traits, values, strict=True):
+        missing = np.isnan(trait_values)
+        n_missing = int(missing.sum())
+        if n_missing:
+            logger.warning(
+                f"{trait}: {n_missing:,} spots have no p-value (failed regression) "
+                "and are excluded from this trait's Cauchy statistics."
+            )
+        np.logical_or(valid_spots, ~missing, out=valid_spots)
     n_invalid = int((~valid_spots).sum())
     if n_invalid:
-        logger.warning(
-            f"Excluding {n_invalid:,} spots with a missing p-value in at least one trait."
-        )
+        logger.warning(f"Excluding {n_invalid:,} spots with no p-value in any trait.")
     elapsed = time.perf_counter() - started
     logger.info(
         f"Loaded {len(traits)} LDSC traits ({metadata.n_spots * len(traits):,} values) "
@@ -614,21 +627,45 @@ def _summarize_trait_groups(
     values: np.ndarray,
     annotation_col: str,
     groups: _GroupIndex,
+    sample_name: pd.Categorical | None = None,
 ) -> list[dict[str, object]]:
+    background_sizes = groups.background_sizes
+    missing = None
+    if np.isnan(values[groups.indices]).any():
+        # This trait lacks some spots that other traits have: count only its own
+        # spots in each Bonferroni background (all spots, or the spot's sample).
+        missing = np.isnan(values)
+        present = groups.indices[~missing[groups.indices]]
+        if groups.sample_names is None:
+            background_sizes = np.full(len(groups.annotations), len(present), dtype=np.int64)
+        else:
+            per_sample = np.bincount(
+                np.asarray(sample_name.codes[present], dtype=np.int64),
+                minlength=len(sample_name.categories),
+            )
+            label_to_code = {str(label): code for code, label in enumerate(sample_name.categories)}
+            background_sizes = np.asarray(
+                [per_sample[label_to_code[label]] for label in groups.sample_names],
+                dtype=np.int64,
+            )
     rows = []
     for group_index, annotation in enumerate(groups.annotations):
         start = groups.offsets[group_index]
         end = groups.offsets[group_index + 1]
         positions = groups.indices[start:end]
-        sample_name = groups.sample_names[group_index] if groups.sample_names is not None else None
+        if missing is not None:
+            positions = positions[~missing[positions]]
+        group_sample = (
+            groups.sample_names[group_index] if groups.sample_names is not None else None
+        )
         rows.append(
             _summarize_group(
                 trait=trait,
                 annotation_col=annotation_col,
                 annotation=annotation,
                 log10p=values[positions],
-                background_size=int(groups.background_sizes[group_index]),
-                sample_name=sample_name,
+                background_size=int(background_sizes[group_index]),
+                sample_name=group_sample,
             )
         )
     return rows
@@ -695,7 +732,9 @@ def _run_cauchy_for_annotation(
         values = matrix.values[trait_index]
         annotation_rows = _summarize_trait_groups(trait, values, annotation_col, annotation_groups)
         sample_rows = (
-            _summarize_trait_groups(trait, values, annotation_col, sample_groups)
+            _summarize_trait_groups(
+                trait, values, annotation_col, sample_groups, sample_name=metadata.sample_name
+            )
             if sample_groups is not None
             else []
         )

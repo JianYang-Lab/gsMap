@@ -23,17 +23,6 @@ from gsMap.spatial_ldsc.execution.engine import SpatialLDSCEngine
 
 logger = logging.getLogger("gsMap.spatial_ldsc_jax")
 
-# Configure JAX for optimal performance and memory efficiency
-jax.config.update("jax_enable_x64", False)  # Use float32 for speed and memory efficiency
-
-# Platform selection - comment/uncomment as needed
-# jax.config.update('jax_platform_name', 'cpu')  # Force CPU usage
-# jax.config.update('jax_platform_name', 'gpu')  # Force GPU usage
-
-# Memory configuration for environments with limited resources
-# os.environ.setdefault('XLA_PYTHON_CLIENT_PREALLOCATE', 'false')
-# os.environ.setdefault('XLA_PYTHON_CLIENT_MEM_FRACTION', '0.5')
-
 # ============================================================================
 # Main entry point
 # ============================================================================
@@ -44,6 +33,9 @@ def run_spatial_ldsc_jax(config: SpatialLDSCConfig):
     """
     Run spatial LDSC for all traits in config.sumstats_config_dict.
     """
+    from gsMap.utils.jax_setup import use_float32_jax
+
+    use_float32_jax()
     traits_to_process = list(config.sumstats_config_dict.items())
     if not traits_to_process:
         raise ValueError("No traits to process. config.sumstats_config_dict is empty.")
@@ -53,75 +45,76 @@ def run_spatial_ldsc_jax(config: SpatialLDSCConfig):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     marker_score_adata = None
+    ldscore_adata = None
     trait_failures: list[tuple[str, Exception]] = []
 
     try:
-        if config.ldscore_h5ad_path is not None:
-            # ── Direct ldscore input mode ────────────────────────────────────
-            # Bypasses LD score computation;
-            # baseline annotations come from additional_baseline_h5ad_path_list.
-            logger.info("Using direct ldscore input mode (pre-computed SNP × Cell h5ad).")
-            baseline_ld, w_ld, ldscore_adata = load_common_resources_direct_ldscore(config)
+        try:
+            if config.ldscore_h5ad_path is not None:
+                # ── Direct ldscore input mode ────────────────────────────────────
+                # Bypasses LD score computation;
+                # baseline annotations come from additional_baseline_h5ad_path_list.
+                logger.info("Using direct ldscore input mode (pre-computed SNP × Cell h5ad).")
+                baseline_ld, w_ld, ldscore_adata = load_common_resources_direct_ldscore(config)
 
-            logger.debug("Initializing processor (direct ldscore mode)...")
-            processor = SpatialLDSCEngine(
-                config=config,
-                output_dir=output_dir,
-                marker_score_adata=None,
-                snp_gene_weight_adata=None,
-                baseline_ld=baseline_ld,
-                w_ld=w_ld,
-                ldscore_adata=ldscore_adata,
-            )
-        else:
-            # ── Weight-matrix mode ───────────────────────
-            if config.marker_score_format not in ["memmap", "h5ad", "feather"]:
-                raise NotImplementedError(
-                    f"Marker score format '{config.marker_score_format}' is not supported. "
-                    "Only 'memmap', 'h5ad', and 'feather' are supported."
+                logger.debug("Initializing processor (direct ldscore mode)...")
+                processor = SpatialLDSCEngine(
+                    config=config,
+                    output_dir=output_dir,
+                    marker_score_adata=None,
+                    snp_gene_weight_adata=None,
+                    baseline_ld=baseline_ld,
+                    w_ld=w_ld,
+                    ldscore_adata=ldscore_adata,
                 )
-
-            # Load marker scores once (format-agnostic)
-            logger.info(f"Loading marker scores (format: {config.marker_score_format})...")
-
-            if config.marker_score_format == "memmap":
-                marker_score_adata = load_marker_scores_memmap_format(config)
-
-            elif config.marker_score_format == "feather":
-                feather_path = Path(config.marker_score_feather_path)
-                logger.info(f"Loading marker scores from Feather: {feather_path}")
-                marker_score_adata = FeatherAnnData(
-                    feather_path, index_col="HUMAN_GENE_SYM", transpose=True
-                )
-
-            elif config.marker_score_format == "h5ad":
-                if not config.marker_score_h5ad_path:
-                    raise ValueError(
-                        "marker_score_h5ad_path must be provided when marker_score_format is 'h5ad'"
+            else:
+                # ── Weight-matrix mode ───────────────────────
+                if config.marker_score_format not in ["memmap", "h5ad", "feather"]:
+                    raise NotImplementedError(
+                        f"Marker score format '{config.marker_score_format}' is not supported. "
+                        "Only 'memmap', 'h5ad', and 'feather' are supported."
                     )
 
-                h5ad_path = Path(config.marker_score_h5ad_path)
-                if not h5ad_path.exists():
-                    raise FileNotFoundError(f"Marker score H5AD file not found: {h5ad_path}")
+                # Load marker scores once (format-agnostic)
+                logger.info(f"Loading marker scores (format: {config.marker_score_format})...")
 
-                logger.info(f"Loading marker scores from H5AD: {h5ad_path}")
-                marker_score_adata = ad.read_h5ad(h5ad_path, backed="r")
+                if config.marker_score_format == "memmap":
+                    marker_score_adata = load_marker_scores_memmap_format(config)
 
-            # Load common resources once (baseline, weights, snp_gene_weights)
-            baseline_ld, w_ld, snp_gene_weight_adata = load_common_resources(config)
+                elif config.marker_score_format == "feather":
+                    feather_path = Path(config.marker_score_feather_path)
+                    logger.info(f"Loading marker scores from Feather: {feather_path}")
+                    marker_score_adata = FeatherAnnData(
+                        feather_path, index_col="HUMAN_GENE_SYM", transpose=True
+                    )
 
-            # Initialize processor with common resources
-            logger.debug("Initializing processor (weight-matrix mode)...")
-            processor = SpatialLDSCEngine(
-                config=config,
-                output_dir=output_dir,
-                marker_score_adata=marker_score_adata,
-                snp_gene_weight_adata=snp_gene_weight_adata,
-                baseline_ld=baseline_ld,
-                w_ld=w_ld,
-            )
+                elif config.marker_score_format == "h5ad":
+                    if not config.marker_score_h5ad_path:
+                        raise ValueError(
+                            "marker_score_h5ad_path must be provided when marker_score_format is 'h5ad'"
+                        )
 
-        try:
+                    h5ad_path = Path(config.marker_score_h5ad_path)
+                    if not h5ad_path.exists():
+                        raise FileNotFoundError(f"Marker score H5AD file not found: {h5ad_path}")
+
+                    logger.info(f"Loading marker scores from H5AD: {h5ad_path}")
+                    marker_score_adata = ad.read_h5ad(h5ad_path, backed="r")
+
+                # Load common resources once (baseline, weights, snp_gene_weights)
+                baseline_ld, w_ld, snp_gene_weight_adata = load_common_resources(config)
+
+                # Initialize processor with common resources
+                logger.debug("Initializing processor (weight-matrix mode)...")
+                processor = SpatialLDSCEngine(
+                    config=config,
+                    output_dir=output_dir,
+                    marker_score_adata=marker_score_adata,
+                    snp_gene_weight_adata=snp_gene_weight_adata,
+                    baseline_ld=baseline_ld,
+                    w_ld=w_ld,
+                )
+
             num_gpus = getattr(config, "ldsc_num_gpus", 1)
             if num_gpus > 1 or (
                 getattr(config, "ldsc_share_ld", False)
@@ -150,7 +143,11 @@ def run_spatial_ldsc_jax(config: SpatialLDSCConfig):
                         logger.info("=" * 70)
 
                         # Check if output already exists
-                        expected_filename = generate_expected_output_filename(config, trait_name)
+                        expected_filename = generate_expected_output_filename(
+                            config,
+                            trait_name,
+                            n_spots=_n_input_spots(config, marker_score_adata, ldscore_adata),
+                        )
                         if expected_filename is not None:
                             expected_output_path = output_dir / expected_filename
                             if expected_output_path.exists():
@@ -217,3 +214,12 @@ def run_spatial_ldsc_jax(config: SpatialLDSCConfig):
     except Exception as error:
         logger.error(f"Spatial LDSC execution failed: {error}")
         raise
+
+
+def _n_input_spots(config, marker_score_adata, ldscore_adata) -> int | None:
+    """Input spot count, needed only to name a clamped ``cell_indices_range`` result."""
+    if not config.cell_indices_range:
+        return None
+    if marker_score_adata is not None:
+        return getattr(marker_score_adata, "n_obs", None)
+    return getattr(ldscore_adata, "n_vars", None)

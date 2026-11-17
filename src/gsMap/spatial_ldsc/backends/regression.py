@@ -85,7 +85,7 @@ class RegressionBatch:
 
         result = np.concatenate(jax.device_get(self.groups), axis=0)
         if self.validate_moments and (not np.isfinite(result).all() or np.any(result[:, 1] <= 0)):
-            raise FloatingPointError("Singular or invalid spatial LDSC moment regression")
+            raise invalid_moments_error(result)
         return result
 
 
@@ -196,3 +196,17 @@ class SharedRegressionBackend(AbstractContextManager):
     def __exit__(self, *exc_info):
         self.close()
         return False
+
+
+def invalid_moments_error(result) -> FloatingPointError:
+    """Explain a rejected moments result (never published) and the exact fallback."""
+    import numpy as np
+
+    values = np.asarray(result)
+    bad = ~np.isfinite(values).all(axis=1) | np.any(values[:, 1:2] <= 0, axis=1)
+    return FloatingPointError(
+        f"Singular or invalid spatial LDSC moment regression for {int(bad.sum()):,} "
+        "trait-spot pairs; no results were written. Rerun with "
+        "--ldsc-regression-backend jax, which fits these spots exactly and records "
+        "singular spots as missing."
+    )

@@ -10,7 +10,7 @@ This module orchestrates the complete workflow:
 """
 
 import logging
-import sys
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -184,14 +184,10 @@ class LDScorePipeline:
                 # Expected format: Feature, Chromosome, Start, End, [Score], [Strand]
 
                 if "Name" not in bed_df.columns:
-                    logger.error(
-                        "BED file must contain a 'Name' column (4th column in BED6 format)"
+                    raise ValueError(
+                        f"BED file {self.config.mapping_file} has no 'Name' column "
+                        "(4th column); expected BED6 without a header line (chr, start, end, name, score, strand)."
                     )
-                    logger.error(
-                        "Required format: standard BED6 (chr, start, end, name, score, strand)"
-                    )
-                    logger.error("Note: BED file should NOT have a header line")
-                    sys.exit(1)
 
                 # Rename 'Name' to 'Feature' for internal use
                 bed_df = bed_df.rename(columns={"Name": "Feature"})
@@ -199,24 +195,22 @@ class LDScorePipeline:
                 # Ensure required columns exist
                 required_cols = ["Chromosome", "Start", "End", "Feature"]
                 if not all(col in bed_df.columns for col in required_cols):
-                    logger.error("BED file missing required columns after parsing")
-                    logger.error(
-                        "Required format: standard BED6 (chr, start, end, name, score, strand)"
+                    raise ValueError(
+                        f"BED file {self.config.mapping_file} lacks columns {required_cols} "
+                        "after parsing; expected BED6 without a header line (chr, start, end, name, score, strand)."
                     )
-                    logger.error("Note: BED file should NOT have a header line")
-                    sys.exit(1)
 
                 logger.info(f"Successfully loaded BED file: {len(bed_df)} features")
                 logger.info(f"Columns: {list(bed_df.columns)}")
                 return bed_df
 
-            except Exception as e:  # noqa: BLE001
-                logger.error(f"Failed to read BED file: {e}")
-                logger.error(
-                    "Required format: standard BED6 (chr, start, end, name, score, strand)"
-                )
-                logger.error("Note: BED file should NOT have a header line")
-                sys.exit(1)
+            except ValueError:
+                raise
+            except Exception as e:
+                raise ValueError(
+                    f"Failed to read BED file {self.config.mapping_file} ({e}); "
+                    "expected BED6 without a header line (chr, start, end, name, score, strand)."
+                ) from e
 
         elif self.config.mapping_type == "dict":
             df_map = pd.read_csv(self.config.mapping_file, sep=None, engine="python")
@@ -275,8 +269,9 @@ class LDScorePipeline:
             )
             return reader
         except FileNotFoundError as e:
-            logger.error(f"PLINK files not found for chromosome {chromosome}: {e}")
-            return None
+            raise FileNotFoundError(
+                f"PLINK files not found for requested chromosome {chromosome}: {e}"
+            ) from e
 
     def _process_chromosome_from_mapping(
         self,
@@ -386,18 +381,17 @@ class LDScorePipeline:
             annot_file = self.config.annot_file.format(chromosome=chromosome)
 
         if not Path(annot_file).exists():
-            logger.error(f"Annotation file not found: {annot_file}")
-            return None
+            raise FileNotFoundError(
+                f"Annotation file not found for requested chromosome {chromosome}: {annot_file}"
+            )
 
         logger.info(f"Loading annotation from: {annot_file}")
         try:
             df_annot = pd.read_csv(annot_file, sep=r"\s+")
-        except Exception as e:  # noqa: BLE001
-            logger.error(f"Failed to read annotation file: {e}")
-            return None
-
-        # Drop metadata columns
-        [c for c in ["CHR", "BP", "CM", "SNP"] if c in df_annot.columns]
+        except Exception as e:
+            raise ValueError(
+                f"Failed to read annotation file for chromosome {chromosome}: {annot_file}: {e}"
+            ) from e
 
         if "SNP" in df_annot.columns:
             # Align to filtered BIM
@@ -416,10 +410,11 @@ class LDScorePipeline:
                 df_annot.index = reader.snp_ids_original
                 df_annot = df_annot.reindex(reader.bim["SNP"], fill_value=0)
             else:
-                logger.error(
-                    f"Annotation rows mismatch. Missing 'SNP' column preventing alignment. For the thin format, annotation rows ({len(df_annot)}) must match SNP count ({reader.m_original}) in the plink panel."
+                raise ValueError(
+                    f"Annotation rows for chromosome {chromosome} cannot be aligned: without a "
+                    f"'SNP' column (thin format), the {len(df_annot)} annotation rows must match "
+                    f"the {reader.m_original} SNPs in the PLINK panel."
                 )
-                return None
 
         # Drop non-feature columns
         feature_df = df_annot.drop(
@@ -623,8 +618,10 @@ class LDScorePipeline:
         for chrom in sorted_chroms:
             res = results[chrom]
             if res.feature_names != feature_names:
-                logger.error(f"Feature mismatch in chromosome {chrom}. Skipping.")
-                continue
+                raise ValueError(
+                    f"Chromosome {chrom} has different features than chromosome "
+                    f"{sorted_chroms[0]}; the weight matrix needs one feature set."
+                )
 
             all_snp_names.extend(res.hm3_snp_names)
             all_snp_chr.extend(res.hm3_snp_chr)
@@ -653,7 +650,13 @@ class LDScorePipeline:
         out_path.mkdir(parents=True, exist_ok=True)
         out_file = out_path / f"{output_filename}.h5ad"
 
-        adata.write(out_file)
+        # Publish atomically: an interrupted write never leaves a truncated matrix.
+        temporary = out_file.with_name(f".{out_file.name}.{os.getpid()}.partial")
+        try:
+            adata.write(temporary)
+            os.replace(temporary, out_file)
+        finally:
+            temporary.unlink(missing_ok=True)
         logger.info(f"Successfully saved AnnData to {out_file}")
 
         # Save Combined Mapping CSV if available

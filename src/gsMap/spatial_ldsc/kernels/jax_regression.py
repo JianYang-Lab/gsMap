@@ -6,8 +6,6 @@ import jax
 import jax.numpy as jnp
 from jax import jit
 
-jax.config.update("jax_enable_x64", False)
-
 
 def _packed_block_equations(spatial, baseline, chisq, weights_sq):
     """Share SNP-wise products across cells for small baseline designs.

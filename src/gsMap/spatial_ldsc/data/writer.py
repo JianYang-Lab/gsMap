@@ -94,6 +94,7 @@ class ResultWriter:
         self.p_values = np.empty(expected_cells, dtype=np.float64)
         self.rows_written = 0
         self.nominal_significant = 0
+        self.failed_cells = 0
         self.max_neg_log10_p = float("-inf")
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -256,8 +257,14 @@ class ResultWriter:
         with np.errstate(divide="ignore", invalid="ignore"):
             z_scores = betas / ses
         p_values = norm.sf(z_scores)
-        p_values = np.nan_to_num(p_values, nan=1.0, posinf=0.0, neginf=1.0)
         neg_log10_p = -np.log10(np.maximum(p_values, 1e-300))
+        # A failed or degenerate regression (non-finite beta/SE, or SE = 0) has no
+        # p-value. Record it as missing rather than as p = 1 (no evidence) or p = 0.
+        failed = ~np.isfinite(z_scores)
+        if failed.any():
+            p_values[failed] = np.nan
+            neg_log10_p[failed] = np.nan
+            self.failed_cells += int(failed.sum())
 
         end_row = self.rows_written + p_values.size
         if end_row > self.expected_cells:
@@ -268,10 +275,10 @@ class ResultWriter:
         self.p_values[self.rows_written : end_row] = p_values
         self.rows_written = end_row
         self.nominal_significant += int(np.count_nonzero(p_values < 0.05))
-        if neg_log10_p.size:
+        if np.isfinite(neg_log10_p).any():
             self.max_neg_log10_p = max(
                 self.max_neg_log10_p,
-                float(np.max(neg_log10_p)),
+                float(np.nanmax(neg_log10_p)),
             )
 
         frame = pd.DataFrame(
@@ -389,6 +396,11 @@ class ResultWriter:
         logger.info(f"Cell range processed: [{self.min_spot_start}, {self.max_spot_end})")
         logger.info(f"Max -log10(p): {self.max_neg_log10_p:.2f}")
         logger.info("-" * 70)
+        if self.failed_cells:
+            logger.warning(
+                f"Regression failed for {self.failed_cells:,} spots (non-finite beta or SE); "
+                "their p-values are left missing and are excluded downstream."
+            )
         logger.info(f"Nominally significant (p < 0.05): {self.nominal_significant:,}")
         logger.info(f"Bonferroni threshold: {bonferroni_threshold:.2e}")
         logger.info(f"Bonferroni significant: {n_bonferroni:,}")

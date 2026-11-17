@@ -158,10 +158,41 @@ def merge_gzip_members(parts, target):
         temporary.unlink(missing_ok=True)
 
 
-def wait_workers(processes, *, on_progress=None):
-    """Fail fast, terminate siblings and reap every child even on interruption."""
+DEFAULT_WORKER_STALL_SECONDS = 3600
+
+
+def worker_stall_seconds() -> float:
+    """Seconds without any worker activity before a worker counts as hung (0 disables)."""
+    value = os.environ.get("GSMAP_LDSC_WORKER_STALL_SECONDS", "")
+    try:
+        return max(0.0, float(value)) if value.strip() else float(DEFAULT_WORKER_STALL_SECONDS)
+    except ValueError:
+        logger.warning("Ignoring invalid GSMAP_LDSC_WORKER_STALL_SECONDS=%r", value)
+        return float(DEFAULT_WORKER_STALL_SECONDS)
+
+
+def _last_activity(paths, since: float) -> float:
+    """Latest wall-clock modification time of a worker's heartbeat files."""
+    latest = since
+    for path in paths:
+        try:
+            latest = max(latest, Path(path).stat().st_mtime)
+        except OSError:
+            pass  # Not written yet.
+    return latest
+
+
+def wait_workers(processes, *, on_progress=None, heartbeat_paths=None, stall_seconds=None):
+    """Fail fast, terminate siblings and reap every child even on interruption.
+
+    ``heartbeat_paths[rank]`` lists files a healthy worker keeps updating (its
+    progress record and log). A running worker whose files stay unchanged for
+    ``stall_seconds`` is treated as hung, so the run fails instead of waiting forever.
+    """
+    started_wall = time.time()
     try:
         last_progress = time.monotonic()
+        last_stall_check = time.monotonic()
         while True:
             codes = [process.poll() for process in processes]
             for rank, code in enumerate(codes):
@@ -175,6 +206,21 @@ def wait_workers(processes, *, on_progress=None):
                 last_progress = time.monotonic()
             if done:
                 return
+            if (
+                heartbeat_paths is not None
+                and stall_seconds
+                and time.monotonic() - last_stall_check >= min(30.0, stall_seconds)
+            ):
+                last_stall_check = time.monotonic()
+                now = time.time()
+                for rank, code in enumerate(codes):
+                    idle = now - _last_activity(heartbeat_paths[rank], started_wall)
+                    if code is None and idle >= stall_seconds:
+                        raise RuntimeError(
+                            f"LDSC GPU worker {rank} made no progress for {idle / 60:.0f} min "
+                            f"and appears hung; inspect {heartbeat_paths[rank][-1]}. Set "
+                            "GSMAP_LDSC_WORKER_STALL_SECONDS to change this limit (0 disables it)."
+                        )
             time.sleep(0.2)
     finally:
         stop_workers(processes)
@@ -304,7 +350,15 @@ def run_multi_gpu(engine, union, sparse, prepared):
                         stderr=subprocess.STDOUT,
                     )
                 )
-            wait_workers(processes, on_progress=report_progress)
+            wait_workers(
+                processes,
+                on_progress=report_progress,
+                heartbeat_paths=[
+                    [logdir / f"worker-{rank}.progress.json", logdir / f"worker-{rank}.log"]
+                    for rank in range(len(processes))
+                ],
+                stall_seconds=worker_stall_seconds(),
+            )
             receipts = [
                 json.loads((staging / f"worker-{rank}.json").read_text())
                 for rank in range(len(ranges))

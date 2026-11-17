@@ -24,6 +24,22 @@ Release notes on GitHub are generated from the section that matches each version
     about half as long and the page uses less memory.
 - Reports look the same. Existing reports pick up both changes by re-rendering `index.html`;
     the data files are unchanged.
+- Spatial LDSC: a spot whose regression fails (non-finite beta or SE, or SE = 0) is written
+    with a missing p-value instead of p = 1, and Cauchy combination skips it. SNPs with a
+    missing or non-positive N are dropped with a warning; one such SNP used to make every
+    spot's p-value 1. Results for valid inputs are unchanged.
+- Cauchy combination: p-values that underflow to 0 no longer make a whole annotation report
+    p = 1, and each trait now skips only its own missing spots, so one trait's result no
+    longer depends on which other traits run with it.
+- Spatial LDSC robustness: only real GPU out-of-memory errors fall back to the CPU; a hung
+    multi-GPU worker fails after an hour without progress
+    (`GSMAP_LDSC_WORKER_STALL_SECONDS`); resources are released when setup fails; a skipped
+    trait is no longer re-read; the moments backend explains how to continue when it rejects
+    a singular fit. Importing gsMap no longer changes JAX settings.
+- `gsmap ldscore-weight-matrix`: a missing PLINK or annotation file for a requested
+    chromosome, or inconsistent features, now raises an error instead of silently leaving
+    the chromosome out; the matrix is written atomically, and errors raise exceptions
+    instead of exiting the Python process.
 
 ## 2.0.0b1
 

@@ -171,7 +171,9 @@ class CPUMomentRegression:
                 values.append(solve_parallel(terms, p["nbar"][start:end]))
             result = np.concatenate(values, axis=0).transpose(0, 2, 1)
             if not np.isfinite(result).all() or np.any(result[:, 1] <= 0):
-                raise FloatingPointError("Singular or invalid spatial LDSC moment regression")
+                from gsMap.spatial_ldsc.backends.regression import invalid_moments_error
+
+                raise invalid_moments_error(result)
             return result
         finally:
             set_num_threads(old)

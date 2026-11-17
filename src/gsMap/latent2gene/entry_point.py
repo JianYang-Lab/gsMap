@@ -78,6 +78,9 @@ def run_latent_to_gene(config: LatentToGeneConfig) -> dict[str, Any]:
             - mean_frac: Path to mean expression fraction
             - marker_scores: Path to marker scores memory map
     """
+    from gsMap.utils.jax_setup import use_float32_jax
+
+    use_float32_jax()
 
     from gsMap.config.spatial import guard_spatial_contract
 

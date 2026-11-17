@@ -22,6 +22,9 @@ def main():
 
 
 def run_worker(request):
+    from gsMap.utils.jax_setup import use_float32_jax
+
+    use_float32_jax()
     logging.info(
         "Starting LDSC worker %s on CUDA token %s; CPU affinity %s",
         request["rank"],

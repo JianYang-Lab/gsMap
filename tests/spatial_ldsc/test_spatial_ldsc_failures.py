@@ -51,7 +51,7 @@ def test_failed_trait_does_not_turn_the_multi_trait_run_into_success(tmp_path, m
     monkeypatch.setattr(
         spatial_ldsc_jax,
         "generate_expected_output_filename",
-        lambda _config, _trait: None,
+        lambda _config, _trait, **_kwargs: None,
     )
     monkeypatch.setattr(
         spatial_ldsc_jax,
