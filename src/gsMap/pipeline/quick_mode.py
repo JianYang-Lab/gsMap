@@ -105,17 +105,17 @@ def run_quick_mode(config: QuickModeConfig):
         start_time = time.time()
 
         traits_remaining = {}
+        sldsc_config = config.spatial_ldsc_config
         for trait_name, sumstats_path in traits_to_process.items():
             if check_spatial_ldsc_done(config, trait_name):
                 logger.info(f"Spatial LDSC result already exists for {trait_name}. Skipping...")
-                warn_if_outputs_differ("spatial_ldsc", config, trait=trait_name)
+                warn_if_outputs_differ("spatial_ldsc", sldsc_config, trait=trait_name)
             else:
                 traits_remaining[trait_name] = sumstats_path
 
         if not traits_remaining:
             logger.info("All traits have been processed for Spatial LDSC. Skipping step...")
         else:
-            sldsc_config = config.spatial_ldsc_config
             # Update config to run only remaining traits
             sldsc_config.sumstats_config_dict = traits_remaining
             run_spatial_ldsc_jax(sldsc_config)
