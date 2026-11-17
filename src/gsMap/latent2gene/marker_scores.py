@@ -91,6 +91,43 @@ def _automatic_cached_marker_batch_size(
     return eligible[-1] if eligible else _MARKER_BATCH_SIZE_CHOICES[0]
 
 
+def normalize_float16_rows(embedding: np.ndarray, source: np.ndarray) -> np.ndarray:
+    """L2-normalize float16 rows; rows whose float16 norm overflows use float32.
+
+    A float16 norm overflows above ~256, which would turn those rows into zeros. Every
+    other row is normalized exactly as before.
+    """
+    norm = np.linalg.norm(embedding, axis=1, keepdims=True)
+    normalized = embedding / (norm + 1e-8)
+    overflow = ~np.isfinite(norm[:, 0])
+    if overflow.any():
+        logger.warning(
+            f"{int(overflow.sum()):,} cell embeddings have an L2 norm beyond float16 range; "
+            "normalizing them in float32."
+        )
+        rows = np.asarray(source[overflow], dtype=np.float32)
+        normalized[overflow] = (
+            rows / (np.linalg.norm(rows, axis=1, keepdims=True) + 1e-8)
+        ).astype(normalized.dtype)
+    return normalized
+
+
+def assign_rows_without_overflow(stored: np.ndarray, rows, values: np.ndarray) -> np.ndarray:
+    """Assign ``values`` to ``stored[rows]``, widening the integer dtype if they do not fit.
+
+    Cell types choose their own (possibly narrow) index dtype; assigning wider indices
+    into a narrower shared array would wrap silently.
+    """
+    if (
+        values.size
+        and np.issubdtype(stored.dtype, np.integer)
+        and int(values.max()) > np.iinfo(stored.dtype).max
+    ):
+        stored = stored.astype(np.result_type(stored.dtype, values.dtype))
+    stored[rows] = values
+    return stored
+
+
 @dataclass
 class PreparedRankWindow:
     """Host-side payload ready to update one bounded device rank cache."""
@@ -588,8 +625,9 @@ class MarkerScoreCalculator:
         emb_niche = emb_niche / (emb_niche_norm + 1e-8)
 
         # L2 normalize individual embeddings
-        emb_indv_norm = np.linalg.norm(emb_indv, axis=1, keepdims=True)
-        emb_indv = emb_indv / (emb_indv_norm + 1e-8)
+        emb_indv = normalize_float16_rows(
+            emb_indv, adata.obsm[self.config.latent_representation_cell]
+        )
 
         return coords, emb_niche, emb_indv, slice_ids
 
@@ -1298,7 +1336,9 @@ class MarkerScoreCalculator:
             )
 
         # Store the neighbor indices and cell_sims for this cell type
-        adata.obsm["gsMap_homo_indices"][cell_indices_sorted] = neighbor_indices
+        adata.obsm["gsMap_homo_indices"] = assign_rows_without_overflow(
+            adata.obsm["gsMap_homo_indices"], cell_indices_sorted, neighbor_indices
+        )
         adata.obsm["gsMap_homo_cell_sims"][cell_indices_sorted] = cell_sims
 
         # Only store niche_sims if niche embedding was provided (not dummy)

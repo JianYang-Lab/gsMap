@@ -268,6 +268,7 @@ class MemMapDense:
         num_write_workers: int = 4,
         flush_interval: float = 30,
         tmp_dir: str | Path | None = None,
+        queue_size: int = 100,
     ):
         """
         Initialize a memory-mapped dense matrix.
@@ -357,7 +358,9 @@ class MemMapDense:
             raise
 
         # Async writing setup (only for write modes)
-        self.write_queue = queue.Queue(maxsize=100)
+        # Bounded so a slow filesystem applies back-pressure instead of buffering
+        # many large batches in memory.
+        self.write_queue = queue.Queue(maxsize=max(1, int(queue_size)))
         self.writer_threads = []
         self.stop_writer = threading.Event()
         # First exception raised by any writer thread, surfaced on close/mark_complete

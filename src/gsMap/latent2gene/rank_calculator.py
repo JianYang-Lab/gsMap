@@ -1080,6 +1080,9 @@ class RankCalculator:
                             f"writers={rank_writer_workers}"
                         )
                         # Initialize the dense float16 rank matrix once its width is known.
+                        # Each queued write holds up to batch x interval float16 rows;
+                        # keep at most ~2 GiB of them waiting for the filesystem.
+                        write_bytes = rank_batch_size * rank_write_interval * n_genes * 2
                         rank_memmap = MemMapDense(
                             str(rank_memmap_path),
                             shape=(total_cells_expected, n_genes),
@@ -1087,6 +1090,7 @@ class RankCalculator:
                             mode="w",
                             num_write_workers=rank_writer_workers,
                             tmp_dir=self.config.memmap_tmp_dir,
+                            queue_size=min(100, max(2, (2 * 1024**3) // max(1, write_bytes))),
                         )
                         self._active_rank_memmap = rank_memmap
                         sum_log_ranks = np.zeros(n_genes, dtype=np.float64)
@@ -1254,6 +1258,11 @@ class RankCalculator:
         # file that refuses safe recreation on the next run.
         if rank_memmap is None:
             raise RuntimeError("Rank memmap was not initialized")
+        if current_row_offset != total_cells_expected:
+            raise RuntimeError(
+                f"Rank matrix has {current_row_offset:,} written rows but "
+                f"{total_cells_expected:,} cells passed filtering; refusing to publish it"
+            )
         publish_started_at = time.perf_counter()
         rank_memmap.publish()
         publish_seconds = time.perf_counter() - publish_started_at

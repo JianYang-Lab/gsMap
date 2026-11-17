@@ -844,8 +844,22 @@ class ConnectivityMatrixBuilder:
         # Convert embeddings to JAX arrays once (shared for both paths)
         # Note: float16 provides sufficient precision for normalized embeddings
         # emb_niche is guaranteed to exist now (may be dummy ones)
-        all_emb_niche_norm_jax = jnp.array(emb_niche, dtype=jnp.float16)
-        all_emb_indv_norm_jax = jnp.array(emb_indv, dtype=jnp.float16)
+        # The full embeddings are the same for every cell type: upload them once.
+        cache_key = (id(emb_niche), emb_niche.shape, id(emb_indv), emb_indv.shape)
+        cached = getattr(self, "_embedding_cache", None)
+        if cached is not None and cached[0] == cache_key:
+            all_emb_niche_norm_jax, all_emb_indv_norm_jax = cached[1], cached[2]
+        else:
+            all_emb_niche_norm_jax = jnp.array(emb_niche, dtype=jnp.float16)
+            all_emb_indv_norm_jax = jnp.array(emb_indv, dtype=jnp.float16)
+            # Keep the source arrays referenced so their ids cannot be reused.
+            self._embedding_cache = (
+                cache_key,
+                all_emb_niche_norm_jax,
+                all_emb_indv_norm_jax,
+                emb_niche,
+                emb_indv,
+            )
 
         # Get masked embeddings
         masked_cell_indices = np.where(cell_mask)[0]

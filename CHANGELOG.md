@@ -67,6 +67,12 @@ Release notes on GitHub are generated from the section that matches each version
 - Latent-to-gene warns when explicit `--h5ad-*` inputs are replaced by the project's
     find_latent outputs, and the report fails early when two sample names map to the same
     report file name.
+- Latent-to-gene: neighbor indices of a large cell type no longer wrap when stored after a
+    smaller type's narrower index array; embeddings whose float16 norm overflows are
+    normalised in float32 instead of becoming zeros; the rank matrix is published only if
+    every expected row was written; the rank writer buffers at most about 2 GiB while the
+    filesystem catches up; embeddings are uploaded to the accelerator once instead of
+    once per cell type.
 
 ## 2.0.0b1
 
