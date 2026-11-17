@@ -305,14 +305,15 @@ This setting controls **matching**, not graph edges between sections.
 
 If embedding completed successfully and inputs/settings are unchanged, add
 `--start-step latent2gene` to the same quick-mode command, or
-`start_step="latent2gene"` to its Python configuration.
-If embedding used high-quality cell QC, also pass `--high-quality-neighbor-filter`
-(`high_quality_neighbor_filter=True` in Python) to preserve that filtering.
+`start_step="latent2gene"` to its Python configuration. The resumed run uses the
+same embedding settings as a full run, including the high-quality neighbor filter
+when the command has `--high-quality-cell-qc`.
 Do not rerun embedding upstream of existing GSS/LDSC outputs.
 
 ```{warning}
 Use a new `project_name` when changing inputs, graph/matching settings or the LD
-reference. Completion checks do not establish scientific cache compatibility.
+reference. A rerun reuses completed outputs; it warns when they were made with
+different settings or inputs, but it does not recompute them.
 Do not run the CLI and Python interfaces concurrently into the same project.
 ```
 

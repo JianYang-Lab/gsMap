@@ -83,11 +83,16 @@ class QuickModeConfig(
         if not self.sample_h5ad_dict:
             self._auto_detect_h5ad_files()
 
-        if self.is_both_latent_and_gene_running or self._resumes_from_find_latent_outputs:
-            # A run resumed at latent2gene from gsMap's own find_latent outputs uses the
-            # same dual-embedding settings as the full run that produced them.
+        if self.is_both_latent_and_gene_running:
             self.high_quality_neighbor_filter = self.high_quality_cell_qc
-
+        elif self._resumes_from_find_latent_outputs:
+            # A run resumed at latent2gene from gsMap's own find_latent outputs uses the
+            # same dual-embedding settings as the full run that produced them; an
+            # explicit --high-quality-neighbor-filter is kept.
+            self.high_quality_neighbor_filter = (
+                self.high_quality_neighbor_filter or self.high_quality_cell_qc
+            )
+        if self.is_both_latent_and_gene_running or self._resumes_from_find_latent_outputs:
             # Use dual embeddings if both steps are running
             if self.latent_representation_niche is None:
                 self.latent_representation_niche = "emb_niche"

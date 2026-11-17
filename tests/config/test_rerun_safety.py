@@ -150,6 +150,19 @@ def test_resume_at_latent2gene_uses_the_full_run_defaults(tmp_path, monkeypatch,
     # A full run sets the niche key; a resumed run from its outputs now does too.
     assert config.latent_representation_niche == ("emb_niche" if find_latent_done else None)
 
+    # An explicit neighbor filter (as the docs used to advise) is kept when resuming.
+    explicit = QuickModeConfig(
+        workdir=tmp_path,
+        project_name="proj",
+        h5ad_path=[source],
+        annotation="celltype",
+        sumstats_config_dict={"IQ": tmp_path / "IQ.sumstats.gz"},
+        start_step="latent2gene",
+        use_gpu=False,
+        high_quality_neighbor_filter=True,
+    )
+    assert explicit.high_quality_neighbor_filter is True
+
 
 def test_removed_rank_checkpoint_does_not_invalidate_final_outputs(tmp_path, monkeypatch):
     from gsMap.config import latent2gene_config
