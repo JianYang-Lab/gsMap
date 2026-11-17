@@ -40,3 +40,28 @@ def test_report_libraries_are_refreshed_only_when_they_differ(tmp_path):
     _copy_js_assets(tmp_path)
     assert stale.read_text() != "old library"  # replaced
     assert plotly.stat().st_mtime_ns == before  # identical: left alone
+
+
+def test_page_names_diagnostic_images_like_the_report_writer():
+    import json
+    import re
+    import shutil
+    import subprocess
+
+    import pytest
+
+    from gsMap.report.spatial_payload import safe_name
+    from tests.paths import REPO_ROOT
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required to run the template's JavaScript")
+    template = (REPO_ROOT / "src/gsMap/report/static/template.html").read_text()
+    patterns = set(re.findall(r"selectedSample\.replace\((/[^)]*/[a-z]*), '_'\)", template))
+    assert len(patterns) == 1
+    names = ["E16.5_E1S1.MOSTA", "Mouse_E11.5_embryo_S00", "cs8 section-1", "样本-1", "Ärzte_2"]
+    script = f"console.log(JSON.stringify({json.dumps(names)}.map(n => n.replace({patterns.pop()}, '_'))))"
+    result = json.loads(
+        subprocess.run([node, "-e", script], capture_output=True, text=True, check=True).stdout
+    )
+    assert result == [safe_name(name) for name in names]

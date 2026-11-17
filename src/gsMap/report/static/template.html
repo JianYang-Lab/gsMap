@@ -1436,7 +1436,7 @@
                             <div class="plot-grid">
                                 <div class="plot-panel">
                                     <h3 class="mb-2 text-center text-sm font-semibold text-slate-700">Expression</h3>
-                                    <img :src="'gene_diagnostic_plots/gene_' + selectedTrait + '_' + selectedGene + '_' + selectedSample.replace(/[^a-zA-Z0-9]/g, '_') + '_exp.png'"
+                                    <img :src="'gene_diagnostic_plots/gene_' + selectedTrait + '_' + selectedGene + '_' + selectedSample.replace(/[^\p{L}\p{N}]/gu, '_') + '_exp.png'"
                                         :alt="selectedGene + ' Expression'"
                                         loading="lazy"
                                         class="w-full h-auto max-h-[500px] object-contain mx-auto"
@@ -1447,7 +1447,7 @@
                                 </div>
                                 <div class="plot-panel">
                                     <h3 class="mb-2 text-center text-sm font-semibold text-slate-700">Gene specificity score</h3>
-                                    <img :src="'gene_diagnostic_plots/gene_' + selectedTrait + '_' + selectedGene + '_' + selectedSample.replace(/[^a-zA-Z0-9]/g, '_') + '_gss.png'"
+                                    <img :src="'gene_diagnostic_plots/gene_' + selectedTrait + '_' + selectedGene + '_' + selectedSample.replace(/[^\p{L}\p{N}]/gu, '_') + '_gss.png'"
                                         :alt="selectedGene + ' GSS'"
                                         loading="lazy"
                                         class="w-full h-auto max-h-[500px] object-contain mx-auto"
@@ -5026,7 +5026,7 @@
                     if (this.loadingGeneData || !this.selectedGene || !this.selectedTrait || !this.selectedSample) {
                         return '';
                     }
-                    const safeSample = this.selectedSample.replace(/[^a-zA-Z0-9]/g, '_');
+                    const safeSample = this.selectedSample.replace(/[^\p{L}\p{N}]/gu, '_');
                     return `gene_diagnostic_plots/gene_${this.selectedTrait}_${this.selectedGene}_${safeSample}_${plotType}.png`;
                 },
 

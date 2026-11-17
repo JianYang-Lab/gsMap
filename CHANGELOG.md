@@ -91,6 +91,8 @@ Release notes on GitHub are generated from the section that matches each version
     replaced when they differ from the installed ones; Manhattan positions no longer depend
     on the input row order, and a failure to compute them raises instead of silently
     drawing a wrong plot. Images and data are unchanged for ordinary inputs.
+- Interactive reports: diagnostic images of samples with non-ASCII names (for example
+    accented or CJK letters) are found again; the page now names them like the report writer.
 
 ## 2.0.0b1
 
