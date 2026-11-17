@@ -49,7 +49,16 @@ def build_snapshot() -> dict:
     for module, name in ENTRY_POINTS:
         obj = getattr(importlib.import_module(module), name)
         target = inspect.unwrap(obj.__init__ if inspect.isclass(obj) else obj)
-        snapshot["entry_points"][f"{module}.{name}"] = str(inspect.signature(target))
+        # Names, kinds and defaults are the contract; annotation text depends on the
+        # installed library versions (e.g. anndata.AnnData vs anndata._core...).
+        snapshot["entry_points"][f"{module}.{name}"] = [
+            [
+                param.name,
+                param.kind.name,
+                "required" if param.default is param.empty else repr(param.default),
+            ]
+            for param in inspect.signature(target).parameters.values()
+        ]
     config = importlib.import_module("gsMap.config")
     snapshot["exports"] = sorted(name for name in dir(config) if not name.startswith("_"))
     from gsMap.config import DatasetType

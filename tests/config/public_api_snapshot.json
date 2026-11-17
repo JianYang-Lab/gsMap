@@ -334,15 +334,84 @@
   }
  },
  "entry_points": {
-  "gsMap.cauchy_combination_test.run_Cauchy_combination": "(config: 'CauchyCombinationConfig')",
-  "gsMap.find_latent.run_find_latent_representation": "(config)",
-  "gsMap.format_sumstats.gwas_format": "(config: gsMap.config.format_sumstats_config.FormatSumstatsConfig)",
-  "gsMap.latent2gene.run_latent_to_gene": "(config: gsMap.config.latent2gene_config.LatentToGeneConfig) -> dict[str, typing.Any]",
-  "gsMap.ldscore.pipeline.LDScorePipeline": "(self, config: gsMap.config.ldscore_config.LDScoreConfig)",
-  "gsMap.pipeline.run_quick_mode": "(config: gsMap.config.quick_mode_config.QuickModeConfig)",
-  "gsMap.report.run_report": "(config: gsMap.config.quick_mode_config.QuickModeConfig, run_parameters: dict = None)",
-  "gsMap.spatial_ldsc.io.load_marker_scores_memmap_format": "(config: gsMap.config.spatial_ldsc_config.SpatialLDSCConfig, *, populate_cache: bool = True) -> anndata._core.anndata.AnnData",
-  "gsMap.spatial_ldsc.spatial_ldsc_jax.run_spatial_ldsc_jax": "(config: gsMap.config.spatial_ldsc_config.SpatialLDSCConfig)"
+  "gsMap.cauchy_combination_test.run_Cauchy_combination": [
+   [
+    "config",
+    "POSITIONAL_OR_KEYWORD",
+    "required"
+   ]
+  ],
+  "gsMap.find_latent.run_find_latent_representation": [
+   [
+    "config",
+    "POSITIONAL_OR_KEYWORD",
+    "required"
+   ]
+  ],
+  "gsMap.format_sumstats.gwas_format": [
+   [
+    "config",
+    "POSITIONAL_OR_KEYWORD",
+    "required"
+   ]
+  ],
+  "gsMap.latent2gene.run_latent_to_gene": [
+   [
+    "config",
+    "POSITIONAL_OR_KEYWORD",
+    "required"
+   ]
+  ],
+  "gsMap.ldscore.pipeline.LDScorePipeline": [
+   [
+    "self",
+    "POSITIONAL_OR_KEYWORD",
+    "required"
+   ],
+   [
+    "config",
+    "POSITIONAL_OR_KEYWORD",
+    "required"
+   ]
+  ],
+  "gsMap.pipeline.run_quick_mode": [
+   [
+    "config",
+    "POSITIONAL_OR_KEYWORD",
+    "required"
+   ]
+  ],
+  "gsMap.report.run_report": [
+   [
+    "config",
+    "POSITIONAL_OR_KEYWORD",
+    "required"
+   ],
+   [
+    "run_parameters",
+    "POSITIONAL_OR_KEYWORD",
+    "None"
+   ]
+  ],
+  "gsMap.spatial_ldsc.io.load_marker_scores_memmap_format": [
+   [
+    "config",
+    "POSITIONAL_OR_KEYWORD",
+    "required"
+   ],
+   [
+    "populate_cache",
+    "KEYWORD_ONLY",
+    "True"
+   ]
+  ],
+  "gsMap.spatial_ldsc.spatial_ldsc_jax.run_spatial_ldsc_jax": [
+   [
+    "config",
+    "POSITIONAL_OR_KEYWORD",
+    "required"
+   ]
+  ]
  },
  "exports": [
   "BaseConfig",
