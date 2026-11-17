@@ -141,8 +141,9 @@ def test_umap_preparation_uses_only_selected_embeddings_and_preserves_traits(
     assert set(result.sample_name) == {"001", "002"}
 
 
+@pytest.mark.parametrize("n_workers", [1, 8])
 @pytest.mark.parametrize("layout", ["source", "permuted", "offset", "view", "dense", "sparse"])
-def test_diagnostic_marker_read_preserves_wrapper_order(tmp_path, layout, monkeypatch):
+def test_diagnostic_marker_read_preserves_wrapper_order(tmp_path, layout, monkeypatch, n_workers):
     from gsMap.report import report_data
 
     read_rows = report_data._read_marker_score_rows
@@ -178,11 +179,11 @@ def test_diagnostic_marker_read_preserves_wrapper_order(tmp_path, layout, monkey
     expected = np.asarray(x.toarray() if sparse.issparse(x) else x)[
         np.ix_(data.obs_names.get_indexer(spots), data.var_names.get_indexer(genes))
     ]
-    result = _read_diagnostic_marker_values(data, spots, genes)
+    result = _read_diagnostic_marker_values(data, spots, genes, n_workers=n_workers)
     np.testing.assert_array_equal(
         result.toarray() if sparse.issparse(result) else result, expected
     )
-    assert calls == ([1] if layout in {"source", "permuted"} else [])
+    assert calls == ([n_workers] if layout in {"source", "permuted"} else [])
     matrix._mmap.close()
 
 

@@ -84,6 +84,13 @@ Release notes on GitHub are generated from the section that matches each version
 - `gsmap report-view` serves the report without changing the working directory, answers
     requests in parallel and can restart on the same port at once; the report reads GWAS
     files in every format spatial LDSC accepts (plain, gzip or bz2; any whitespace).
+- Report generation: diagnostic gene plots and gene correlations read marker scores with
+    parallel I/O sized for network filesystems (scattered row reads were latency-bound:
+    1 worker 168 rows/s, 16 workers 2,395 rows/s on Lustre); diagnostic plots follow the
+    configured traits instead of files left on disk; bundled JavaScript libraries are
+    replaced when they differ from the installed ones; Manhattan positions no longer depend
+    on the input row order, and a failure to compute them raises instead of silently
+    drawing a wrong plot. Images and data are unchanged for ordinary inputs.
 
 ## 2.0.0b1
 

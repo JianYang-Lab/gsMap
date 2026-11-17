@@ -25,6 +25,14 @@ def _get_hover_text(df, snpname=None, genename=None, annotationname=None):
     return hover_text
 
 
+def _chromosome_order(value):
+    """Sort key: numeric chromosomes by number, then other names alphabetically."""
+    try:
+        return (0, float(value), "")
+    except (TypeError, ValueError):
+        return (1, 0.0, str(value))
+
+
 class _ManhattanPlot:
     def __init__(
         self,
@@ -175,7 +183,9 @@ class _ManhattanPlot:
 
         if not self.data.empty and len(self.data[chrm].unique()) > 0:
             idx = 0
-            for i in self.data[chrm].unique():
+            # Number chromosomes in chromosome order (numerically where possible), not
+            # in order of appearance, so the layout does not depend on row order.
+            for i in sorted(self.data[chrm].unique(), key=_chromosome_order):
                 idx = idx + 1
                 self.data.loc[self.data[chrm] == i, self.index] = int(idx)
         else:
@@ -208,7 +218,9 @@ class _ManhattanPlot:
         else:
             # For multiple chromosomes
             lastbase = 0
-            for i in self.data[self.index].unique():
+            # Chromosomes in index order; the offset is each previous chromosome's
+            # largest position, so unsorted input gives the same layout as sorted input.
+            for i in sorted(self.data[self.index].unique()):
                 if i == 1:
                     self.data.loc[self.data[self.index] == i, self.pos] = self.data.loc[
                         self.data[self.index] == i, bp
@@ -217,7 +229,7 @@ class _ManhattanPlot:
                     prevbp = self.data.loc[self.data[self.index] == i - 1, bp]
                     # Shift the basepair position by the largest bp of the
                     # current chromosome
-                    lastbase = lastbase + prevbp.iat[-1]
+                    lastbase = lastbase + prevbp.max()
 
                     self.data.loc[self.data[self.index] == i, self.pos] = (
                         self.data.loc[self.data[self.index] == i, bp].values + lastbase
