@@ -60,7 +60,7 @@ repository, use **Install from source**.
 
 .. note::
 
-   gsMap 2.0 is in beta. The commands below pin the pre-release ``2.0.0b1``; without
+   gsMap 2.0 is in beta. The commands below pin the pre-release ``2.0.0b2``; without
    a version, ``pip`` and ``uv`` keep installing gsMap 1.x until 2.0.0 is released.
 
 Install ``uv`` and create the environment:
@@ -76,11 +76,11 @@ Install exactly one backend:
 .. code-block:: bash
 
    # Choose exactly one command.
-   uv pip install "gsMap[cpu]==2.0.0b1" --torch-backend=cpu
-   uv pip install "gsMap[cuda126]==2.0.0b1" --torch-backend=cu126
-   uv pip install "gsMap[cuda128]==2.0.0b1" --torch-backend=cu128
-   uv pip install "gsMap[cuda130]==2.0.0b1" --torch-backend=cu130
-   uv pip install "gsMap[tpu]==2.0.0b1" --torch-backend=cpu
+   uv pip install "gsMap[cpu]==2.0.0b2" --torch-backend=cpu
+   uv pip install "gsMap[cuda126]==2.0.0b2" --torch-backend=cu126
+   uv pip install "gsMap[cuda128]==2.0.0b2" --torch-backend=cu128
+   uv pip install "gsMap[cuda130]==2.0.0b2" --torch-backend=cu130
+   uv pip install "gsMap[tpu]==2.0.0b2" --torch-backend=cpu
 
 ``--torch-backend`` is an ``uv pip`` option. It ensures that PyTorch comes from the
 selected wheel channel while gsMap and JAX are installed from PyPI.
@@ -98,11 +98,11 @@ selects its binary backend:
    python -m pip install uv
 
    # Choose exactly one command.
-   uv pip install "gsMap[cpu]==2.0.0b1" --torch-backend=cpu
-   uv pip install "gsMap[cuda126]==2.0.0b1" --torch-backend=cu126
-   uv pip install "gsMap[cuda128]==2.0.0b1" --torch-backend=cu128
-   uv pip install "gsMap[cuda130]==2.0.0b1" --torch-backend=cu130
-   uv pip install "gsMap[tpu]==2.0.0b1" --torch-backend=cpu
+   uv pip install "gsMap[cpu]==2.0.0b2" --torch-backend=cpu
+   uv pip install "gsMap[cuda126]==2.0.0b2" --torch-backend=cu126
+   uv pip install "gsMap[cuda128]==2.0.0b2" --torch-backend=cu128
+   uv pip install "gsMap[cuda130]==2.0.0b2" --torch-backend=cu130
+   uv pip install "gsMap[tpu]==2.0.0b2" --torch-backend=cpu
 
 This approach uses Conda only to isolate Python. Installing the project with ``uv`` keeps
 the backend selection identical to the direct PyPI instructions.

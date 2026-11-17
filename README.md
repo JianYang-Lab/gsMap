@@ -81,9 +81,9 @@ uv venv --python 3.13
 source .venv/bin/activate
 
 # Choose exactly one command.
-uv pip install "gsMap[cpu]==2.0.0b1" --torch-backend=cpu
-uv pip install "gsMap[cuda128]==2.0.0b1" --torch-backend=cu128
-uv pip install "gsMap[cuda130]==2.0.0b1" --torch-backend=cu130
+uv pip install "gsMap[cpu]==2.0.0b2" --torch-backend=cpu
+uv pip install "gsMap[cuda128]==2.0.0b2" --torch-backend=cu128
+uv pip install "gsMap[cuda130]==2.0.0b2" --torch-backend=cu130
 
 gsmap --version
 ```

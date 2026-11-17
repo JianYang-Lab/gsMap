@@ -5,7 +5,13 @@ Release notes on GitHub are generated from the section that matches each version
 
 <!-- release-notes-start -->
 
-## Unreleased
+## 2.0.0b2
+
+Second beta of gsMap 2.0: faster interactive reports, and robustness fixes across
+latent-to-gene, spatial LDSC, Cauchy combination, `format-sumstats`, reruns and report
+generation. The CLI and the documented Python API are unchanged, and results for ordinary
+inputs are identical to 2.0.0b1. Install this pre-release explicitly with
+`uv pip install "gsMap[cpu]==2.0.0b2" --torch-backend=cpu` (or another backend extra).
 
 - Documentation is published to GitHub Pages (<https://jianyang-lab.github.io/gsMap/>) from `main` by the docs
     workflow.
@@ -93,6 +99,7 @@ Release notes on GitHub are generated from the section that matches each version
     drawing a wrong plot. Images and data are unchanged for ordinary inputs.
 - Interactive reports: diagnostic images of samples with non-ASCII names (for example
     accented or CJK letters) are found again; the page now names them like the report writer.
+- `statsmodels` is no longer a direct dependency; gsMap does not use it.
 
 ## 2.0.0b1
 

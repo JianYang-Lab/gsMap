@@ -17,7 +17,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Operating System :: POSIX :: Linux",
 ]
-version = "2.0.0b1"
+version = "2.0.0b2"
 description = "Genetically informed spatial mapping of cells for complex traits"
 dependencies = [
     "numpy ~= 2.2",
@@ -41,7 +41,6 @@ dependencies = [
     "rich >= 14.1.0",
     "anndata >= 0.8.0",
     "h5py >= 3.0.0",
-    "statsmodels >= 0.13.0",
     "psutil >= 5.8.0",
     "typer ~= 0.20.0",
     # typer 0.20 loses typer.Argument help text with click 8.5 (empty --help descriptions).

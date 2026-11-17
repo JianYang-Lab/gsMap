@@ -1096,7 +1096,7 @@ wheels = [
 
 [[package]]
 name = "gsmap"
-version = "2.0.0b1"
+version = "2.0.0b2"
 source = { editable = "." }
 dependencies = [
     { name = "anndata" },
@@ -1121,7 +1121,6 @@ dependencies = [
     { name = "rich" },
     { name = "scanpy" },
     { name = "scipy" },
-    { name = "statsmodels" },
     { name = "torch", version = "2.11.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'extra-5-gsmap-cuda128' or (extra == 'extra-5-gsmap-cpu' and extra == 'extra-5-gsmap-cuda126') or (extra == 'extra-5-gsmap-cuda126' and extra == 'extra-5-gsmap-cuda130') or (extra == 'extra-5-gsmap-cuda126' and extra == 'extra-5-gsmap-tpu') or (extra == 'extra-5-gsmap-cuda130' and extra == 'extra-5-gsmap-tpu') or (extra == 'extra-5-gsmap-cpu' and extra != 'extra-5-gsmap-cuda128' and extra == 'extra-5-gsmap-cuda130') or (extra == 'extra-5-gsmap-cpu' and extra != 'extra-5-gsmap-cuda128' and extra == 'extra-5-gsmap-tpu')" },
     { name = "torch", version = "2.12.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-5-gsmap-cpu') or (sys_platform == 'darwin' and extra == 'extra-5-gsmap-tpu') or (extra == 'extra-5-gsmap-cpu' and extra == 'extra-5-gsmap-cuda126') or (extra == 'extra-5-gsmap-cpu' and extra == 'extra-5-gsmap-cuda128') or (extra == 'extra-5-gsmap-cpu' and extra == 'extra-5-gsmap-cuda130') or (extra == 'extra-5-gsmap-cpu' and extra == 'extra-5-gsmap-tpu') or (extra == 'extra-5-gsmap-cuda130' and extra == 'extra-5-gsmap-tpu') or (extra == 'extra-5-gsmap-cuda126' and extra == 'extra-5-gsmap-cuda128') or (extra == 'extra-5-gsmap-cuda126' and extra == 'extra-5-gsmap-cuda130') or (extra == 'extra-5-gsmap-cuda126' and extra == 'extra-5-gsmap-tpu') or (extra == 'extra-5-gsmap-cuda128' and extra == 'extra-5-gsmap-cuda130') or (extra == 'extra-5-gsmap-cuda128' and extra == 'extra-5-gsmap-tpu')" },
     { name = "torch", version = "2.12.0", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-5-gsmap-cpu' and extra == 'extra-5-gsmap-cuda126') or (extra == 'extra-5-gsmap-cpu' and extra == 'extra-5-gsmap-cuda128') or (extra == 'extra-5-gsmap-cpu' and extra == 'extra-5-gsmap-cuda130') or (extra == 'extra-5-gsmap-cpu' and extra == 'extra-5-gsmap-tpu') or (extra == 'extra-5-gsmap-cuda126' and extra == 'extra-5-gsmap-cuda128') or (extra == 'extra-5-gsmap-cuda126' and extra == 'extra-5-gsmap-cuda130') or (extra == 'extra-5-gsmap-cuda126' and extra == 'extra-5-gsmap-tpu') or (extra == 'extra-5-gsmap-cuda128' and extra == 'extra-5-gsmap-cuda130') or (extra == 'extra-5-gsmap-cuda128' and extra == 'extra-5-gsmap-tpu') or (extra == 'extra-5-gsmap-cuda130' and extra == 'extra-5-gsmap-tpu') or (extra != 'extra-5-gsmap-cpu' and extra != 'extra-5-gsmap-cuda126' and extra != 'extra-5-gsmap-cuda128' and extra != 'extra-5-gsmap-cuda130' and extra != 'extra-5-gsmap-tpu')" },
@@ -1221,7 +1220,6 @@ requires-dist = [
     { name = "rich", specifier = ">=14.1.0" },
     { name = "scanpy", specifier = ">=1.11.0" },
     { name = "scipy", specifier = ">=1.11" },
-    { name = "statsmodels", specifier = ">=0.13.0" },
     { name = "torch", specifier = ">=2.8,<3.0" },
     { name = "torch", marker = "extra == 'cpu'", specifier = ">=2.8,<3.0", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "gsmap", extra = "cpu" } },
     { name = "torch", marker = "extra == 'cuda126'", specifier = ">=2.8,<3.0", index = "https://download.pytorch.org/whl/cu126", conflict = { package = "gsmap", extra = "cuda126" } },
