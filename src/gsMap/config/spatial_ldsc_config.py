@@ -321,24 +321,11 @@ class SpatialLDSCConfig(SpatialLDSCCoreConfig, SpatialLDSCComputeConfig, ConfigW
 
     def __post_init__(self):
         super().__post_init__()
-
-        if self.n_blocks < 2:
-            raise ValueError("n_blocks must be at least 2 for jackknife standard errors")
-        from gsMap.spatial_ldsc.execution.trait_loading import resolve_gwas_workers
-
-        resolve_gwas_workers(self.ldsc_gwas_workers, 1)
+        validate_spatial_ldsc_settings(self)
 
         # Import here to avoid circular imports
         from gsMap.config.utils import configure_jax_platform, get_anndata_shape
 
-        if self.ldsc_regression_backend not in ("auto", "jax", "moments"):
-            raise ValueError("ldsc_regression_backend must be auto, jax, or moments")
-        if self.ldsc_regression_backend == "moments" and not self.ldsc_share_ld:
-            raise ValueError("The moments backend requires ldsc_share_ld=True")
-        if self.ldsc_num_gpus < 1 or not 1 <= self.ldsc_trait_batch_size <= 16:
-            raise ValueError("ldsc_num_gpus must be positive; ldsc_trait_batch_size must be 1..16")
-        if self.ldsc_num_gpus > 1 and (not self.use_gpu or not self.ldsc_share_ld):
-            raise ValueError("Multiple LDSC GPUs require use_gpu=True and ldsc_share_ld=True")
         # Multi-GPU children select their allocated device before initializing
         # either framework. The coordinator must not allocate GPU contexts.
         if self.ldsc_num_gpus == 1:
@@ -459,33 +446,58 @@ class SpatialLDSCConfig(SpatialLDSCCoreConfig, SpatialLDSCComputeConfig, ConfigW
             self.cell_indices_range = (start, end)
             logger.info(f"Processing cell_indices_range: [{start}, {end})")
 
-        if self.snp_gene_weight_adata_path is None and self.ldscore_h5ad_path is None:
-            raise ValueError(
-                "One of snp_gene_weight_adata_path or ldscore_h5ad_path must be provided."
-            )
-        if self.ldscore_h5ad_path is not None and not self.additional_baseline_h5ad_path_list:
-            raise ValueError(
-                "additional_baseline_h5ad_path_list must be provided when using ldscore_h5ad_path "
-                "(it supplies all baseline annotations for the regression)."
-            )
-
         # Handle w_ld_dir
         if self.w_ld_dir is None:
-            w_ld_dir = Path(self.ldscore_save_dir) / "w_ld"
-            if w_ld_dir.exists():
-                self.w_ld_dir = w_ld_dir
-                logger.info(
-                    f"Using weights directory generated in the generate_ldscore step: {self.w_ld_dir}"
-                )
-            else:
-                raise ValueError(
-                    "No w_ld_dir provided and no weights directory found in generate_ldscore output. "
-                    "Either provide --w-ld-dir or run generate_ldscore first."
-                )
+            self.w_ld_dir = resolve_w_ld_dir(self)
+            logger.info(
+                f"Using weights directory generated in the generate_ldscore step: {self.w_ld_dir}"
+            )
         else:
             logger.info(f"Using provided weights directory: {self.w_ld_dir}")
 
         self.show_config(SpatialLDSCConfig)
+
+
+def validate_spatial_ldsc_settings(config) -> None:
+    """Static spatial LDSC checks that need no data; used by quick mode before step 1."""
+    from gsMap.spatial_ldsc.execution.trait_loading import resolve_gwas_workers
+
+    get = lambda name, default=None: getattr(config, name, default)  # noqa: E731
+    if get("n_blocks", 200) < 2:
+        raise ValueError("n_blocks must be at least 2 for jackknife standard errors")
+    resolve_gwas_workers(get("ldsc_gwas_workers", 4), 1)
+    backend = get("ldsc_regression_backend", "auto")
+    if backend not in ("auto", "jax", "moments"):
+        raise ValueError("ldsc_regression_backend must be auto, jax, or moments")
+    if backend == "moments" and not get("ldsc_share_ld", True):
+        raise ValueError("The moments backend requires ldsc_share_ld=True")
+    num_gpus, trait_batch = get("ldsc_num_gpus", 1), get("ldsc_trait_batch_size", 1)
+    if num_gpus < 1 or not 1 <= trait_batch <= 16:
+        raise ValueError("ldsc_num_gpus must be positive; ldsc_trait_batch_size must be 1..16")
+    if num_gpus > 1 and (not get("use_gpu", True) or not get("ldsc_share_ld", True)):
+        raise ValueError("Multiple LDSC GPUs require use_gpu=True and ldsc_share_ld=True")
+    if get("snp_gene_weight_adata_path") is None and get("ldscore_h5ad_path") is None:
+        raise ValueError(
+            "One of snp_gene_weight_adata_path or ldscore_h5ad_path must be provided."
+        )
+    if get("ldscore_h5ad_path") is not None and not get("additional_baseline_h5ad_path_list"):
+        raise ValueError(
+            "additional_baseline_h5ad_path_list must be provided when using ldscore_h5ad_path "
+            "(it supplies all baseline annotations for the regression)."
+        )
+
+
+def resolve_w_ld_dir(config) -> Path:
+    """The configured weights directory, or the one generated by ldscore-weight-matrix."""
+    if getattr(config, "w_ld_dir", None) is not None:
+        return Path(config.w_ld_dir)
+    w_ld_dir = Path(config.ldscore_save_dir) / "w_ld"
+    if not w_ld_dir.exists():
+        raise ValueError(
+            "No w_ld_dir provided and no weights directory found in generate_ldscore output. "
+            "Either provide --w-ld-dir or run generate_ldscore first."
+        )
+    return w_ld_dir
 
 
 def check_spatial_ldsc_done(config: SpatialLDSCConfig, trait_name: str) -> bool:

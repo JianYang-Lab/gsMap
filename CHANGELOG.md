@@ -73,6 +73,17 @@ Release notes on GitHub are generated from the section that matches each version
     every expected row was written; the rank writer buffers at most about 2 GiB while the
     filesystem catches up; embeddings are uploaded to the accelerator once instead of
     once per cell type.
+- Quick mode checks the settings of later steps before step 1: spatial LDSC options, the
+    weights directory and weight matrix, trait names that clash with metadata columns, and
+    Cauchy annotation columns. Errors that used to appear hours into a run (after
+    find_latent and latent-to-gene) now appear at once; finished steps are not rechecked.
+- No more global side effects: importing gsMap no longer silences every warning in the
+    process, the report no longer reseeds NumPy's global random generator (same samples),
+    and a run leaves the `gsMap` logger's level and propagation as it found them, so
+    notebook logging keeps working after a run.
+- `gsmap report-view` serves the report without changing the working directory, answers
+    requests in parallel and can restart on the same port at once; the report reads GWAS
+    files in every format spatial LDSC accepts (plain, gzip or bz2; any whitespace).
 
 ## 2.0.0b1
 

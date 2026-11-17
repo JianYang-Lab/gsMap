@@ -16,7 +16,10 @@ from scipy.spatial import KDTree
 
 from gsMap.config.gwas import trait_label
 
-warnings.filterwarnings("ignore")
+# Quiet plotting-library chatter only; importing gsMap must not hide every warning
+# in the caller's process.
+for _module in (r"matplotlib(\..*)?", r"distinctipy(\..*)?", r"PIL(\..*)?"):
+    warnings.filterwarnings("ignore", module=_module)
 logger = logging.getLogger(__name__)
 
 

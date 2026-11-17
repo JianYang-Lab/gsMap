@@ -227,8 +227,8 @@ def report_view(
         gsmap report-view /path/to/project/gsmap_web_report
         gsmap report-view /path/to/project/gsmap_web_report --port 9000
     """
+    import functools
     import http.server
-    import os
     import socketserver
     import webbrowser
     from pathlib import Path
@@ -245,12 +245,17 @@ def report_view(
         logger.error("Please provide path to the gsmap_web_report directory.")
         raise typer.Exit(1)
 
-    os.chdir(report_dir)
+    # Serve the directory without changing this process's working directory, answer
+    # the many parallel payload requests of a report concurrently, and allow an
+    # immediate restart on the same port.
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(report_dir))
 
-    handler = http.server.SimpleHTTPRequestHandler
+    class ReportServer(socketserver.ThreadingTCPServer):
+        allow_reuse_address = True
+        daemon_threads = True
 
     try:
-        with socketserver.TCPServer(("", port), handler) as httpd:
+        with ReportServer(("", port), handler) as httpd:
             url = f"http://localhost:{port}"
             logger.info(f"Serving report at {url}")
             logger.info("Press Ctrl+C to stop the server")

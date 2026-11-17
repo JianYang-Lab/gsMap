@@ -68,16 +68,27 @@ def load_gwas_data(sumstats_file, *, usecols=None, calculate_p: bool = True, snp
                 gwas_data[name] = gwas_data[name].astype(np.float64)
             for name in nullable_booleans:
                 gwas_data[name] = gwas_data[name].astype(object)
-    except (ImportError, ValueError, pa.ArrowException):
+        if not {"SNP", "Z"}.issubset(gwas_data.columns):
+            raise ValueError("Not a gzip-compressed tab-separated GWAS file")
+    except (ImportError, ValueError, OSError, pa.ArrowException):
+        # Accept what spatial LDSC accepts: plain, gzip or bz2 files with any
+        # whitespace separator.
         parser = "pandas"
         logger.debug(f"PyArrow could not parse {source}; falling back to pandas")
         gwas_data = pd.read_csv(
             source,
-            compression="gzip",
-            sep="\t",
+            compression="infer",
+            sep=r"\s+",
+            na_values=".",
             usecols=usecols,
         )
         input_rows = len(gwas_data)
+        if (
+            snp_filter is not None
+            and "SNP" in gwas_data.columns
+            and len(gwas_data) > 2 * len(snp_filter)
+        ):
+            gwas_data = gwas_data[gwas_data["SNP"].isin(snp_filter)].reset_index(drop=True)
 
     required_columns = {"SNP", "Z"}
     missing_columns = required_columns.difference(gwas_data.columns)

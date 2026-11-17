@@ -1040,7 +1040,9 @@ def _stratified_subsample(
     Returns:
         Array of selected spot names
     """
-    np.random.seed(random_state)
+    # A local generator gives the same draws as seeding the global one, without
+    # changing the caller's global NumPy random state.
+    rng = np.random.RandomState(random_state)
 
     # Get sample counts
     sample_counts = sample_names.value_counts()
@@ -1057,13 +1059,13 @@ def _stratified_subsample(
         n_select = max(1, int(np.ceil(n_samples * count / n_samples_total)))
         n_select = min(n_select, len(sample_spots))
 
-        selected = np.random.choice(sample_spots, n_select, replace=False)
+        selected = rng.choice(sample_spots, n_select, replace=False)
         selected_spots.extend(selected)
 
     # If we have too many, randomly remove some
     selected_spots = np.array(selected_spots)
     if len(selected_spots) > n_samples:
-        selected_spots = np.random.choice(selected_spots, n_samples, replace=False)
+        selected_spots = rng.choice(selected_spots, n_samples, replace=False)
 
     return selected_spots
 

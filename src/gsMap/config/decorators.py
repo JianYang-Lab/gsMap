@@ -2,6 +2,7 @@
 Decorators for CLI and resource tracking.
 """
 
+import copy
 import inspect
 import logging
 import time
@@ -82,7 +83,14 @@ def dataclass_typer(func):
 
             # Create the config only after the project DEBUG log is active so
             # validation and auto-resolution messages are retained.
-            config = config_class(**kwargs)
+            # CLI defaults are built once per process; copy mutable ones so a config
+            # that edits its list or dict cannot change the next call's defaults.
+            config = config_class(
+                **{
+                    key: copy.deepcopy(value) if isinstance(value, list | dict | set) else value
+                    for key, value in kwargs.items()
+                }
+            )
             logging_session.record_config(config, stage=func.__name__)
             # stage_logging tracks the CLI and Python entry points alike.
             result = func(config)
@@ -138,10 +146,6 @@ def dataclass_typer(func):
             # Otherwise, fall back to class-level logic
             elif not is_core_field(field.name, config_class):
                 continue
-
-        # Get the actual type and typer.Option from Annotated
-        # Annotated[type, typer.Option(...)] -> type is at args[0]
-        get_args(field.type)[0]
 
         # Determine the default value
         if field.default is not MISSING:

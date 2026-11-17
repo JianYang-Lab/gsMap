@@ -1,5 +1,6 @@
 import logging
 import time
+from pathlib import Path
 
 from gsMap.cauchy_combination_test import run_Cauchy_combination
 from gsMap.config import QuickModeConfig
@@ -25,6 +26,72 @@ def format_duration(seconds):
         return f"{hours}h {minutes}m"
     else:
         return f"{minutes}m {int(seconds % 60)}s"
+
+
+def _preflight(config, steps_to_run: list[str]) -> None:
+    """Check settings of later steps before the long early steps start.
+
+    Configuration errors that would otherwise surface only when spatial LDSC, Cauchy
+    or the report starts (hours into a run) are raised here instead. Resources of a
+    step whose outputs already exist are not checked, so reruns are unaffected.
+    """
+    traits = list(getattr(config, "sumstats_config_dict", None) or {})
+    if "spatial_ldsc" in steps_to_run:
+        from gsMap.config.spatial_ldsc_config import (
+            resolve_w_ld_dir,
+            validate_spatial_ldsc_settings,
+        )
+
+        validate_spatial_ldsc_settings(config)
+        pending = [trait for trait in traits if not check_spatial_ldsc_done(config, trait)]
+        if pending:
+            w_ld_dir = resolve_w_ld_dir(config)
+            if not w_ld_dir.is_dir():
+                raise FileNotFoundError(f"Weights directory (--w-ld-dir) not found: {w_ld_dir}")
+            for name in ("snp_gene_weight_adata_path", "ldscore_h5ad_path"):
+                path = getattr(config, name, None)
+                if path is not None and not Path(path).is_file():
+                    raise FileNotFoundError(f"{name} not found: {path}")
+
+    if "cauchy" in steps_to_run:
+        annotations = list(getattr(config, "annotation_list", None) or [])
+        reserved = {"spot", "sample_name", *annotations}
+        clashes = sorted(reserved & set(traits))
+        if clashes:
+            raise ValueError(
+                f"Trait names {clashes} are also spot metadata column names (spot, sample_name or "
+                "an annotation); rename the traits."
+            )
+        cauchy_done = bool(traits) and all(check_cauchy_done(config, trait) for trait in traits)
+        sources = {} if cauchy_done else _annotation_sources(config, steps_to_run)
+        if annotations and sources:
+            from gsMap.config.utils import validate_h5ad_structure
+
+            validate_h5ad_structure(
+                sources,
+                {
+                    f"annotation:{name}": ("obs", name, f"Cauchy annotation {name}")
+                    for name in annotations
+                },
+            )
+
+    if "report" in steps_to_run:
+        from gsMap.report.report import _check_report_sample_file_names
+
+        _check_report_sample_file_names(list(getattr(config, "sample_h5ad_dict", None) or {}))
+
+
+def _annotation_sources(config, steps_to_run: list[str]) -> dict:
+    """Files whose obs must hold the Cauchy annotations: inputs, or the latent AnnData."""
+    if "find_latent" in steps_to_run or "latent2gene" in steps_to_run:
+        return {
+            name: Path(path)
+            for name, path in (getattr(config, "sample_h5ad_dict", None) or {}).items()
+        }
+    latent = getattr(config, "concatenated_latent_adata_path", None)
+    if latent is not None and Path(latent).is_file():
+        return {"concatenated latent AnnData": Path(latent)}
+    return {}
 
 
 @logged_stage("quick_mode")
@@ -56,6 +123,8 @@ def run_quick_mode(config: QuickModeConfig):
         raise ValueError(
             f"start_step ({config.start_step}) must be before or equal to stop_step ({config.stop_step})"
         )
+
+    _preflight(config, steps[start_idx : stop_idx + 1])
 
     from gsMap.config.spatial import guard_spatial_contract
 

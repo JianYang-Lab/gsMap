@@ -601,6 +601,8 @@ class RunLoggingSession:
 
     def start(self) -> None:
         self.run_dir.mkdir(parents=True, exist_ok=False)
+        gsmap_logger = logging.getLogger(LOGGER_NAME)
+        self._previous_logger_state = (gsmap_logger.level, gsmap_logger.propagate)
         self._console_handlers, self._owns_console_handlers = _install_console_handlers()
         self._owns_warning_capture = getattr(logging, "_warnings_showwarning", None) is None
         logging.captureWarnings(True)
@@ -833,7 +835,13 @@ class RunLoggingSession:
         if self._owns_warning_capture:
             logging.captureWarnings(False)
         if self._owns_console_handlers:
-            _remove_handlers(logging.getLogger(LOGGER_NAME), self._console_handlers)
+            gsmap_logger = logging.getLogger(LOGGER_NAME)
+            _remove_handlers(gsmap_logger, self._console_handlers)
+            # Leave the logger as found, so later messages (e.g. in a notebook) still
+            # reach the caller's own logging configuration.
+            level, propagate = getattr(self, "_previous_logger_state", (logging.NOTSET, True))
+            gsmap_logger.setLevel(level)
+            gsmap_logger.propagate = propagate
 
 
 _STATE_LOCK = threading.RLock()
