@@ -1,6 +1,5 @@
 import logging
 import math
-import re
 
 import numpy as np
 import pandas as pd
@@ -143,10 +142,19 @@ def gwas_checkname(gwas, config):
 
     name_dict = {new_name[i]: old_name[i] for i in range(len(new_name))}
 
-    # When at OR scale
+    # When at OR scale: BETA = log(OR); the SE of log(OR) is SE_OR / OR (delta method).
     if "OR" in new_name and "SE_OR" in new_name:
         gwas["BETA"] = gwas.OR.apply(lambda x: math.log(x) if x > 0 else None)
-        gwas["SE"] = gwas.SE_OR.apply(lambda x: math.log(x) if x > 0 else None)
+        gwas["SE"] = (gwas.SE_OR / gwas.OR).where(gwas.OR > 0)
+    elif "OR" in new_name and "BETA" not in new_name:
+        gwas["BETA"] = gwas.OR.apply(lambda x: math.log(x) if x > 0 else None)
+    if "LOG_ODDS" in new_name and "BETA" not in gwas.columns:
+        gwas["BETA"] = gwas.LOG_ODDS
+
+    # Case/control studies: the effective total sample size is cases + controls.
+    if "N" not in gwas.columns and {"N_CAS", "N_CON"}.issubset(gwas.columns):
+        gwas["N"] = gwas.N_CAS + gwas.N_CON
+        logger.info("Using N = N_CAS + N_CON.")
 
     interpreting = {
         "SNP": "Variant ID (e.g., rs number).",
@@ -188,7 +196,17 @@ def gwas_checkformat(gwas, config):
             if "Z" in gwas.columns:
                 pass
             elif "P" in gwas.columns:
+                if "BETA" not in gwas.columns:
+                    raise ValueError(
+                        "P-values alone give no direction of effect. Provide BETA, OR, "
+                        "LOG_ODDS or Z (or name the column with --beta, --or or --z)."
+                    )
                 gwas["Z"] = np.sqrt(chi2.isf(gwas.P, 1)) * np.where(gwas["BETA"] < 0, -1, 1)
+                if "SE" in gwas.columns:
+                    # P underflows to 0 for the strongest signals; use BETA/SE there.
+                    underflow = gwas.P == 0
+                    if underflow.any():
+                        gwas.loc[underflow, "Z"] = gwas.BETA[underflow] / gwas.SE[underflow]
             else:
                 gwas["Z"] = gwas.BETA / gwas.SE
 
@@ -265,8 +283,17 @@ def gwas_qc(gwas, config):
     # filter: SNPs with missing values
     drops = {"NA": 0, "P": 0, "INFO": 0, "FRQ": 0, "A": 0, "SNP": 0, "Dup": 0, "N": 0}
 
+    # Only columns that are written out or filtered on make a SNP unusable when missing.
+    required = ["SNP", "A1", "A2", "Z", "N", "P", "BETA", "SE", "FRQ"]
+    if getattr(config, "keep_chr_pos", False):
+        required += ["Chr", "Pos"]
+    if "N" not in gwas.columns:
+        raise ValueError(
+            "A sample size is required: an N column (or N_CAS and N_CON), "
+            "--n naming the column, or --n with a number."
+        )
     gwas = gwas.dropna(
-        axis=0, how="any", subset=filter(lambda x: x != "INFO", gwas.columns)
+        axis=0, how="any", subset=[column for column in required if column in gwas.columns]
     ).reset_index(drop=True)
 
     drops["NA"] = old - len(gwas)
@@ -289,12 +316,17 @@ def gwas_qc(gwas, config):
     # filter: P-value that out-of-bounds [0,1]
     if "P" in gwas.columns:
         old = len(gwas)
-        gwas = gwas.loc[filter_pvals(gwas["P"], config)]
+        keep = filter_pvals(gwas["P"], config)
+        if config.format == "gsMap" and "Z" in gwas.columns:
+            # P = 0 is an underflow, not an error, when Z is known (gsMap output has no P).
+            keep |= (gwas["P"] == 0) & np.isfinite(gwas["Z"].astype(float))
+        gwas = gwas.loc[keep]
         drops["P"] += old - len(gwas)
         logger.info(f"Removed {drops['P']} SNPs with out-of-bounds p-values.")
 
     # filter: Variants that are strand-ambiguous
     if "A1" in gwas.columns and "A2" in gwas.columns:
+        old = len(gwas)
         gwas.A1 = gwas.A1.str.upper()
         gwas.A2 = gwas.A2.str.upper()
         gwas = gwas.loc[filter_alleles(gwas.A1 + gwas.A2)]
@@ -318,14 +350,21 @@ def gwas_qc(gwas, config):
     return gwas
 
 
+def _chromosome_key(values: pd.Series) -> pd.Series:
+    """Chromosome names without a "chr" prefix, upper case (1, 2, ..., X, Y, MT)."""
+    return values.astype(str).str.replace(r"^chr", "", case=False, regex=True).str.upper()
+
+
+def _variant_id(chromosomes: pd.Series, positions: pd.Series) -> pd.Series:
+    return _chromosome_key(chromosomes) + "_" + positions.astype(str)
+
+
 def variant_to_rsid(gwas, config):
     """
     Convert variant id (Chr, Pos) to rsid
     """
     logger.info("\nConverting the SNP position to rsid. This process may take some time.")
     unique_ids = set(gwas["id"])
-    chr_format = gwas["Chr"].unique().astype(str)
-    chr_format = [re.sub(r"\d+", "", value) for value in chr_format][1]
 
     dtype = {"chr": str, "pos": str, "ref": str, "alt": str, "dbsnp": str}
     chunk_iter = pd.read_csv(
@@ -337,18 +376,38 @@ def variant_to_rsid(gwas, config):
         names=["chr", "pos", "ref", "alt", "dbsnp"],
     )
 
-    # Iterate over chunks
-    matching_id = pd.DataFrame()
+    matches = []
     for chunk in chunk_iter:
-        chunk["id"] = chr_format + chunk["chr"] + "_" + chunk["pos"]
-        matching_id = pd.concat(
-            [matching_id, chunk[chunk["id"].isin(unique_ids)][["dbsnp", "id"]]]
-        )
+        chunk["id"] = _variant_id(chunk["chr"], chunk["pos"])
+        matches.append(chunk.loc[chunk["id"].isin(unique_ids), ["dbsnp", "id", "ref", "alt"]])
+    matching_id = (
+        pd.concat(matches, ignore_index=True)
+        if matches
+        else pd.DataFrame(columns=["dbsnp", "id", "ref", "alt"])
+    )
+
+    if {"A1", "A2"}.issubset(gwas.columns) and len(matching_id):
+        # A position can carry several variants; keep the record with the same alleles.
+        alleles = gwas.set_index("id")[["A1", "A2"]].astype(str).apply(lambda s: s.str.upper())
+        joined = matching_id.join(alleles, on="id")
+        available = (
+            joined["ref"].fillna("").str.upper() + "," + joined["alt"].fillna("").str.upper()
+        ).str.split(",")
+        same = [
+            a1 in allowed and a2 in allowed
+            for a1, a2, allowed in zip(joined["A1"], joined["A2"], available, strict=True)
+        ]
+        n_mismatch = int(len(same) - sum(same))
+        if n_mismatch:
+            logger.info(
+                f"Ignored {n_mismatch} dbSNP records at matching positions with other alleles."
+            )
+        matching_id = matching_id.loc[same]
 
     matching_id = matching_id.drop_duplicates(subset="dbsnp").reset_index(drop=True)
     matching_id = matching_id.drop_duplicates(subset="id").reset_index(drop=True)
     matching_id.index = matching_id.id
-    return matching_id
+    return matching_id[["dbsnp", "id"]]
 
 
 def clean_SNP_id(gwas, config):
@@ -367,7 +426,7 @@ def clean_SNP_id(gwas, config):
         if config.dbsnp is None:
             raise ValueError("To Convert SNP positions to rsid, dbsnp reference is required.")
         else:
-            gwas["id"] = gwas["Chr"].astype(str) + "_" + gwas["Pos"].astype(str)
+            gwas["id"] = _variant_id(gwas["Chr"], gwas["Pos"])
             gwas = gwas.drop_duplicates(subset="id").reset_index(drop=True)
             gwas.index = gwas.id
 
@@ -445,4 +504,6 @@ def gwas_format(config: FormatSumstatsConfig):
     out_name = config.out + appendix + ".gz"
 
     logger.info(f"\nWriting summary statistics for {len(gwas)} SNPs to {out_name}.")
-    gwas.to_csv(out_name, sep="\t", index=False, float_format="%.3f", compression="gzip")
+    # gsMap input needs only Z to 3 decimals; COJO needs P, BETA and SE at full precision.
+    float_format = "%.3f" if config.format == "gsMap" else None
+    gwas.to_csv(out_name, sep="\t", index=False, float_format=float_format, compression="gzip")

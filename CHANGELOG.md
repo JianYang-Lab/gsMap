@@ -40,6 +40,17 @@ Release notes on GitHub are generated from the section that matches each version
     chromosome, or inconsistent features, now raises an error instead of silently leaving
     the chromosome out; the matrix is written atomically, and errors raise exceptions
     instead of exiting the Python process.
+- `gsmap format-sumstats`:
+    - Odds-ratio input: SE comes from SE_OR / OR (delta method) instead of log(SE_OR), and
+        OR alone (or LOG_ODDS) is enough to sign Z.
+    - P = 0 (underflow) SNPs are kept for gsMap output when BETA/SE or Z give a finite Z.
+    - N_CAS + N_CON is used when there is no N column.
+    - A missing value only drops a SNP when it is in a column that is written out or filtered
+        on; missing values in unrelated columns no longer remove SNPs.
+    - COJO output keeps full numeric precision (it was rounded to 3 decimals).
+    - Position-to-rsID conversion works whether or not chromosome names start with "chr", for
+        a single chromosome, and at multi-allelic sites (alleles must match).
+    - gsMap-format output for ordinary input is unchanged.
 
 ## 2.0.0b1
 
