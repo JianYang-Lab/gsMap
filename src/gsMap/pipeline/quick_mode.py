@@ -5,6 +5,7 @@ from gsMap.cauchy_combination_test import run_Cauchy_combination
 from gsMap.config import QuickModeConfig
 from gsMap.config.cauchy_config import check_cauchy_done
 from gsMap.config.find_latent_config import check_find_latent_done
+from gsMap.config.fingerprint import warn_if_outputs_differ
 from gsMap.config.latent2gene_config import check_latent2gene_done
 from gsMap.config.quick_mode_config import check_report_done
 from gsMap.config.spatial_ldsc_config import check_spatial_ldsc_done
@@ -82,6 +83,7 @@ def run_quick_mode(config: QuickModeConfig):
 
         if check_latent2gene_done(config):
             logger.info("Latent to gene mapping already done. Skipping...")
+            warn_if_outputs_differ("latent2gene", config.latent2gene_config)
         else:
             run_latent_to_gene(config.latent2gene_config)
 
@@ -106,6 +108,7 @@ def run_quick_mode(config: QuickModeConfig):
         for trait_name, sumstats_path in traits_to_process.items():
             if check_spatial_ldsc_done(config, trait_name):
                 logger.info(f"Spatial LDSC result already exists for {trait_name}. Skipping...")
+                warn_if_outputs_differ("spatial_ldsc", config, trait=trait_name)
             else:
                 traits_remaining[trait_name] = sumstats_path
 
@@ -129,6 +132,7 @@ def run_quick_mode(config: QuickModeConfig):
         ]
         if all(cauchy_check_list):
             logger.info("Cauchy combination already done for all traits. Skipping...")
+            warn_if_outputs_differ("cauchy", config)
         else:
             cauchy_config = config.cauchy_config
             run_Cauchy_combination(cauchy_config)
@@ -140,8 +144,12 @@ def run_quick_mode(config: QuickModeConfig):
         logger.info("=== Step 5: Generate Report ===")
         start_time = time.time()
 
-        if check_report_done(config, verbose=True):
+        if getattr(config, "force_report_re_run", False):
+            logger.info("force_report_re_run is set; regenerating the report.")
+            run_report(config)
+        elif check_report_done(config, verbose=True):
             logger.info("Report already exists. Skipping...")
+            warn_if_outputs_differ("report", config)
         else:
             run_report(
                 config,

@@ -3,8 +3,6 @@ Main entry point for the latent2gene subpackage
 """
 
 import logging
-import os
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +11,8 @@ from rich.console import Console
 from rich.panel import Panel
 
 from gsMap.config import LatentToGeneConfig
+from gsMap.config.fingerprint import record_fingerprint, warn_if_outputs_differ
+from gsMap.config.latent2gene_config import rank_checkpoint_present
 from gsMap.logging_config import is_interactive_output, logged_stage
 
 from .marker_scores import MarkerScoreCalculator
@@ -49,14 +49,10 @@ def _latent2gene_metadata(
 
 
 def _write_metadata_atomic(path: Path, metadata: dict[str, Any]) -> None:
-    """Publish YAML metadata atomically so an interrupted write is recoverable."""
-    temporary = path.with_name(f".{path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex[:8]}")
-    try:
-        with temporary.open("w", encoding="utf-8") as handle:
-            yaml.safe_dump(metadata, handle, default_flow_style=False, sort_keys=False)
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
+    """Publish YAML metadata atomically (and durably) so an interrupted write is recoverable."""
+    from gsMap.utils.atomic_io import atomic_write_text
+
+    atomic_write_text(path, yaml.safe_dump(metadata, default_flow_style=False, sort_keys=False))
 
 
 @logged_stage("latent_to_gene")
@@ -109,11 +105,21 @@ def run_latent_to_gene(config: LatentToGeneConfig) -> dict[str, Any]:
         expected_outputs["concatenated_latent_adata"].is_file()
         and expected_outputs["mean_frac"].is_file()
     )
-    if rank_memmap_complete and marker_scores_complete and sidecars_complete:
-        if rank_meta is None or marker_meta is None:
+    # A removed rank checkpoint (intermediate, nothing downstream reads it) does not
+    # invalidate completed marker scores; an incomplete one still blocks reuse below.
+    rank_removed = not rank_checkpoint_present(expected_outputs["rank_memmap"])
+    if marker_scores_complete and sidecars_complete and (rank_memmap_complete or rank_removed):
+        if marker_meta is None or (rank_memmap_complete and rank_meta is None):
             raise RuntimeError("Completed latent-to-gene memmaps are missing metadata")
-        rank_shape = tuple(rank_meta["shape"])
         marker_shape = tuple(marker_meta["shape"])
+        if rank_removed:
+            logger.info(
+                "The rank checkpoint was removed; it is needed only to recompute marker "
+                "scores, so the completed outputs are reused."
+            )
+            rank_shape = marker_shape
+        else:
+            rank_shape = tuple(rank_meta["shape"])
         if rank_shape != marker_shape:
             raise ValueError(
                 f"Completed rank and marker-score shapes disagree: {rank_shape} != {marker_shape}"
@@ -147,10 +153,14 @@ def run_latent_to_gene(config: LatentToGeneConfig) -> dict[str, Any]:
         logger.info(
             f"Found existing complete results for {rank_shape[0]} cells and {rank_shape[1]} genes"
         )
+        warn_if_outputs_differ("latent2gene", config)
         return metadata["outputs"]
 
     if any(path.exists() for path in expected_outputs.values()):
-        logger.warning("Latent-to-gene outputs are partial or incomplete; resuming the pipeline")
+        logger.warning(
+            "Latent-to-gene outputs are partial or incomplete; completed checkpoints are "
+            "reused and the remaining outputs are recomputed"
+        )
 
     if marker_scores_complete:
         raise RuntimeError(
@@ -251,6 +261,7 @@ def run_latent_to_gene(config: LatentToGeneConfig) -> dict[str, Any]:
         shape=final_rank_shape,
     )
     _write_metadata_atomic(expected_outputs["metadata"], metadata)
+    record_fingerprint("latent2gene", config)
 
     logger.info(f"All outputs saved to: {output_dir}")
 

@@ -21,7 +21,9 @@ import pyarrow.parquet as pa_parquet
 import scipy as sp
 from anndata.io import read_elem
 
+from gsMap.config.fingerprint import record_fingerprint
 from gsMap.logging_config import logged_stage
+from gsMap.utils.atomic_io import atomic_output
 
 if TYPE_CHECKING:
     from gsMap.config.cauchy_config import CauchyCombinationConfig
@@ -694,14 +696,8 @@ def _result_frame(rows: list[dict[str, object]], sample_level: bool) -> pd.DataF
 
 
 def _atomic_to_csv(frame: pd.DataFrame, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.partial")
-    temporary.unlink(missing_ok=True)
-    try:
+    with atomic_output(path) as temporary:
         frame.to_csv(temporary, index=False)
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
 
 
 def _run_cauchy_for_annotation(
@@ -866,4 +862,5 @@ def run_Cauchy_combination(config: CauchyCombinationConfig):
         )
         gc.collect()
 
+    record_fingerprint("cauchy", config)
     logger.info("Cauchy combination processing completed.")

@@ -51,6 +51,22 @@ Release notes on GitHub are generated from the section that matches each version
     - Position-to-rsID conversion works whether or not chromosome names start with "chr", for
         a single chromosome, and at multi-allelic sites (alleles must match).
     - gsMap-format output for ordinary input is unchanged.
+- Reruns: each step records the settings and inputs that produced its outputs. When a rerun
+    skips a step because outputs exist, a warning names any setting or input that changed
+    (for example `--annotation`, a GWAS file, or upstream results that were recomputed) and
+    how to recompute; the outputs are still reused.
+- Reruns: outputs that later runs trust are written atomically (temporary file, fsync,
+    rename), including the latent-to-gene sidecar AnnData that is rewritten after its
+    checkpoint, and `report_meta.json` is written only after every report payload, so an
+    interrupted run is never mistaken for a complete one. Scratch copies left by killed
+    runs on the same host are removed.
+- Quick mode: `force_report_re_run` now regenerates the report; a run resumed at
+    `--start-step latent2gene` from this project's find_latent outputs uses the same
+    dual-embedding settings as a full run (it used to switch the niche similarity off); a
+    deleted rank checkpoint no longer blocks reuse of completed latent-to-gene outputs.
+- Latent-to-gene warns when explicit `--h5ad-*` inputs are replaced by the project's
+    find_latent outputs, and the report fails early when two sample names map to the same
+    report file name.
 
 ## 2.0.0b1
 

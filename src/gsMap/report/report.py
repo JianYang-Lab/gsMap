@@ -72,8 +72,9 @@ def run_report(config: QuickModeConfig, run_parameters: dict = None):
     if should_export_spatialvista(config) and maximum is not None:
         if isinstance(maximum, bool) or not isinstance(maximum, int) or maximum <= 0:
             raise ValueError("spatialvista_max_spots must be a positive integer or None")
-    # Validate the template before doing expensive data preparation.
+    # Validate the template and file names before doing expensive data preparation.
     rendered_html = _render_report_html(config.project_name)
+    _check_report_sample_file_names(list(getattr(config, "sample_h5ad_dict", None) or {}))
 
     # 1. Use ReportDataManager to prepare all data and JS assets
     manager = ReportDataManager(config)
@@ -107,6 +108,9 @@ def run_report(config: QuickModeConfig, run_parameters: dict = None):
     # Publish the entry point atomically, only after its data files are ready.
     report_file = web_report_dir / "index.html"
     _atomic_write_text(report_file, rendered_html)
+    from gsMap.config.fingerprint import record_fingerprint
+
+    record_fingerprint("report", config)
 
     logger.info("Report generated successfully!")
     logger.info(f"Web report directory: {web_report_dir}")
@@ -124,4 +128,24 @@ def run_report(config: QuickModeConfig, run_parameters: dict = None):
         )
         logger.info(
             "For remote SpatialVista, add --no-browser --port 8765 and forward that port to your computer."
+        )
+
+
+def _check_report_sample_file_names(sample_names: list[str]) -> None:
+    """Fail early when two samples would share report files.
+
+    Report files are named with the sample name made file-safe (each character that is
+    not a letter or digit becomes "_"), so "E1-1" and "E1_1" would overwrite each other.
+    """
+    from .spatial_payload import safe_name
+
+    groups: dict[str, list[str]] = {}
+    for name in sample_names:
+        groups.setdefault(safe_name(name), []).append(str(name))
+    clashes = [names for names in groups.values() if len(names) > 1]
+    if clashes:
+        listed = "; ".join(" and ".join(repr(name) for name in names) for names in clashes)
+        raise ValueError(
+            f"Sample names {listed} map to the same report file name. Rename the samples so "
+            "they differ in letters or digits, not only in punctuation."
         )

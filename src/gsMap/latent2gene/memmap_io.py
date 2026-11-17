@@ -9,6 +9,7 @@ import mmap
 import os
 import queue
 import shutil
+import socket
 import subprocess
 import threading
 import time
@@ -28,16 +29,53 @@ _TMP_MINIMUM_HEADROOM_BYTES = 5 * 1024**3
 _COPY_BUFFER_BYTES = 16 * 1024**2
 
 
-def _atomic_write_json(path: Path, payload: dict) -> None:
-    """Publish JSON metadata atomically in the destination directory."""
-    temporary = path.with_name(f".{path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex[:8]}")
+_SCRATCH_OWNER_FILE = "gsmap_owner.json"
+
+
+def _process_alive(pid: int) -> bool:
     try:
-        with temporary.open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2)
-            handle.write("\n")
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, owned by someone else
+    return True
+
+
+def remove_orphaned_scratch(tmp_dir: Path) -> None:
+    """Remove scratch copies left by killed gsMap processes on this host.
+
+    Only ``memmap_*`` directories with an owner record from this host whose process
+    no longer exists are removed; anything else (other hosts, live or unknown owners)
+    is left alone.
+    """
+    host = socket.gethostname()
+    try:
+        candidates = list(Path(tmp_dir).glob("memmap_*"))
+    except OSError:
+        return
+    for directory in candidates:
+        owner_path = directory / _SCRATCH_OWNER_FILE
+        try:
+            owner = json.loads(owner_path.read_text(encoding="utf-8"))
+            pid = int(owner["pid"])
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if owner.get("host") != host or pid == os.getpid() or _process_alive(pid):
+            continue
+        size = sum(path.stat().st_size for path in directory.rglob("*") if path.is_file())
+        logger.warning(
+            f"Removing scratch copy left by a stopped gsMap process (pid {pid}): "
+            f"{directory} ({size / 1024**3:.1f} GiB)"
+        )
+        shutil.rmtree(directory, ignore_errors=True)
+
+
+def _atomic_write_json(path: Path, payload: dict) -> None:
+    """Publish JSON metadata atomically (and durably) in the destination directory."""
+    from gsMap.utils.atomic_io import atomic_write_text
+
+    atomic_write_text(path, json.dumps(payload, indent=2) + "\n")
 
 
 def _filesystem_type(path: Path) -> str | None:
@@ -339,10 +377,16 @@ class MemMapDense:
 
     def _setup_tmp_paths(self):
         """Set up temporary paths for memory-mapped files"""
+        remove_orphaned_scratch(self.tmp_dir)
         # Create a unique subdirectory in tmp_dir to avoid conflicts
         unique_id = str(uuid.uuid4())[:8]
         self.tmp_subdir = self.tmp_dir / f"memmap_{unique_id}"
         self.tmp_subdir.mkdir(parents=True, exist_ok=True)
+        # Record the owner so a later run can remove this copy if this process is killed.
+        _atomic_write_json(
+            self.tmp_subdir / _SCRATCH_OWNER_FILE,
+            {"host": socket.gethostname(), "pid": os.getpid(), "created": time.time()},
+        )
 
         # Create tmp path with same structure as original
         self.tmp_path = self.tmp_subdir / self.original_path.name

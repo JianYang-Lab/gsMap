@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 import json
 import logging
-import os
 import time
 from typing import TYPE_CHECKING
 
@@ -13,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from gsMap.config.gwas import trait_file_token
+from gsMap.utils.atomic_io import atomic_output, atomic_write_text
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -101,25 +101,12 @@ def decode_typed_array(payload: dict) -> np.ndarray:
 
 
 def _atomic_write_text(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temporary.unlink(missing_ok=True)
-    try:
-        temporary.write_text(content, encoding="utf-8")
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
+    atomic_write_text(path, content)
 
 
 def _atomic_to_parquet(frame: pd.DataFrame, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temporary.unlink(missing_ok=True)
-    try:
+    with atomic_output(path) as temporary:
         frame.to_parquet(temporary, index=False)
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
 
 
 def _write_keyed_payload(path: Path, root_name: str, key: str, payload: dict) -> None:

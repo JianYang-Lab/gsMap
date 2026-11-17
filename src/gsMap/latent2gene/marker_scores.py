@@ -1486,7 +1486,12 @@ class MarkerScoreCalculator:
             self.writer.close()
 
             logger.info(f"Saving updated AnnData with homogeneous spot matrices to {adata_path}")
-            adata.write_h5ad(adata_path)
+            # This file was already published by the rank step; replace it atomically so
+            # an interrupted write cannot leave a truncated file that later runs trust.
+            from gsMap.utils.atomic_io import atomic_output
+
+            with atomic_output(adata_path) as temporary:
+                adata.write_h5ad(temporary)
             row_layout = self.marker_row_writer.finalize()
             output_memmap.close(
                 metadata_updates={

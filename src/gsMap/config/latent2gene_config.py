@@ -402,6 +402,8 @@ class LatentToGeneConfig(LatentToGeneComputeConfig, LatentToGeneCoreConfig, Conf
 
         # Step 1: Try auto-detection first
         self._auto_detect_h5ad_files()
+        if self.sample_h5ad_dict:
+            self._warn_if_explicit_inputs_unused()
 
         # Step 2: If auto-detection didn't find anything, try explicit inputs
         if not self.sample_h5ad_dict:
@@ -421,6 +423,39 @@ class LatentToGeneConfig(LatentToGeneComputeConfig, LatentToGeneCoreConfig, Conf
             )
 
         logger.info(f"Loaded and validated {len(self.sample_h5ad_dict)} samples")
+
+    def _warn_if_explicit_inputs_unused(self):
+        """Explicit --h5ad-* inputs are replaced by this project's find_latent outputs."""
+        options = {
+            "h5ad_yaml": ("h5ad_yaml", "yaml"),
+            "h5ad_path": ("h5ad_path", "list"),
+            "h5ad_list_file": ("h5ad_list_file", "file"),
+        }
+        if not any(getattr(self, name, None) for name in options):
+            return
+        try:
+            import yaml
+
+            explicit = process_h5ad_inputs(self, options) or {}
+            with open(self.find_latent_metadata_path) as handle:
+                recorded = (yaml.safe_load(handle).get("config") or {}).get(
+                    "sample_h5ad_dict"
+                ) or {}
+        except Exception:  # noqa: BLE001 - only a hint; never block resolution
+            return
+        known = {
+            Path(path).resolve() for path in [*recorded.values(), *self.sample_h5ad_dict.values()]
+        }
+        unused = sorted(
+            str(path) for path in explicit.values() if Path(path).resolve() not in known
+        )
+        if unused:
+            logger.warning(
+                "Using the find_latent outputs of this project "
+                f"({self.find_latent_metadata_path}); the explicitly given inputs "
+                f"{', '.join(unused[:3])}{' ...' if len(unused) > 3 else ''} are not used. "
+                "To use other embeddings, run with a new --workdir or --project-name."
+            )
 
     def _auto_detect_h5ad_files(self):
         """Auto-detect h5ad files from latent directory"""
@@ -613,6 +648,12 @@ class LatentToGeneConfig(LatentToGeneComputeConfig, LatentToGeneCoreConfig, Conf
         self.latent_representation_niche = None
 
 
+def rank_checkpoint_present(rank_memmap_path: Path) -> bool:
+    """Whether any file of the rank checkpoint (data or metadata) exists."""
+    rank_memmap_path = Path(rank_memmap_path)
+    return rank_memmap_path.exists() or rank_memmap_path.with_suffix(".meta.json").exists()
+
+
 def check_latent2gene_done(config: LatentToGeneConfig) -> bool:
     """
     Check if latent2gene step is done by verifying validity of metadata and output files.
@@ -629,14 +670,23 @@ def check_latent2gene_done(config: LatentToGeneConfig) -> bool:
         "metadata": Path(config.latent2gene_metadata_path),
     }
 
-    if not all(p.exists() for p in expected_outputs.values()):
+    # The rank memmap is an intermediate checkpoint (as large as the marker scores) that
+    # nothing downstream reads. A removed checkpoint does not invalidate final outputs;
+    # an existing but incomplete one means a rerun is in progress.
+    rank_removed = not rank_checkpoint_present(expected_outputs["rank_memmap"])
+    if not all(
+        p.exists()
+        for key, p in expected_outputs.items()
+        if not (key == "rank_memmap" and rank_removed)
+    ):
         return False
 
     try:
         # Check rank memmap completion
-        rank_memmap_complete, _ = MemMapDense.check_complete(expected_outputs["rank_memmap"])
-        if not rank_memmap_complete:
-            return False
+        if not rank_removed:
+            rank_memmap_complete, _ = MemMapDense.check_complete(expected_outputs["rank_memmap"])
+            if not rank_memmap_complete:
+                return False
 
         # Check marker scores memmap completion
         marker_scores_complete, _ = MemMapDense.check_complete(expected_outputs["marker_scores"])

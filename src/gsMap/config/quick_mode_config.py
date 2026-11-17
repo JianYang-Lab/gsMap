@@ -83,7 +83,9 @@ class QuickModeConfig(
         if not self.sample_h5ad_dict:
             self._auto_detect_h5ad_files()
 
-        if self.is_both_latent_and_gene_running:
+        if self.is_both_latent_and_gene_running or self._resumes_from_find_latent_outputs:
+            # A run resumed at latent2gene from gsMap's own find_latent outputs uses the
+            # same dual-embedding settings as the full run that produced them.
             self.high_quality_neighbor_filter = self.high_quality_cell_qc
 
             # Use dual embeddings if both steps are running
@@ -109,6 +111,17 @@ class QuickModeConfig(
         return not (
             self.start_step in ("spatial_ldsc", "cauchy")
             and self.stop_step in ("spatial_ldsc", "cauchy")
+        )
+
+    @property
+    def _resumes_from_find_latent_outputs(self) -> bool:
+        """Starting at latent2gene with find_latent outputs present in this project."""
+        stops_before = self.stop_step in ("find_latent",)
+        return (
+            self.start_step == "latent2gene"
+            and not stops_before
+            and self.dataset_type != DatasetType.SCRNA_SEQ
+            and Path(self.find_latent_metadata_path).is_file()
         )
 
     @property

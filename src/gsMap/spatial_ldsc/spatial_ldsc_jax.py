@@ -10,6 +10,7 @@ import anndata as ad
 import jax
 
 from gsMap.config import SpatialLDSCConfig
+from gsMap.config.fingerprint import warn_if_outputs_differ
 from gsMap.logging_config import logged_stage, stage_logging
 from gsMap.spatial_ldsc.data.loading import (
     FeatherAnnData,
@@ -47,6 +48,7 @@ def run_spatial_ldsc_jax(config: SpatialLDSCConfig):
     marker_score_adata = None
     ldscore_adata = None
     trait_failures: list[tuple[str, Exception]] = []
+    completed_traits: set[str] = set()
 
     try:
         try:
@@ -126,6 +128,7 @@ def run_spatial_ldsc_jax(config: SpatialLDSCConfig):
                 from gsMap.spatial_ldsc.execution.shared import run_shared_engine
 
                 run_shared_engine(processor, traits_to_process)
+                _record_trait_fingerprints(config, output_dir, traits_to_process, set())
                 return
             for idx, (trait_name, sumstats_file) in enumerate(traits_to_process):
                 try:
@@ -159,6 +162,7 @@ def run_spatial_ldsc_jax(config: SpatialLDSCConfig):
 
                                 # Log statistics from existing result
                                 log_existing_result_statistics(expected_output_path, trait_name)
+                                warn_if_outputs_differ("spatial_ldsc", config, trait=trait_name)
                                 continue
 
                         # Setup processor for current trait
@@ -167,6 +171,7 @@ def run_spatial_ldsc_jax(config: SpatialLDSCConfig):
                         # Process all chunks for current trait
                         start_time = time.time()
                         processor.process_all_chunks()
+                        completed_traits.add(trait_name)
 
                         elapsed_time = time.time() - start_time
                         h, rem = divmod(elapsed_time, 3600)
@@ -188,6 +193,12 @@ def run_spatial_ldsc_jax(config: SpatialLDSCConfig):
                     if writer is not None and not writer.closed:
                         writer.abort()
 
+            _record_trait_fingerprints(
+                config,
+                output_dir,
+                [item for item in traits_to_process if item[0] in completed_traits],
+                set(),
+            )
             if trait_failures:
                 failed_traits = ", ".join(name for name, _ in trait_failures)
                 raise RuntimeError(
@@ -223,3 +234,15 @@ def _n_input_spots(config, marker_score_adata, ldscore_adata) -> int | None:
     if marker_score_adata is not None:
         return getattr(marker_score_adata, "n_obs", None)
     return getattr(ldscore_adata, "n_vars", None)
+
+
+def _record_trait_fingerprints(config, output_dir, traits, failed: set[str]) -> None:
+    """Fingerprint each trait whose complete result now exists (see config.fingerprint)."""
+    from gsMap.config.fingerprint import record_fingerprint
+
+    for trait_name, _ in traits:
+        if trait_name in failed:
+            continue
+        name = generate_expected_output_filename(config, trait_name)
+        if name is not None and (Path(output_dir) / name).is_file():
+            record_fingerprint("spatial_ldsc", config, trait=trait_name)

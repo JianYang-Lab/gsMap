@@ -60,6 +60,7 @@ from gsMap.spatial_ldsc.io import (
     acquire_marker_scores_memmap,
     load_marker_scores_memmap_format,
 )
+from gsMap.utils.atomic_io import atomic_output, atomic_write_text
 from gsMap.utils.h5ad import read_h5ad_metadata, read_obsm_rows
 
 logger = logging.getLogger(__name__)
@@ -817,7 +818,9 @@ class ReportDataManager:
 
     def finalize_report(self):
         """Save report metadata and final JS assets."""
-        # 1. Save standard report metadata
+        # 1. Build the report metadata. report_meta.json marks a complete report, so it
+        # is written only after every payload below, never before an export that could
+        # be interrupted.
         meta = _save_report_metadata(
             self.report_config,
             self.traits,
@@ -826,6 +829,7 @@ class ReportDataManager:
             getattr(self, "umap_info", None),
             is_3d=self.is_3d,
             spatial_3d_info=getattr(self, "spatial_3d_info", None),
+            write=False,
         )
 
         # 2. Copy JS libraries
@@ -855,6 +859,9 @@ class ReportDataManager:
                 metadata=self.metadata,
             )
         _export_report_meta_js(self.web_report_dir, self.js_data_dir, meta)
+        _write_text_if_changed(
+            self.web_report_dir / "report_meta.json", json.dumps(meta, sort_keys=True)
+        )
 
 
 def _render_single_sample_gene_plot_task(task_data: dict):
@@ -2390,8 +2397,9 @@ def _save_report_metadata(
     umap_info: dict | None = None,
     is_3d: bool = False,
     spatial_3d_info: dict | None = None,
+    write: bool = True,
 ):
-    """Save report configuration metadata as JSON."""
+    """Build (and by default save) the report configuration metadata as JSON."""
     logger.info("Saving report configuration metadata...")
     full_config = report_config.to_dict_with_paths_as_strings()
     dataset_type_value = report_config.dataset_type
@@ -2548,9 +2556,10 @@ def _save_report_metadata(
         }
     )
 
-    _write_text_if_changed(
-        report_dir / "report_meta.json", json.dumps(report_meta, sort_keys=True)
-    )
+    if write:
+        _write_text_if_changed(
+            report_dir / "report_meta.json", json.dumps(report_meta, sort_keys=True)
+        )
     return report_meta
 
 
@@ -2584,28 +2593,13 @@ def _copy_js_assets(report_dir: Path):
 
 def _atomic_write_text(path: Path, content: str) -> None:
     """Write a text output through an atomic same-directory replacement."""
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temporary.unlink(missing_ok=True)
-    try:
-        temporary.write_text(content, encoding="utf-8")
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
+    atomic_write_text(path, content)
 
 
 def _atomic_to_csv(frame: pd.DataFrame, path: Path, **kwargs) -> None:
     """Write a CSV through an atomic same-directory replacement."""
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temporary.unlink(missing_ok=True)
-    try:
+    with atomic_output(path) as temporary:
         frame.to_csv(temporary, **kwargs)
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
 
 
 def _write_text_if_changed(path: Path, content: str) -> bool:
