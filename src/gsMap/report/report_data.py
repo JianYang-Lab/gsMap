@@ -2560,7 +2560,7 @@ def _copy_js_assets(report_dir: Path):
     js_lib_dir = report_dir / "js_lib"
     js_lib_dir.mkdir(exist_ok=True)
 
-    # Copy bundled Alpine.js and Tailwind.js from static folder
+    # Copy bundled Alpine.js from the static folder (Tailwind CSS is inlined in the template)
     static_js_dir = Path(__file__).parent / "static" / "js_lib"
     if static_js_dir.exists():
         for js_file in static_js_dir.glob("*.js"):

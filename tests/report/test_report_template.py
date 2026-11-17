@@ -1,3 +1,4 @@
+import re
 from collections import Counter
 from html.parser import HTMLParser
 
@@ -410,3 +411,51 @@ def test_dataset_counts_are_only_in_top_overview(report_template: str) -> None:
     assert report_template.count('x-text="samples.length.toLocaleString()"') == 1
     assert report_template.count('x-text="annotations.length.toLocaleString()"') == 1
     assert ">Dataset</h3>" not in report_template
+
+
+def _css_class_selector(token: str) -> str:
+    """Escape a class name the way Tailwind writes it in a selector."""
+    escaped = "".join(
+        "\\2c " if char == "," else char if char.isalnum() or char in "-_" else "\\" + char
+        for char in token
+    )
+    return "." + escaped
+
+
+def test_tailwind_css_is_prebuilt_and_covers_every_static_class(report_template: str) -> None:
+    # Compiled once by tests/tools/build_report_css.py; no in-browser compiler or config.
+    assert "tailwindcss.js" not in report_template
+    assert "tailwind.config" not in report_template
+    start = report_template.index('<style id="gsmap-tailwind">')
+    tailwind = report_template[start : report_template.index("</style>", start)]
+    report_styles = report_template[:start]
+    # The former compiler appended its stylesheet after the report styles; keep that cascade.
+    assert report_template.index("--report-purple") < start < report_template.index("</head>")
+    assert "--tw-ring-offset-shadow" in tailwind
+    assert ".text-primary-700{" in tailwind
+    body = report_template[report_template.index("</head>") :]
+    tokens = {
+        token
+        for value in re.findall(r'\sclass="([^"]*)"', body)
+        for token in value.split()
+        if "{" not in token
+    }
+    # Class strings in Alpine bindings, except operands of comparisons (state values).
+    for expression in re.findall(r'(?::class|x-bind:class)="([^"]*)"', body):
+        for literal in re.finditer(r"'([^'\\]*)'", expression):
+            before = expression[: literal.start()].rstrip()
+            after = expression[literal.end() :].lstrip()
+            if not before.endswith(("==", "!=")) and not after.startswith(("==", "!=")):
+                tokens.update(literal.group(1).split())
+    unstyled = sorted(
+        token
+        for token in tokens
+        if not any(
+            re.search(re.escape(_css_class_selector(token)) + r"(?=[\s{:,.>~\[)+])", css)
+            for css in (tailwind, report_styles)
+        )
+    )
+    assert len(tokens) > 300
+    assert unstyled == [], (
+        "Classes without CSS; run python tests/tools/build_report_css.py: " + ", ".join(unstyled)
+    )

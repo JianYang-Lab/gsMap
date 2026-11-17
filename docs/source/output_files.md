@@ -372,9 +372,8 @@ This directory contains a self-contained interactive web report.
 gsmap_web_report/
 ├── index.html                      # Main report entry point
 ├── report_meta.json                # Report configuration
-├── js_lib/                         # JavaScript libraries
+├── js_lib/                         # JavaScript libraries (styles are inlined in index.html)
 │   ├── alpine.min.js
-│   ├── tailwind.min.js
 │   └── plotly.min.js
 ├── js_data/                        # Data files for visualization
 │   ├── sample_index.js

@@ -15,8 +15,15 @@ Release notes on GitHub are generated from the section that matches each version
 - Interactive reports: the 3D viewer draws its points from typed arrays in one WebGL layer
     instead of Plotly point traces. Large 3D reports load without long freezes, use less
     memory, and respond faster to orbiting and to trait, opacity, threshold, point-size and
-    category changes. Views look the same. Existing reports pick this up by re-rendering
-    `index.html`; the data files are unchanged.
+    category changes.
+- Interactive reports: the rest of the page is faster too. Tailwind CSS is compiled ahead of
+    time and inlined, instead of being compiled in the browser on every load (the bundled
+    `tailwindcss.js` is gone). Large UMAP and Manhattan payloads stay outside Alpine's reactive
+    state, the Manhattan plot draws one trace per chromosome run instead of a colour per SNP,
+    and 2D maps are drawn once at their final point size. Trait and annotation switches take
+    about half as long and the page uses less memory.
+- Reports look the same. Existing reports pick up both changes by re-rendering `index.html`;
+    the data files are unchanged.
 
 ## 2.0.0b1
 

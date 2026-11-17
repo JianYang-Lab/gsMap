@@ -67,7 +67,7 @@ def run_report(config: QuickModeConfig, run_parameters: dict = None):
                 ├── spatial_3d/             # Shared geometry + lazy feature arrays
                 └── ... (other JS modules)
     """
-    logger.info("Running gsMap Report Module (Alpine.js + Tailwind based)")
+    logger.info("Running gsMap Report Module")
     maximum = getattr(config, "spatialvista_max_spots", None)
     if should_export_spatialvista(config) and maximum is not None:
         if isinstance(maximum, bool) or not isinstance(maximum, int) or maximum <= 0:
