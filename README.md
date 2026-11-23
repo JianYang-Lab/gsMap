@@ -148,17 +148,16 @@ ______________________________________________________________________
 
 If you use `gsMap` in your studies, please cite:
 
-Song, L., Chen, W., Hou, J., Guo, M. & Yang, J.
-[Spatially resolved mapping of cells associated with human complex traits.](https://doi.org/10.1038/s41586-025-08757-x)
-*Nature* (2025).
+- __gsMap__: Song, L., Chen, W., Hou, J., Guo, M. & Yang, J.
+    [Spatially resolved mapping of cells associated with human complex traits.](https://doi.org/10.1038/s41586-025-08757-x)
+    *Nature* (2025).
+- __gsMap 2.0__: under revision; the citation will be added here.
 
-gsMap 2.0 (under revision): a citation for the 2.0 methods will be added here when available.
+If you view 3D results in [SpatialVista](https://github.com/JianYang-Lab/spatial-vista-py), please also cite:
 
-If you view 3D results with [SpatialVista](https://github.com/JianYang-Lab/spatial-vista-py), please also cite:
-
-Wei, W., Li, L., Song, L., Chen, W., Wang, K., Guo, M. & Yang, J.
-[SpatialVista as a unified ecosystem for high-performance visualization and exploration of 3D spatial transcriptomics data.](https://doi.org/10.1038/s41588-026-02696-7)
-*Nature Genetics* (2026).
+- __SpatialVista__: Wei, W., Li, L., Song, L., Chen, W., Wang, K., Guo, M. & Yang, J.
+    [SpatialVista as a unified ecosystem for high-performance visualization and exploration of 3D spatial transcriptomics data.](https://doi.org/10.1038/s41588-026-02696-7)
+    *Nature Genetics* (2026).
 
 ## ✨ Research Highlights
 
