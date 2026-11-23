@@ -112,7 +112,10 @@ How to Cite
 If you use ``gsMap`` in your studies, please cite:
    gsMap: Song, L., Chen, W., Hou, J., Guo, M. & Yang, J. "**Spatially resolved mapping of cells associated with human complex traits.**" *Nature* (2025). `doi:10.1038/s41586-025-08757-x <https://doi.org/10.1038/s41586-025-08757-x>`_
 
-   A citation for the gsMap 2.0 methods will be added here when available.
+   gsMap 2.0 (under revision): a citation for the 2.0 methods will be added here when available.
+
+If you view 3D results with `SpatialVista <https://github.com/JianYang-Lab/spatial-vista-py>`_, please also cite:
+   SpatialVista: Wei, W., Li, L., Song, L., Chen, W., Wang, K., Guo, M. & Yang, J. "**SpatialVista as a unified ecosystem for high-performance visualization and exploration of 3D spatial transcriptomics data.**" *Nature Genetics* (2026). `doi:10.1038/s41588-026-02696-7 <https://doi.org/10.1038/s41588-026-02696-7>`_
 
 
 .. toctree::

@@ -151,8 +151,7 @@ The report also creates `results/e11-ordinal/e11-ordinal.spatialvista.h5ad`
 automatically. It contains 3D coordinates, section IDs, both annotations and
 IQ, AF and LDL −log10(P) values; no separate export command is needed.
 
-With the [gsMap-enabled SpatialVista viewer](https://github.com/Ganten-Hornby/spatial-vista-py/tree/feature/gsmap-trait-discovery)
-installed:
+With [SpatialVista](https://github.com/JianYang-Lab/spatial-vista-py) installed:
 
 ```bash
 spatialvista --input results/e11-ordinal/e11-ordinal.spatialvista.h5ad

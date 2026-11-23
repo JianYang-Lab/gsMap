@@ -122,9 +122,9 @@ map and annotation-level enrichment. Outputs and logs are in
 ### Open in SpatialVista
 
 The report automatically creates a SpatialVista H5AD with all result spots,
-annotations and trait −log10(P) values. With the
-[gsMap-enabled SpatialVista viewer](https://github.com/Ganten-Hornby/spatial-vista-py/tree/feature/gsmap-trait-discovery)
-installed, open it directly:
+annotations and trait −log10(P) values. With
+[SpatialVista](https://github.com/JianYang-Lab/spatial-vista-py) installed,
+open it directly:
 
 ```bash
 spatialvista --input results/human-gastrulation-cs8/human-gastrulation-cs8.spatialvista.h5ad

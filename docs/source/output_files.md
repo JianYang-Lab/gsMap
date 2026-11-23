@@ -432,8 +432,8 @@ independently of HTML display sampling. Use `spatialvista_max_spots` /
 `--no-export-spatialvista` to disable it. No SpatialVista file is generated for
 `spatial2D` or scRNA datasets.
 
-Install the [gsMap-enabled viewer](https://github.com/Ganten-Hornby/spatial-vista-py/tree/feature/gsmap-trait-discovery)
-and open the file:
+Install [SpatialVista](https://github.com/JianYang-Lab/spatial-vista-py) and open
+the file:
 
 ```bash
 spatialvista --input results/e11-ordinal/e11-ordinal.spatialvista.h5ad
