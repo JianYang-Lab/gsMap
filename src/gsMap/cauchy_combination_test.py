@@ -657,6 +657,8 @@ def _summarize_trait_groups(
         positions = groups.indices[start:end]
         if missing is not None:
             positions = positions[~missing[positions]]
+            if len(positions) == 0:
+                continue
         group_sample = (
             groups.sample_names[group_index] if groups.sample_names is not None else None
         )

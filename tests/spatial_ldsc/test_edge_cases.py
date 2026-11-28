@@ -168,6 +168,46 @@ def test_one_traits_failed_spots_do_not_change_another_trait(
     )
 
 
+@pytest.mark.parametrize("sample_level", [False, True])
+def test_trait_with_all_missing_sample_or_group_matches_reference(
+    cauchy_inputs, tmp_path, sample_level
+):
+    h5ad, spots = cauchy_inputs
+    full = np.geomspace(0.9, 1e-8, 18)
+    partial = np.geomspace(0.5, 1e-4, 18)
+    # Entire sample "two" (and therefore annotation "C") failed regression for partial.
+    partial[9:] = np.nan
+    paths = {"full": tmp_path / "full.csv.gz", "partial": tmp_path / "partial.csv.gz"}
+    _write_ldsc(paths["full"], spots, full)
+    _write_ldsc(paths["partial"], spots, partial)
+
+    _, together = _compact(h5ad, paths, sample_level)
+    _, alone = _compact(h5ad, {"full": paths["full"]}, sample_level)
+
+    key = ["trait", "annotation", *(["sample_name"] if sample_level else [])]
+    pd.testing.assert_frame_equal(
+        together[together.trait == "full"].sort_values(key, ignore_index=True),
+        alone.sort_values(key, ignore_index=True),
+    )
+
+    frame = pd.DataFrame({"partial": -np.log10(partial)})
+    metadata = _read_metadata(h5ad, ["annotation"])
+    frame["annotation"] = metadata.annotations["annotation"]
+    frame["sample_name"] = metadata.sample_name
+    reference = run_cauchy_on_dataframe(
+        frame[np.isfinite(frame["partial"])],
+        annotation_col="annotation",
+        trait_cols=["partial"],
+        extra_group_col="sample_name" if sample_level else None,
+    )
+    pd.testing.assert_frame_equal(
+        together[together.trait == "partial"].sort_values(key, ignore_index=True),
+        reference.sort_values(key, ignore_index=True),
+        check_dtype=False,
+        rtol=1e-13,
+    )
+
+
 # ---------------------------------------------------------------- GWAS input
 
 
